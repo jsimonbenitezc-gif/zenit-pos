@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Zenit POS</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+    <aside class="sidebar">
+        <div class="brand">
+            <img 
+  id="brand-logo"
+  src="./assets/logo/montana.png"
+  alt="Zenit Logo"
+  class="brand-logo"
+>
+            <span class="brand-name">Zenit</span>
+            <span class="brand-sub">POS</span>
+        </div>
+        <nav class="menu">
+            <button class="menu-item" data-view="dashboard">Dashboard 📊</button>
+            <button class="menu-item" data-view="pedidos">Pedidos 📃</button>
+            <button class="menu-item" data-view="productos">Productos 📦</button>
+            <button class="menu-item" data-view="nueva-venta">Nueva venta 💵</button>
+            <button class="menu-item" data-view="clientes">Clientes 👥</button>
+            <button class="menu-item" data-view="ajustes">Ajustes ⚙️</button>
+        </nav>
+        <div class="sidebar-footer">v1.3.0</div>
+    </aside>
+
+    <section class="content">
+        <header class="header">
+            <h1 id="page-title">Dashboard</h1>
+        </header>
+
+        <main class="main" id="main-container">
+            <section id="view-dashboard" class="view active">
+                <!-- KPIs Principales -->
+                <div class="dashboard-kpis">
+                    <div class="kpi-card">
+                        <div class="kpi-icon">💰</div>
+                        <div class="kpi-content">
+                            <h4>Ventas Hoy</h4>
+                            <div class="kpi-value" id="dash-ventas-hoy">$0.00</div>
+                            <div class="kpi-meta">
+                                <span id="dash-ventas-count">0 pedidos</span>
+                                <span class="kpi-badge" id="dash-ventas-comp">-</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="kpi-card">
+                        <div class="kpi-icon">🎫</div>
+                        <div class="kpi-content">
+                            <h4>Ticket Promedio</h4>
+                            <div class="kpi-value" id="dash-ticket-prom">$0.00</div>
+                            <div class="kpi-meta">
+                                <span id="dash-ticket-meta">Por venta</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="kpi-card">
+                        <div class="kpi-icon">📦</div>
+                        <div class="kpi-content">
+                            <h4>Items Vendidos</h4>
+                            <div class="kpi-value" id="dash-items">0</div>
+                            <div class="kpi-meta">
+                                <span id="dash-stock-alerta">Stock normal</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="kpi-card">
+                        <div class="kpi-icon">👥</div>
+                        <div class="kpi-content">
+                            <h4>Clientes Activos</h4>
+                            <div class="kpi-value" id="dash-clientes">0</div>
+                            <div class="kpi-meta">
+                                <span id="dash-clientes-vip">0 VIP hoy</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gráficas -->
+                <div class="dashboard-charts">
+                    <div class="chart-card chart-large">
+                        <h3>📈 Ventas Últimos 7 Días</h3>
+                        <canvas id="chart-ventas-7dias"></canvas>
+                    </div>
+                    
+                    <div class="chart-card chart-medium">
+                        <h3>🏆 Top 5 Productos</h3>
+                        <div id="top-productos-lista" class="top-productos-container">
+                            <p style="text-align: center; color: #9ca3af; padding: 40px;">
+                                Cargando datos...
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Nueva Gráfica de 24 Horas -->
+                <div class="chart-card" style="margin-bottom: 30px;">
+                    <h3>🕐 Actividad por Hora (Hoy)</h3>
+                    <canvas id="chart-24horas"></canvas>
+                </div>
+
+                <!-- Actividad Reciente -->
+                <div class="dashboard-activity">
+                    <div class="activity-card">
+                        <h3>🕐 Actividad Reciente</h3>
+                        <div id="ultimas-ventas-lista" class="activity-list">
+                            <p style="text-align: center; color: #9ca3af; padding: 20px;">
+                                Sin ventas registradas
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="activity-card">
+                        <h3>⭐ Destacados y Alertas</h3>
+                        <div class="destacados-container">
+                            <div class="destacado-section">
+                                <h4 style="font-size: 0.9em; color: #6b7280; margin-bottom: 10px;">👥 Clientes VIP Hoy</h4>
+                                <div id="clientes-vip-hoy" class="vip-list">
+                                    <p style="color: #9ca3af; font-size: 0.85em;">Ninguno aún</p>
+                                </div>
+                            </div>
+                            <div class="destacado-section" style="margin-top: 20px;">
+                                <h4 style="font-size: 0.9em; color: #6b7280; margin-bottom: 10px;">⚠️ Alertas</h4>
+                                <div id="alertas-dashboard" class="alertas-list">
+                                    <p style="color: #9ca3af; font-size: 0.85em;">Todo en orden</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+           <section id="view-pedidos" class="view">
+    <div class="table-card">
+        <div class="table-header">
+            <h2>Historial de Ventas</h2>
+            <div class="table-filters">
+                <span class="badge-info">Últimos 50 pedidos</span>
+            </div>
+        </div>
+        <div class="table-wrapper">
+            <table class="zenit-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Cliente / Tel</th>
+                        <th>Fecha y Hora</th>
+                        <th>Método</th>
+                        <th>Total</th>
+                        <th>Estado</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="lista-pedidos">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+            <section id="view-productos" class="view">
+                <div class="header-actions" style="margin-bottom: 20px; justify-content: flex-end;">
+                    <button class="btn-primary" id="btnNuevaCategoria">➕ Nueva Categoría</button>
+                    <button class="btn-primary" id="btnNuevoProducto">➕ Nuevo Producto</button>
+                </div>
+                <div id="lista-productos"></div>
+            </section>
+
+            <section id="view-nueva-venta" class="view full-height">
+                <div class="venta-layout">
+                    
+                    <div class="venta-catalogo">
+                        <input type="text" id="buscador-venta" placeholder="🔍 Buscar producto..." class="search-bar">
+                        
+                        <div id="filtros-categorias" class="cat-filters"></div>
+
+                        <div id="grid-venta" class="productos-grid compact"></div>
+                    </div>
+
+                    <div class="venta-ticket">
+                        <div class="ticket-header">
+                            <h3>Ticket Actual</h3>
+                            <button class="btn-icon danger" onclick="limpiarCarrito()" title="Vaciar">🗑️</button>
+                        </div>
+                        
+                          <div class="cliente-selector-dual">
+                            <div style="position: relative; margin-bottom: 8px;">
+                                <input id="nombre-cliente" 
+                                       placeholder="👤 Nombre del cliente..." 
+                                       autocomplete="off">
+                                <div id="sugerencias-nombre" class="sugerencias-dropdown hidden"></div>
+                            </div>
+                            <div style="position: relative;">
+                                <input id="telefono-cliente" 
+                                       placeholder="📱 Teléfono del cliente..." 
+                                       autocomplete="off">
+                                <div id="sugerencias-telefono" class="sugerencias-dropdown hidden"></div>
+                            </div>
+                        </div>
+
+                        <div id="carrito-items" class="ticket-items">
+                            <div class="empty-cart-msg">El carrito está vacío</div>
+                        </div>
+
+                        <div class="cart-summary">
+                            <div class="summary-row">
+                                <span>Subtotal:</span>
+                                <span id="subtotal-venta">$0.00</span>
+                            </div>
+                            <div class="summary-row discount-row">
+                                <button class="btn-discount" onclick="abrirModalDescuento()">🏷️ Aplicar Descuento</button>
+                                <span id="descuento-aplicado" style="color:#ef4444">-$0.00</span>
+                            </div>
+                            <div class="total-row">
+                                <span>Total:</span>
+                                <span id="total-venta">$0.00</span>
+                            </div>
+                            <button class="btn-primary btn-block" onclick="procesarVenta()">Cobrar</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="view-ajustes" class="view">
+    <div class="view-header">
+        <h2>Configuración del Sistema ⚙️</h2>
+        <button class="btn-primary" onclick="guardarTodosLosAjustes()">Guardar Cambios ✅</button>
+    </div>
+
+    <div class="ajustes-grid">
+        <div class="ajustes-card">
+            <h3>Datos del Negocio</h3>
+            <div class="input-group">
+                <label>Nombre de la Empresa</label>
+                <input type="text" id="adj-nombre" placeholder="Ej: Zenit Coffee">
+            </div>
+            <div class="input-group">
+                <label>Dirección</label>
+                <input type="text" id="adj-direccion" placeholder="Calle, Ciudad, CP">
+            </div>
+            <div class="input-group">
+                <label>Teléfono</label>
+                <input type="text" id="adj-telefono" placeholder="+52 ...">
+            </div>
+            <div class="input-group">
+                <label>Mensaje al pie del Ticket</label>
+                <textarea id="adj-footer" placeholder="Gracias por su compra..."></textarea>
+            </div>
+        </div>
+
+        <div class="ajustes-card">
+            <h3>Apariencia y Ticket</h3>
+            <div class="setting-item">
+                <span>Modo Oscuro</span>
+                <label class="switch">
+                    <input type="checkbox" id="adj-darkmode" onchange="toggleDarkMode(this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Logo en Ticket</span>
+                <input type="checkbox" id="adj-show-logo" checked>
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Teléfono en Ticket</span>
+                <input type="checkbox" id="adj-show-phone" checked>
+            </div>
+            <div class="input-group">
+                <label>Símbolo de Moneda</label>
+                <select id="adj-moneda">
+                    <option value="$">$ (Peso/Dólar)</option>
+                    <option value="€">€ (Euro)</option>
+                    <option value="Q">Q (Quetzal)</option>
+                    <option value="S/">S/ (Sol)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="ajustes-card">
+            <h3>Hardware y Sistema</h3>
+            <div class="input-group">
+                <label>Impresora Predeterminada</label>
+                <select id="adj-impresora">
+                    <option value="default">Impresora del Sistema</option>
+                </select>
+            </div>
+            <div class="backup-section">
+                <h3>Seguridad</h3>
+                <p>Último respaldo: <span id="last-backup">Nunca</span></p>
+                <button class="btn-secondary" onclick="crearRespaldoAhora()">Crear Backup Ahora 💾</button>
+            </div>
+        </div>
+    </div>
+</section>
+
+            <section id="view-clientes" class="view">
+    <div style="display: flex; gap: 24px; margin-bottom: 24px;">
+        <!-- Columna izquierda: Estadísticas -->
+        <div style="flex: 1;">
+            <!-- Estadísticas de Clientes -->
+            <div class="dashboard-grid" style="margin-bottom: 24px;">
+                <div class="stat-card client-stat-card">
+                    <h4>Total Clientes 👥</h4>
+                    <strong id="total-clientes-count">0</strong>
+                    <span style="font-size: 0.85em; color: #6b7280;">registrados</span>
+                </div>
+                <div class="stat-card client-stat-card">
+                    <h4>Clientes Frecuentes ⭐</h4>
+                    <strong id="clientes-frecuentes">0</strong>
+                    <span style="font-size: 0.85em; color: #6b7280;">2+ compras/mes</span>
+                </div>
+                <div class="stat-card client-stat-card">
+                    <h4>Nuevos este mes 📅</h4>
+                    <strong id="clientes-nuevos-mes">0</strong>
+                    <span style="font-size: 0.85em; color: #6b7280;">últimos 30 días</span>
+                </div>
+            </div>
+
+            <!-- Tabla de Clientes -->
+            <div class="table-card client-table-card">
+                <div class="table-header">
+                    <h2 style="margin: 0; color: #111827;">Directorio de Clientes</h2>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input 
+                            type="text" 
+                            id="buscar-cliente" 
+                            placeholder="🔍 Buscar por nombre o teléfono..." 
+                            style="padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; width: 300px; font-size: 0.95em;">
+                        <button class="btn-primary" onclick="abrirModalCliente()">
+                            ➕ Nuevo Cliente
+                        </button>
+                    </div>
+                </div>
+                <div class="table-wrapper">
+                    <table class="zenit-table">
+                        <thead>
+                            <tr>
+                                <th>Cliente</th>
+                                <th>Teléfono</th>
+                                <th>Dirección</th>
+                                <th>Total Compras</th>
+                                <th>Registro</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lista-clientes-body">
+                            <tr>
+                                <td colspan="6" style="text-align: center; padding: 40px; color: #9ca3af;">
+                                    Cargando clientes...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Columna derecha: Top 3 del mes -->
+        <div style="width: 320px;">
+            <div class="top-clientes-card">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #f3f4f6;">
+                    <span style="font-size: 1.5em;">🏆</span>
+                    <h3 style="margin: 0; color: #111827; font-size: 1.1em;">Top Clientes del Mes</h3>
+                </div>
+                <div id="top-clientes-lista">
+                    <div style="text-align: center; padding: 40px 20px; color: #9ca3af;">
+                        <div style="font-size: 2em; margin-bottom: 10px;">📊</div>
+                        <p style="font-size: 0.9em;">Cargando estadísticas...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+</div>
+
+
+<!-- MODALES -->
+
+<!-- Modal Producto -->
+<div class="modal hidden" id="modalProducto">
+    <div class="modal-content">
+        <h3 id="modalTitulo">Nuevo producto</h3>
+        <label class="label-input">Información Básica</label>
+        <input id="prodNombre" placeholder="Nombre del producto">
+        <input id="prodDescripcion" placeholder="Descripción breve">
+        <div class="row">
+            <input id="prodPrecio" type="text" placeholder="Precio ($)" inputmode="decimal">
+            <input id="prodStock" type="text" placeholder="Stock" inputmode="numeric">
+        </div>
+        <label class="label-input">Categoría</label>
+        <select id="prodCategoria">
+            <option value="">Seleccione una categoría</option>
+        </select>
+        <label class="label-input">Apariencia</label>
+        <div class="row" style="align-items: center;">
+            <div style="flex:1">
+                <button class="btn-secondary small" onclick="toggleEmojiPicker('prod')">😊 Emoji</button>
+                <button class="btn-secondary small" onclick="seleccionarImagenProducto()">🖼️ Imagen</button>
+            </div>
+            <span id="prodEmojiDisplay" style="font-size: 1.5em; margin-left: 10px;">📦</span>
+            <img id="prodImagenPreview" style="display:none; width: 50px; height: 50px; object-fit: cover; border-radius: 8px; margin-left: 10px;">
+        </div>
+        <input type="hidden" id="prodImagenRuta">
+        <div id="prodEmojiPicker" class="emoji-picker-container" style="display:none;"></div>
+        <div class="modal-actions">
+            <button class="btn-secondary" onclick="cerrarModalProducto()">Cancelar</button>
+            <button class="btn-primary" onclick="guardarProducto()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Categoría -->
+<div class="modal hidden" id="modalCategoria">
+    <div class="modal-content">
+        <h3 id="modalCatTitulo">Nueva Categoría</h3>
+        <input id="catNombre" placeholder="Nombre de categoría">
+        <label class="label-input">Icono</label>
+        <div class="row" style="align-items: center;">
+            <div style="flex:1">
+                <button class="btn-secondary small" onclick="toggleEmojiPicker('cat')">😊 Emoji</button>
+                <button class="btn-secondary small" onclick="seleccionarImagenCategoria()">🖼️ Imagen</button>
+            </div>
+            <span id="catEmojiDisplay" style="font-size: 1.5em; margin-left: 10px;">📦</span>
+            <img id="catImagenPreview" style="display:none; width: 50px; height: 50px; object-fit: cover; border-radius: 8px; margin-left: 10px;">
+        </div>
+        <input type="hidden" id="catImagenRuta">
+        <div id="catEmojiPicker" class="emoji-picker-container" style="display:none;"></div>
+        <div class="modal-actions">
+            <button class="btn-secondary" onclick="cerrarModalCategoria()">Cancelar</button>
+            <button class="btn-primary" onclick="guardarCategoria()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Notas -->
+<div class="modal hidden" id="modalNotas">
+    <div class="modal-content">
+        <h3>Agregar Nota</h3>
+        <p id="nota-producto-nombre" style="color:#6b7280; margin-bottom:10px;">Producto</p>
+        
+        <div class="quick-tags">
+            <button class="tag-btn" onclick="agregarTagNota('Sin')">🚫 Sin</button>
+            <button class="tag-btn" onclick="agregarTagNota('Con')">✅ Con</button>
+            <button class="tag-btn" onclick="agregarTagNota('Extra')">➕ Extra</button>
+            <button class="tag-btn" onclick="agregarTagNota('Poco')">🔽 Poco</button>
+            <button class="tag-btn" onclick="agregarTagNota('Mucho')">🔼 Mucho</button>
+            <button class="tag-btn" onclick="agregarTagNota('Aparte')">🥡 Aparte</button>
+        </div>
+
+        <textarea id="texto-nota" rows="3" placeholder="Escribe detalles aquí (ej: Sin cebolla, término medio...)"></textarea>
+
+        <div class="modal-actions">
+            <button class="btn-secondary" onclick="cerrarModalNotas()">Cancelar</button>
+            <button class="btn-primary" onclick="guardarNota()">Guardar Nota</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Pago -->
+<div id="modalPago" class="modal hidden">
+    <div class="modal-content payment-modal">
+        <div class="modal-header">
+            <h3>Finalizar Venta</h3>
+            <button class="close-btn" onclick="cerrarModalPago()">×</button>
+        </div>
+<div class="tipo-pedido-container">
+    <div class="tipo-pedido-selector">
+        <button type="button" class="tipo-btn active" onclick="seleccionarTipoPedido('comer', this)">🍽️ Comer aquí</button>
+        <button type="button" class="tipo-btn" onclick="seleccionarTipoPedido('llevar', this)">🛍️ Llevar</button>
+        <button type="button" class="tipo-btn" onclick="seleccionarTipoPedido('domicilio', this)">🏠 Domicilio</button>
+    </div>
+
+    <div id="campos-dinamicos" class="campos-dinamicos">
+        </div>
+</div>        
+        <div style="text-align: center; margin: 15px 0; padding: 15px; background: #f3f4f6; border-radius: 10px;">
+            <span style="color: #6b7280; font-size: 0.9em;">Total a cobrar:</span>
+            <h2 id="pago-total-display" style="margin: 5px 0; color: #2563eb;">$0.00</h2>
+        </div>
+
+<!-- Información del Cliente -->
+        <div id="info-cliente-pago" style="background: #f9fafb; padding: 15px; border-radius: 12px; margin-bottom: 15px; border: 1px dashed #d1d5db;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h4 style="margin: 0; font-size: 0.95em; color: #6b7280;">Cliente de esta venta</h4>
+                <button type="button" id="btn-registrar-cliente-venta" class="btn-secondary small" 
+                        onclick="registrarClienteDesdeVenta()" style="display: none;">
+                    💾 Guardar Cliente
+                </button>
+            </div>
+            <div id="datos-cliente-pago" style="font-size: 0.9em; color: #374151;">
+                <p style="margin: 5px 0;">📱 <span id="display-tel-pago">Sin información</span></p>
+                <p style="margin: 5px 0;">👤 <span id="display-nombre-pago">-</span></p>
+                <p style="margin: 5px 0;">📍 <span id="display-dir-pago">-</span></p>
+            </div>
+        </div>
+        
+        <div class="payment-selection-grid">
+            <button class="method-btn" id="method-efectivo" onclick="seleccionarMetodo('efectivo')">
+                <span class="method-icon">💵</span>
+                <span class="method-label">Efectivo</span>
+            </button>
+            <button class="method-btn" id="method-tarjeta" onclick="seleccionarMetodo('tarjeta')">
+                <span class="method-icon">💳</span>
+                <span class="method-label">Tarjeta</span>
+            </button>
+            <button class="method-btn" id="method-transferencia" onclick="seleccionarMetodo('transferencia')">
+                <span class="method-icon">📱</span>
+                <span class="method-label">Transf.</span>
+            </button>
+        </div>
+
+        <div id="cambio-section" class="cash-calc hidden">
+            <div class="calc-header" style="font-weight: 600; margin-bottom: 10px; color: #374151;">
+                Calculadora de Cambio
+            </div>
+            <div class="calc-body">
+                <div class="input-group" style="margin-bottom: 10px;">
+                    <label style="display: block; margin-bottom: 5px; font-size: 0.9em; color: #6b7280;">
+                        Efectivo Recibido:
+                    </label>
+                    <input type="text" 
+                           id="efectivo-recibido" 
+                           placeholder="0.00" 
+                           inputmode="decimal"
+                           oninput="calcularCambio()"
+                           style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 1em;">
+                </div>
+                <div class="cambio-display">
+                    <span>Cambio:</span>
+                    <strong id="cambio-monto">$0.00</strong>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn-confirm-payment disabled" id="btn-confirmar-final" onclick="ejecutarVenta()" disabled>
+                Confirmar y Registrar Venta
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Ver Detalles Cliente -->
+<div id="modal-ver-cliente" class="modal hidden">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 style="margin: 0;">Detalles del Cliente</h3>
+            <button class="btn-icon" onclick="cerrarModalVerCliente()" style="background: transparent; border: none; font-size: 1.5em; cursor: pointer; color: #6b7280;">×</button>
+        </div>
+        <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px;">
+            <div class="detail-item">
+                <label style="font-size: 0.85em; color: #6b7280; font-weight: 600;">Nombre Completo</label>
+                <p id="ver-cli-nombre" style="margin: 5px 0 0 0; font-size: 1.1em; color: #111827; font-weight: 600;">-</p>
+            </div>
+            <div class="detail-item">
+                <label style="font-size: 0.85em; color: #6b7280; font-weight: 600;">Teléfono</label>
+                <p id="ver-cli-telefono" style="margin: 5px 0 0 0; font-size: 1em; color: #374151;">-</p>
+            </div>
+            <div class="detail-item">
+                <label style="font-size: 0.85em; color: #6b7280; font-weight: 600;">Dirección</label>
+                <p id="ver-cli-direccion" style="margin: 5px 0 0 0; font-size: 1em; color: #374151;">-</p>
+            </div>
+            <div class="detail-item" style="background: #f9fafb; padding: 15px; border-radius: 12px; border: 1px solid #e5e7eb;">
+                <label style="font-size: 0.85em; color: #6b7280; font-weight: 600;">Estadísticas</label>
+                <div style="display: flex; gap: 20px; margin-top: 10px;">
+                    <div>
+                        <p style="margin: 0; font-size: 0.8em; color: #6b7280;">Total Compras</p>
+                        <p id="ver-cli-compras" style="margin: 5px 0 0 0; font-size: 1.3em; color: #2563eb; font-weight: 700;">0</p>
+                    </div>
+                    <div>
+                        <p style="margin: 0; font-size: 0.8em; color: #6b7280;">Monto Total</p>
+                        <p id="ver-cli-monto" style="margin: 5px 0 0 0; font-size: 1.3em; color: #10b981; font-weight: 700;">$0.00</p>
+                    </div>
+                </div>
+            </div>
+            <div class="detail-item">
+                <label style="font-size: 0.85em; color: #6b7280; font-weight: 600;">Fecha de Registro</label>
+                <p id="ver-cli-fecha" style="margin: 5px 0 0 0; font-size: 0.95em; color: #374151;">-</p>
+            </div>
+        </div>
+        <div class="modal-footer" style="margin-top: 20px;">
+            <button class="btn-primary" onclick="cerrarModalVerCliente()">Cerrar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast de Éxito -->
+<div id="toast-success" class="toast hidden">
+    <div class="toast-content">
+        <span class="toast-icon">✅</span>
+        <div class="toast-msg">
+            <p><strong>¡Venta Exitosa!</strong></p>
+            <p id="toast-subtext">El pedido ha sido registrado.</p>
+        </div>
+    </div>
+</div>
+<div class="modal hidden" id="modalDetallePedido">
+    <div class="modal-content" style="max-width: 500px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 id="detalle-titulo">Pedido #000</h3>
+            <button class="btn-icon" onclick="cerrarModalDetalle()">✕</button>
+        </div>
+        
+        <div id="detalle-info-cliente" style="margin-bottom: 15px; font-size: 0.9em; color: #6b7280;">
+            </div>
+
+        <div class="detalle-items-header">
+            <span>Producto</span>
+            <span>Subtotal</span>
+        </div>
+        <div id="detalle-lista-productos" class="detalle-lista">
+            </div>
+
+        <div class="detalle-footer">
+            <div class="detalle-row">
+                <span>Método de Pago:</span>
+                <span id="detalle-metodo" style="font-weight: 600;">-</span>
+            </div>
+            <div class="detalle-row total">
+                <span>Total Cobrado:</span>
+                <span id="detalle-total">$0.00</span>
+            </div>
+        </div>
+        
+        <button class="btn-primary" style="margin-top: 20px;" onclick="cerrarModalDetalle()">Cerrar</button>
+    </div>
+</div>
+
+<div id="modal-cliente" class="modal hidden">
+    <div class="modal-content" style="max-width: 450px;">
+        <div class="modal-header">
+            <h3>Registrar Nuevo Cliente</h3>
+            <button class="btn-close" onclick="cerrarModalCliente()">×</button>
+        </div>
+        <div class="modal-body">
+            <div class="input-group">
+                <label>Teléfono (10 dígitos)</label>
+                <input type="text" id="cli-telefono" placeholder="Ej: 5512345678">
+            </div>
+            <div class="input-group">
+                <label>Nombre Completo</label>
+                <input type="text" id="cli-nombre" placeholder="Nombre del cliente">
+            </div>
+            <div class="input-group">
+                <label>Dirección (Para Domicilios)</label>
+                <textarea id="cli-direccion" placeholder="Calle, número, colonia..." rows="3"></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-confirm-payment" onclick="guardarCliente()">Guardar Cliente</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Actualización -->
+<div id="modal-actualizacion" class="modal hidden">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3>🔄 Actualización Disponible</h3>
+        </div>
+        <div class="modal-body">
+            <p id="update-message">Hay una nueva versión disponible.</p>
+            <p id="update-version" style="color: #2563eb; font-weight: 600; margin: 10px 0;"></p>
+            
+            <div id="download-progress-container" style="display: none; margin-top: 20px;">
+                <div style="background: #f3f4f6; height: 8px; border-radius: 4px; overflow: hidden;">
+                    <div id="download-progress-bar" style="background: #2563eb; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <p id="download-progress-text" style="text-align: center; margin-top: 10px; color: #6b7280; font-size: 0.9em;">Descargando...</p>
+            </div>
+        </div>
+        <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
+            <button class="btn-secondary" onclick="cerrarModalActualizacion()">Más tarde</button>
+            <button class="btn-primary" id="btn-download-update" onclick="descargarActualizacion()">Descargar</button>
+            <button class="btn-primary" id="btn-install-update" onclick="instalarActualizacion()" style="display: none;">Instalar y Reiniciar</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+<script src="render.js"></script>
+</body>
+</html>
