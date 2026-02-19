@@ -65,7 +65,15 @@ function createWindow() {
     mainWindow.maximize(); // Abre la ventana maximizada por defecto
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+    createWindow();
+    
+    if (app.isPackaged) {
+        setTimeout(() => {
+            autoUpdater.checkForUpdates();
+        }, 3000);
+    }
+});
 
 // ============================================
 // HANDLERS DE ACTUALIZACIÓN

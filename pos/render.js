@@ -1891,23 +1891,42 @@ async function cargarAjustesInstalados() {
         console.log("Sincronizando ajustes...");
         const ajustes = await window.api.obtenerAjustes();
         
-        if(ajustes.nombre_negocio && document.getElementById('adj-nombre')) 
-            document.getElementById('adj-nombre').value = ajustes.nombre_negocio;
-        if(ajustes.direccion_negocio && document.getElementById('adj-direccion')) 
-            document.getElementById('adj-direccion').value = ajustes.direccion_negocio;
-        if(ajustes.telefono_negocio && document.getElementById('adj-telefono')) 
-            document.getElementById('adj-telefono').value = ajustes.telefono_negocio;
-        if(ajustes.footer_ticket && document.getElementById('adj-footer')) 
-            document.getElementById('adj-footer').value = ajustes.footer_ticket;
-        if(ajustes.moneda && document.getElementById('adj-moneda')) 
-            document.getElementById('adj-moneda').value = ajustes.moneda;
+        // Información del negocio
+        if(ajustes.business_name && document.getElementById('adj-nombre-negocio')) 
+            document.getElementById('adj-nombre-negocio').value = ajustes.business_name;
+        if(ajustes.business_address && document.getElementById('adj-direccion-negocio')) 
+            document.getElementById('adj-direccion-negocio').value = ajustes.business_address;
+        if(ajustes.business_phone && document.getElementById('adj-telefono-negocio')) 
+            document.getElementById('adj-telefono-negocio').value = ajustes.business_phone;
         
+        // Ajustes de ticket
+        if(ajustes.show_logo && document.getElementById('adj-show-logo')) 
+            document.getElementById('adj-show-logo').checked = (ajustes.show_logo === 'true');
+        if(ajustes.show_phone && document.getElementById('adj-show-phone')) 
+            document.getElementById('adj-show-phone').checked = (ajustes.show_phone === 'true');
+        if(ajustes.show_direccion && document.getElementById('adj-show-direccion')) 
+            document.getElementById('adj-show-direccion').checked = (ajustes.show_direccion === 'true');
+        
+        // Moneda
+        if(ajustes.currency_symbol && document.getElementById('adj-moneda')) 
+            document.getElementById('adj-moneda').value = ajustes.currency_symbol;
+        
+        // Logo
+        if(ajustes.logo_path && document.getElementById('adj-logo-path')) {
+            document.getElementById('adj-logo-path').value = ajustes.logo_path;
+            if(document.getElementById('preview-logo-ajustes')) {
+                document.getElementById('preview-logo-ajustes').src = ajustes.logo_path;
+            }
+        }
+        
+        // Modo oscuro
         if(ajustes.dark_mode === 'true') {
             const checkDark = document.getElementById('adj-darkmode');
             if(checkDark) checkDark.checked = true;
             document.body.classList.add('dark-mode');
         }
 
+        // Impresoras
         const selectImp = document.getElementById('adj-impresora');
         if (selectImp) {
             // Limpiar opciones existentes (excepto la primera que es "Impresora del Sistema")
@@ -1924,9 +1943,78 @@ async function cargarAjustesInstalados() {
                 selectImp.appendChild(opt);
             });
         }
+        
+        // Agregar event listeners para guardar automáticamente
+        agregarListenersGuardadoAjustes();
+        
         console.log("Ajustes cargados con éxito.");
     } catch (error) {
         console.error("Error cargando ajustes:", error);
+    }
+}
+
+// Función para agregar listeners de guardado automático
+function agregarListenersGuardadoAjustes() {
+    // Información del negocio
+    const nombreNegocio = document.getElementById('adj-nombre-negocio');
+    const telefonoNegocio = document.getElementById('adj-telefono-negocio');
+    const direccionNegocio = document.getElementById('adj-direccion-negocio');
+    
+    if (nombreNegocio) {
+        nombreNegocio.addEventListener('blur', async () => {
+            await window.api.guardarAjuste('business_name', nombreNegocio.value);
+        });
+    }
+    
+    if (telefonoNegocio) {
+        telefonoNegocio.addEventListener('blur', async () => {
+            await window.api.guardarAjuste('business_phone', telefonoNegocio.value);
+        });
+    }
+    
+    if (direccionNegocio) {
+        direccionNegocio.addEventListener('blur', async () => {
+            await window.api.guardarAjuste('business_address', direccionNegocio.value);
+        });
+    }
+    
+    // Checkboxes de ticket
+    const showLogo = document.getElementById('adj-show-logo');
+    const showPhone = document.getElementById('adj-show-phone');
+    const showDireccion = document.getElementById('adj-show-direccion');
+    
+    if (showLogo) {
+        showLogo.addEventListener('change', async () => {
+            await window.api.guardarAjuste('show_logo', showLogo.checked ? 'true' : 'false');
+        });
+    }
+    
+    if (showPhone) {
+        showPhone.addEventListener('change', async () => {
+            await window.api.guardarAjuste('show_phone', showPhone.checked ? 'true' : 'false');
+        });
+    }
+    
+    if (showDireccion) {
+        showDireccion.addEventListener('change', async () => {
+            await window.api.guardarAjuste('show_direccion', showDireccion.checked ? 'true' : 'false');
+        });
+    }
+    
+    // Moneda
+    const moneda = document.getElementById('adj-moneda');
+    if (moneda) {
+        moneda.addEventListener('change', async () => {
+            await window.api.guardarAjuste('currency_symbol', moneda.value);
+        });
+    }
+    
+    // Impresora
+    const impresora = document.getElementById('adj-impresora');
+    if (impresora) {
+        impresora.addEventListener('change', async () => {
+            await window.api.guardarAjuste('impresora', impresora.value);
+        });
     }
 }
 
@@ -1970,14 +2058,76 @@ async function imprimirTicket(pedidoId) {
             return;
         }
 
-        // 2. Obtener ajustes (logo, teléfono, moneda)
+        // 2. Obtener ajustes
         const ajustes = await window.api.obtenerAjustes().catch(() => ({}));
+        const nombreNegocio = ajustes.business_name || 'Mi Negocio';
+        const telefonoNegocio = ajustes.business_phone || '';
+        const direccionNegocio = ajustes.business_address || '';
         const mostrarLogo = ajustes.show_logo === 'true';
         const mostrarTelefono = ajustes.show_phone === 'true';
+        const mostrarDireccion = ajustes.show_direccion === 'true';
         const moneda = ajustes.currency_symbol || '$';
         const rutaLogo = ajustes.logo_path || './assets/logo/montana.png';
 
-        // 3. Crear HTML del ticket
+        // 3. Convertir logo a base64 si existe
+        let logoBase64 = '';
+        if (mostrarLogo) {
+            try {
+                // Intentar cargar la imagen como base64
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                await new Promise((resolve, reject) => {
+                    img.onload = () => {
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+                        logoBase64 = canvas.toDataURL('image/png');
+                        resolve();
+                    };
+                    img.onerror = () => resolve(); // Si falla, continuar sin logo
+                    img.src = rutaLogo;
+                });
+            } catch (e) {
+                console.log('No se pudo cargar el logo:', e);
+            }
+        }
+
+        // 4. Formatear fecha correctamente
+        let fechaFormateada = 'Fecha no disponible';
+        try {
+            // La fecha viene de SQLite como "fecha"
+            const fechaStr = pedido.fecha;
+            if (fechaStr) {
+                // Reemplazar espacio con 'T' para que sea compatible con Date
+                const fechaISO = fechaStr.replace(' ', 'T');
+                const fecha = new Date(fechaISO);
+                
+                if (!isNaN(fecha.getTime())) {
+                    fechaFormateada = fecha.toLocaleString('es-MX', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: true
+                    });
+                }
+            }
+        } catch (e) {
+            console.error('Error al formatear fecha:', e);
+        }
+
+// 4.5 Extraer solo el nombre del cliente (sin el teléfono)
+        let nombreClienteTicket = '';
+        if (pedido.telefono && pedido.telefono !== 'General') {
+            // Toma lo que está antes del ' - ' (el nombre) y descarta el número
+            nombreClienteTicket = pedido.telefono.split(' - ')[0]; 
+        }
+
+        // 5. Crear HTML del ticket mejorado
         const ticketHTML = `
             <!DOCTYPE html>
             <html>
@@ -2011,17 +2161,20 @@ async function imprimirTicket(pedidoId) {
                         padding-bottom: 10px;
                     }
                     .logo {
-                        width: 60px;
-                        height: 60px;
-                        margin: 0 auto 8px;
+                        width: 240px;
+                        height: auto;
+                        max-height: 240px;
+                        margin: 0 auto 2px;
+                        display: block;
+                        object-fit: contain;
                     }
                     .negocio {
                         font-weight: bold;
-                        font-size: 16px;
+                        font-size: 14px;
                         margin-bottom: 4px;
                     }
                     .info-line {
-                        font-size: 11px;
+                        font-size: 10px;
                         margin: 2px 0;
                     }
                     .items {
@@ -2081,6 +2234,11 @@ async function imprimirTicket(pedidoId) {
                         font-weight: bold;
                         margin-top: 8px;
                     }
+                    .powered-by {
+                        font-size: 8px;
+                        color: #999;
+                        margin-top: 10px;
+                    }
                     @media print {
                         body { margin: 0; }
                     }
@@ -2089,12 +2247,14 @@ async function imprimirTicket(pedidoId) {
             <body>
                 <div class="ticket">
                     <div class="header">
-                        ${mostrarLogo ? `<img src="${rutaLogo}" alt="Logo" class="logo">` : ''}
-                        <div class="negocio">Zenit POS</div>
-                        ${mostrarTelefono ? '<div class="info-line">Tel: (555) 123-4567</div>' : ''}
-                        <div class="info-line">Ticket #${pedido.id}</div>
-                        <div class="info-line">${new Date(pedido.fecha_pedido).toLocaleString('es-MX')}</div>
-                        ${pedido.cliente ? `<div class="info-line">Cliente: ${pedido.cliente}</div>` : ''}
+                        ${logoBase64 ? `<img src="${logoBase64}" alt="Logo" class="logo">` : ''}
+                        <div class="negocio">${nombreNegocio}</div>
+                        ${mostrarDireccion && direccionNegocio ? `<div class="info-line">${direccionNegocio}</div>` : ''}
+                        ${mostrarTelefono && telefonoNegocio ? `<div class="info-line">Tel: ${telefonoNegocio}</div>` : ''}
+                        <div class="separator"></div>
+                        <div class="info-line"><strong>Ticket #${pedido.id}</strong></div>
+                        <div class="info-line">${fechaFormateada}</div>
+                        ${nombreClienteTicket ? `<div class="info-line">Cliente: ${nombreClienteTicket}</div>` : ''}
                         ${pedido.tipo_pedido ? `<div class="info-line">Tipo: ${pedido.tipo_pedido.toUpperCase()}</div>` : ''}
                     </div>
 
@@ -2103,9 +2263,9 @@ async function imprimirTicket(pedidoId) {
                             <div class="item">
                                 <span class="item-name">${item.nombre}</span>
                                 <span class="item-qty">x${item.cantidad}</span>
-                                <span class="item-price">${moneda}${item.subtotal.toFixed(2)}</span>
+                                <span class="item-price">${moneda}${item.precio.toFixed(2)}</span>
                             </div>
-                            ${item.nota_item ? `<div class="nota">* ${item.nota_item}</div>` : ''}
+                            ${item.nota ? `<div class="nota">* ${item.nota}</div>` : ''}
                         `).join('')}
                     </div>
 
@@ -2125,13 +2285,14 @@ async function imprimirTicket(pedidoId) {
                     <div class="footer">
                         <div class="gracias">¡Gracias por tu compra!</div>
                         <div style="margin-top: 6px;">Vuelve pronto</div>
+                        <div class="powered-by">Powered by Zenit POS</div>
                     </div>
                 </div>
             </body>
             </html>
         `;
 
-        // 4. Abrir ventana de impresión
+        // 6. Abrir ventana de impresión
         const ventanaImpresion = window.open('', '_blank', 'width=300,height=600');
         ventanaImpresion.document.write(ticketHTML);
         ventanaImpresion.document.close();
@@ -2178,4 +2339,58 @@ async function seleccionarLogoNegocio() {
         console.error('Error al seleccionar logo:', error);
         alert('Error al cargar la imagen');
     }
+}
+
+// ==========================================
+// VERIFICACIÓN MANUAL DE ACTUALIZACIONES
+// ==========================================
+
+async function verificarActualizacionManual() {
+    const btn = document.getElementById('btn-verificar-update');
+    const textOriginal = btn.innerText;
+    
+    try {
+        btn.innerText = '⏳ Verificando...';
+        btn.disabled = true;
+        
+        const result = await window.api.checkForUpdates();
+        
+        if (result && result.updateInfo) {
+            alert(`✅ Actualización disponible: v${result.updateInfo.version}\n\nLa descarga comenzará automáticamente.`);
+        } else {
+            alert('✅ Ya estás usando la versión más reciente');
+        }
+        
+    } catch (error) {
+        console.error('Error al verificar actualizaciones:', error);
+        alert('❌ No se pudo verificar actualizaciones. Verifica tu conexión a internet.');
+    } finally {
+        btn.innerText = textOriginal;
+        btn.disabled = false;
+    }
+}
+
+// Cargar versión actual al entrar a ajustes
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const version = await window.api.getAppVersion();
+        const versionSpan = document.getElementById('version-actual');
+        if (versionSpan) {
+            versionSpan.innerText = `v${version}`;
+        }
+    } catch (error) {
+        console.log('No se pudo obtener la versión');
+    }
+});
+
+// ==========================================
+// GUARDAR TODOS LOS AJUSTES (BOTÓN MANUAL)
+// ==========================================
+function guardarTodosLosAjustes() {
+    // Esto quita el foco de donde estés escribiendo para forzar el autoguardado del sistema
+    if (document.activeElement) {
+        document.activeElement.blur();
+    }
+    // Muestra el mensaje de éxito en pantalla
+    mostrarNotificacionExito('Los ajustes se han guardado correctamente', '¡Ajustes Guardados!');
 }

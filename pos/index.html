@@ -236,24 +236,20 @@
         <button class="btn-primary" onclick="guardarTodosLosAjustes()">Guardar Cambios ✅</button>
     </div>
 
-    <div class="ajustes-grid">
+<div class="ajustes-grid">
         <div class="ajustes-card">
-            <h3>Datos del Negocio</h3>
+            <h3>Información del Negocio</h3>
             <div class="input-group">
-                <label>Nombre de la Empresa</label>
-                <input type="text" id="adj-nombre" placeholder="Ej: Zenit Coffee">
-            </div>
-            <div class="input-group">
-                <label>Dirección</label>
-                <input type="text" id="adj-direccion" placeholder="Calle, Ciudad, CP">
+                <label>Nombre del Negocio</label>
+                <input type="text" id="adj-nombre-negocio" placeholder="Ej: Restaurante El Buen Sabor">
             </div>
             <div class="input-group">
                 <label>Teléfono</label>
-                <input type="text" id="adj-telefono" placeholder="+52 ...">
+                <input type="text" id="adj-telefono-negocio" placeholder="Ej: (555) 123-4567">
             </div>
             <div class="input-group">
-                <label>Mensaje al pie del Ticket</label>
-                <textarea id="adj-footer" placeholder="Gracias por su compra..."></textarea>
+                <label>Dirección</label>
+                <textarea id="adj-direccion-negocio" rows="2" placeholder="Ej: Av. Principal #123, Col. Centro"></textarea>
             </div>
         </div>
 
@@ -285,6 +281,10 @@
                 <span>Mostrar Teléfono en Ticket</span>
                 <input type="checkbox" id="adj-show-phone" checked>
             </div>
+            <div class="setting-item">
+                <span>Mostrar Dirección en Ticket</span>
+                <input type="checkbox" id="adj-show-direccion" checked>
+            </div>
             <div class="input-group">
                 <label>Símbolo de Moneda</label>
                 <select id="adj-moneda">
@@ -303,6 +303,13 @@
                 <select id="adj-impresora">
                     <option value="default">Impresora del Sistema</option>
                 </select>
+            </div>
+            <div class="backup-section">
+                <h3>Actualizaciones</h3>
+                <p>Versión actual: <span id="version-actual">Cargando...</span></p>
+                <button class="btn-primary" onclick="verificarActualizacionManual()" id="btn-verificar-update">
+                    🔄 Verificar Actualizaciones
+                </button>
             </div>
             <div class="backup-section">
                 <h3>Seguridad</h3>
