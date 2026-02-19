@@ -79,7 +79,8 @@ function inicializarTablas() {
         referencia TEXT,
         direccion_domicilio TEXT,
         link_maps TEXT,
-        notas_generales TEXT, 
+        notas_generales TEXT,
+        info_cliente_temp TEXT,
         fecha_pedido DATETIME DEFAULT CURRENT_TIMESTAMP, 
         FOREIGN KEY (cliente_id) REFERENCES clientes(id)
     )`);

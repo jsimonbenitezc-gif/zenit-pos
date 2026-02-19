@@ -629,11 +629,22 @@ async function ejecutarVenta() {
             nota: i.nota || ''
         }));
         
-        await window.api.crearPedidoDirecto(datosPedido, itemsParaDB);
+        const pedidoId = await window.api.crearPedidoDirecto(datosPedido, itemsParaDB);
+        
+        // Guardar ID del pedido para impresión
+        window.ultimoPedidoId = pedidoId;
         
         cerrarModalPago();
         
         mostrarNotificacionExito(`Venta registrada - Total: $${total.toFixed(2)}`, '¡Venta Exitosa!');
+        
+        // Preguntar si quiere imprimir el ticket
+        setTimeout(() => {
+            const confirmar = confirm(`✅ Venta #${pedidoId} registrada correctamente\n\n¿Deseas imprimir el ticket ahora?`);
+            if (confirmar) {
+                imprimirTicket(pedidoId);
+            }
+        }, 500);
         
         // Limpiar todo
         carrito = [];
@@ -1292,6 +1303,9 @@ async function cargarPedidos() {
             <button class="btn-secondary small" onclick="verDetallePedido(${p.id}, '${p.telefono || 'General'}', ${p.total}, '${p.metodo_pago}')">
                 👁️ Ver
             </button>
+            <button class="btn-icon" onclick="imprimirTicket(${p.id})" title="Imprimir ticket" style="margin-left: 5px;">
+                🖨️
+            </button>
         </td>
     `;
     contenedor.appendChild(fila);
@@ -1419,11 +1433,11 @@ function seleccionarTipoPedido(tipo, btn) {
         
         contenedor.innerHTML = `
             <div class="campo-grupo">
-                <label>Nombre (Obligatorio)</label>
+                <label>Nombre (Opcional)</label>
                 <input type="text" id="dom-nombre" placeholder="Nombre completo" value="${nombrePrellenado}">
             </div>
             <div class="campo-grupo">
-                <label>Dirección (Obligatorio)</label>
+                <label>Dirección (Opcional)</label>
                 <input type="text" id="dom-direccion" placeholder="Calle, número, colonia" value="${direccionPrellenada}">
             </div>
             <div class="campo-grupo">
@@ -1896,6 +1910,11 @@ async function cargarAjustesInstalados() {
 
         const selectImp = document.getElementById('adj-impresora');
         if (selectImp) {
+            // Limpiar opciones existentes (excepto la primera que es "Impresora del Sistema")
+            while (selectImp.options.length > 1) {
+                selectImp.remove(1);
+            }
+            
             const impresoras = await window.api.obtenerImpresoras().catch(() => []);
             impresoras.forEach(imp => {
                 const opt = document.createElement('option');
@@ -1934,3 +1953,229 @@ function toggleDarkMode(isChecked) {
         toggle.checked = darkGuardado;
     }
 })();
+
+// ==========================================
+// SISTEMA DE IMPRESIÓN DE TICKETS
+// ==========================================
+
+async function imprimirTicket(pedidoId) {
+    try {
+        // 1. Obtener datos del pedido
+        const detalles = await window.api.obtenerDetallePedido(pedidoId);
+        const pedidos = await window.api.obtenerPedidos({ limit: 1000 });
+        const pedido = pedidos.find(p => p.id === pedidoId);
+        
+        if (!pedido || !detalles) {
+            alert('No se pudo cargar la información del pedido');
+            return;
+        }
+
+        // 2. Obtener ajustes (logo, teléfono, moneda)
+        const ajustes = await window.api.obtenerAjustes().catch(() => ({}));
+        const mostrarLogo = ajustes.show_logo === 'true';
+        const mostrarTelefono = ajustes.show_phone === 'true';
+        const moneda = ajustes.currency_symbol || '$';
+        const rutaLogo = ajustes.logo_path || './assets/logo/montana.png';
+
+        // 3. Crear HTML del ticket
+        const ticketHTML = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>Ticket #${pedido.id}</title>
+                <style>
+                    @page {
+                        size: 80mm auto;
+                        margin: 0;
+                    }
+                    * {
+                        margin: 0;
+                        padding: 0;
+                        box-sizing: border-box;
+                    }
+                    body {
+                        font-family: 'Courier New', monospace;
+                        font-size: 12px;
+                        line-height: 1.4;
+                        padding: 10px;
+                        width: 80mm;
+                    }
+                    .ticket {
+                        width: 100%;
+                    }
+                    .header {
+                        text-align: center;
+                        margin-bottom: 10px;
+                        border-bottom: 1px dashed #000;
+                        padding-bottom: 10px;
+                    }
+                    .logo {
+                        width: 60px;
+                        height: 60px;
+                        margin: 0 auto 8px;
+                    }
+                    .negocio {
+                        font-weight: bold;
+                        font-size: 16px;
+                        margin-bottom: 4px;
+                    }
+                    .info-line {
+                        font-size: 11px;
+                        margin: 2px 0;
+                    }
+                    .items {
+                        margin: 10px 0;
+                    }
+                    .item {
+                        display: flex;
+                        justify-content: space-between;
+                        margin: 4px 0;
+                        font-size: 11px;
+                    }
+                    .item-name {
+                        flex: 1;
+                    }
+                    .item-qty {
+                        width: 30px;
+                        text-align: center;
+                    }
+                    .item-price {
+                        width: 60px;
+                        text-align: right;
+                    }
+                    .nota {
+                        font-size: 10px;
+                        color: #666;
+                        margin-left: 10px;
+                        font-style: italic;
+                    }
+                    .separator {
+                        border-top: 1px dashed #000;
+                        margin: 8px 0;
+                    }
+                    .totales {
+                        margin-top: 10px;
+                    }
+                    .total-line {
+                        display: flex;
+                        justify-content: space-between;
+                        margin: 4px 0;
+                        font-size: 12px;
+                    }
+                    .total-line.final {
+                        font-weight: bold;
+                        font-size: 14px;
+                        margin-top: 6px;
+                        padding-top: 6px;
+                        border-top: 2px solid #000;
+                    }
+                    .footer {
+                        text-align: center;
+                        margin-top: 15px;
+                        font-size: 11px;
+                        border-top: 1px dashed #000;
+                        padding-top: 10px;
+                    }
+                    .gracias {
+                        font-weight: bold;
+                        margin-top: 8px;
+                    }
+                    @media print {
+                        body { margin: 0; }
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="ticket">
+                    <div class="header">
+                        ${mostrarLogo ? `<img src="${rutaLogo}" alt="Logo" class="logo">` : ''}
+                        <div class="negocio">Zenit POS</div>
+                        ${mostrarTelefono ? '<div class="info-line">Tel: (555) 123-4567</div>' : ''}
+                        <div class="info-line">Ticket #${pedido.id}</div>
+                        <div class="info-line">${new Date(pedido.fecha_pedido).toLocaleString('es-MX')}</div>
+                        ${pedido.cliente ? `<div class="info-line">Cliente: ${pedido.cliente}</div>` : ''}
+                        ${pedido.tipo_pedido ? `<div class="info-line">Tipo: ${pedido.tipo_pedido.toUpperCase()}</div>` : ''}
+                    </div>
+
+                    <div class="items">
+                        ${detalles.map(item => `
+                            <div class="item">
+                                <span class="item-name">${item.nombre}</span>
+                                <span class="item-qty">x${item.cantidad}</span>
+                                <span class="item-price">${moneda}${item.subtotal.toFixed(2)}</span>
+                            </div>
+                            ${item.nota_item ? `<div class="nota">* ${item.nota_item}</div>` : ''}
+                        `).join('')}
+                    </div>
+
+                    <div class="separator"></div>
+
+                    <div class="totales">
+                        <div class="total-line final">
+                            <span>TOTAL:</span>
+                            <span>${moneda}${pedido.total.toFixed(2)}</span>
+                        </div>
+                        <div class="total-line">
+                            <span>Método de pago:</span>
+                            <span>${pedido.metodo_pago || 'N/A'}</span>
+                        </div>
+                    </div>
+
+                    <div class="footer">
+                        <div class="gracias">¡Gracias por tu compra!</div>
+                        <div style="margin-top: 6px;">Vuelve pronto</div>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `;
+
+        // 4. Abrir ventana de impresión
+        const ventanaImpresion = window.open('', '_blank', 'width=300,height=600');
+        ventanaImpresion.document.write(ticketHTML);
+        ventanaImpresion.document.close();
+        
+        // Esperar a que cargue y luego imprimir
+        ventanaImpresion.onload = function() {
+            setTimeout(() => {
+                ventanaImpresion.print();
+                // Cerrar ventana después de imprimir (opcional)
+                // ventanaImpresion.close();
+            }, 250);
+        };
+
+    } catch (error) {
+        console.error('Error al imprimir ticket:', error);
+        alert('Error al generar el ticket de impresión');
+    }
+}
+
+// Función auxiliar para imprimir el último pedido creado
+function imprimirUltimoTicket() {
+    if (window.ultimoPedidoId) {
+        imprimirTicket(window.ultimoPedidoId);
+    }
+}
+
+// ==========================================
+// FUNCIÓN PARA SELECCIONAR LOGO
+// ==========================================
+
+async function seleccionarLogoNegocio() {
+    try {
+        const ruta = await window.api.seleccionarImagen();
+        if (ruta) {
+            // Actualizar preview
+            document.getElementById('preview-logo-ajustes').src = ruta;
+            document.getElementById('adj-logo-path').value = ruta;
+            
+            // Guardar en ajustes
+            await window.api.guardarAjuste('logo_path', ruta);
+            alert('✅ Logo actualizado correctamente');
+        }
+    } catch (error) {
+        console.error('Error al seleccionar logo:', error);
+        alert('Error al cargar la imagen');
+    }
+}

@@ -62,6 +62,7 @@ function createWindow() {
     });
     // FIX AQUÃ: Forzamos a que busque index.html en la carpeta del script
     mainWindow.loadFile(path.join(__dirname, 'index.html'));
+    mainWindow.maximize(); // Abre la ventana maximizada por defecto
 }
 
 app.whenReady().then(createWindow);

@@ -257,7 +257,9 @@ input[type="number"] {
 .modal-content { 
     background: white; 
     padding: 24px; 
-    width: 450px; 
+    width: 450px;
+    max-height: 90vh;
+    overflow-y: auto;
     border-radius: 16px; 
     display: flex; 
     flex-direction: column; 
@@ -1376,3 +1378,222 @@ body.dark .backup-section {
 .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
 input:checked + .slider { background-color: #2563eb; }
 input:checked + .slider:before { transform: translateX(22px); }
+/* ========================================
+   MODO OSCURO - COMPLETADO
+   ======================================== */
+
+/* Modales */
+body.dark .modal {
+    background: rgba(0, 0, 0, 0.8);
+}
+
+body.dark .modal-content {
+    background: #0b1220;
+    border: 1px solid #1e293b;
+}
+
+body.dark .modal-header h3,
+body.dark .modal h3 {
+    color: #f9fafb;
+}
+
+/* Cards de productos en Nueva Venta */
+body.dark .product-card {
+    background: #020617;
+    border: 1px solid #1e293b;
+    color: #e5e7eb;
+}
+
+body.dark .product-card:hover {
+    border-color: #2563eb;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+body.dark .product-card .product-name {
+    color: #f9fafb;
+}
+
+body.dark .product-card .product-price {
+    color: #10b981;
+}
+
+/* Clasificaciones en Nueva Venta */
+body.dark .clasificacion-bloque {
+    background: #0b1220;
+    border: 2px solid #1e293b;
+}
+
+body.dark .clasificacion-header {
+    border-bottom: 3px solid #2563eb;
+    color: #f9fafb;
+}
+
+/* KPIs Dashboard */
+body.dark .kpi-card,
+body.dark .stat-card {
+    background: #020617;
+    border: 1px solid #1e293b;
+}
+
+body.dark .kpi-value,
+body.dark .stat-card strong {
+    color: #f9fafb;
+}
+
+body.dark .kpi-meta,
+body.dark .kpi-meta span {
+    color: #94a3b8;
+}
+
+/* Charts */
+body.dark .chart-card {
+    background: #0b1220;
+    border: 1px solid #1e293b;
+}
+
+/* Activity cards */
+body.dark .activity-card {
+    background: #0b1220;
+    border: 1px solid #1e293b;
+}
+
+body.dark .activity-item {
+    background: #020617;
+    border-left: 3px solid #2563eb;
+}
+
+/* Badges y etiquetas */
+body.dark .badge,
+body.dark .badge-info,
+body.dark .badge-status {
+    background: #1e293b;
+    color: #cbd5e1;
+}
+
+body.dark .badge-success {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+body.dark .badge-warning {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+}
+
+body.dark .badge-danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+/* Ticket actual en Nueva Venta */
+body.dark .ticket-actual {
+    background: #0b1220;
+    border: 1px solid #1e293b;
+}
+
+body.dark .ticket-item {
+    background: #020617;
+    border-bottom: 1px solid #1e293b;
+}
+
+body.dark .ticket-item-name {
+    color: #f9fafb;
+}
+
+body.dark .ticket-item-price {
+    color: #10b981;
+}
+
+/* Botones secundarios */
+body.dark .btn-secondary {
+    background: #1e293b;
+    color: #cbd5e1;
+}
+
+body.dark .btn-secondary:hover {
+    background: #334155;
+}
+
+/* Búsqueda */
+body.dark #buscar-producto,
+body.dark #buscar-cliente {
+    background: #020617;
+    color: #e5e7eb;
+    border: 1px solid #1e293b;
+}
+
+/* Tabs de tipo de pedido */
+body.dark .tipo-pedido-container {
+    background: #020617;
+}
+
+body.dark .tipo-btn {
+    background: #1e293b;
+    color: #94a3b8;
+}
+
+body.dark .tipo-btn.active {
+    background: #2563eb;
+    color: white;
+}
+
+/* Campos dinámicos */
+body.dark .campos-dinamicos {
+    background: #020617;
+    border: 1px dashed #1e293b;
+}
+
+/* Info de cliente en pago */
+body.dark #info-cliente-pago {
+    background: #020617;
+    border: 1px dashed #1e293b;
+}
+
+/* Método de pago */
+body.dark .method-btn {
+    background: #020617;
+    border: 2px solid #1e293b;
+    color: #e5e7eb;
+}
+
+body.dark .method-btn.selected {
+    border-color: #2563eb;
+    background: rgba(37, 99, 235, 0.1);
+}
+
+/* Calculadora de cambio */
+body.dark .cash-calc {
+    background: #020617;
+    border: 1px solid #1e293b;
+}
+
+body.dark .cambio-display {
+    background: #1e293b;
+    color: #f9fafb;
+}
+
+/* Header de página */
+body.dark .header {
+    background: #0b1220;
+    border-bottom: 1px solid #1e293b;
+}
+
+/* Table cards */
+body.dark .table-card {
+    background: #0b1220;
+    border: 1px solid #1e293b;
+}
+
+body.dark .table-header {
+    border-bottom: 2px solid #1e293b;
+}
+
+/* Top productos lista */
+body.dark .top-productos-container {
+    background: #020617;
+}
+
+body.dark .top-producto-item {
+    background: #0b1220;
+    border-bottom: 1px solid #1e293b;
+}

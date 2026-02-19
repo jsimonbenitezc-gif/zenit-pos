@@ -266,6 +266,17 @@
                     <span class="slider"></span>
                 </label>
             </div>
+            
+            <div class="input-group">
+                <label>Logo del Negocio</label>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button class="btn-secondary" onclick="seleccionarLogoNegocio()">📁 Seleccionar Logo</button>
+                    <img id="preview-logo-ajustes" src="./assets/logo/montana.png" 
+                         style="width: 50px; height: 50px; border-radius: 8px; object-fit: cover; border: 1px solid #d1d5db;">
+                </div>
+                <input type="hidden" id="adj-logo-path" value="./assets/logo/montana.png">
+            </div>
+            
             <div class="setting-item">
                 <span>Mostrar Logo en Ticket</span>
                 <input type="checkbox" id="adj-show-logo" checked>
