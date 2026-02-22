@@ -53,7 +53,39 @@ contextBridge.exposeInMainWorld('api', {
     // Utils y Logo
     seleccionarImagen: () => ipcRenderer.invoke('seleccionar-imagen'),
     obtenerRutaLogo: () => {
-        // Movido adentro de la API para que sea accesible
         return "./assets/logo/montana.png"; 
-    }
+    },
+    // INVENTARIO
+    obtenerInsumos: () => ipcRenderer.invoke('obtener-insumos'),
+    agregarInsumo: (d) => ipcRenderer.invoke('agregar-insumo', d),
+    actualizarInsumo: (id, d) => ipcRenderer.invoke('actualizar-insumo', id, d),
+    eliminarInsumo: (id) => ipcRenderer.invoke('eliminar-insumo', id),
+    obtenerPreparaciones: () => ipcRenderer.invoke('obtener-preparaciones'),
+    agregarPreparacion: (d) => ipcRenderer.invoke('agregar-preparacion', d),
+    actualizarPreparacion: (id, d) => ipcRenderer.invoke('actualizar-preparacion', id, d),
+    eliminarPreparacion: (id) => ipcRenderer.invoke('eliminar-preparacion', id),
+    obtenerItemsPreparacion: (id) => ipcRenderer.invoke('obtener-items-preparacion', id),
+    guardarItemsPreparacion: (id, items) => ipcRenderer.invoke('guardar-items-preparacion', id, items),
+    obtenerRecetaProducto: (id) => ipcRenderer.invoke('obtener-receta-producto', id),
+    guardarRecetaProducto: (id, items) => ipcRenderer.invoke('guardar-receta-producto', id, items),
+    calcularStockPreparacion: (id) => ipcRenderer.invoke('calcular-stock-preparacion', id),
+    calcularStockProducto: (id) => ipcRenderer.invoke('calcular-stock-producto', id),
+    registrarEntradaInsumo: (datos) => ipcRenderer.invoke('registrar-entrada-insumo', datos),
+    obtenerEntradasInsumo: (id) => ipcRenderer.invoke('obtener-entradas-insumo', id),
+    registrarSalidaInsumo: (datos) => ipcRenderer.invoke('registrar-salida-insumo', datos),
+    obtenerSalidasInsumo: (id) => ipcRenderer.invoke('obtener-salidas-insumo', id),
+
+// OFERTAS — DESCUENTOS
+    obtenerDescuentos: () => ipcRenderer.invoke('obtener-descuentos'),
+    agregarDescuento: (d) => ipcRenderer.invoke('agregar-descuento', d),
+    actualizarDescuento: (id, d) => ipcRenderer.invoke('actualizar-descuento', id, d),
+    eliminarDescuento: (id) => ipcRenderer.invoke('eliminar-descuento', id),
+    // OFERTAS — COMBOS
+    obtenerCombos: () => ipcRenderer.invoke('obtener-combos'),
+    agregarCombo: (d) => ipcRenderer.invoke('agregar-combo', d),
+    actualizarCombo: (id, d) => ipcRenderer.invoke('actualizar-combo', id, d),
+    eliminarCombo: (id) => ipcRenderer.invoke('eliminar-combo', id),
+    obtenerItemsCombo: (id) => ipcRenderer.invoke('obtener-items-combo', id),
+    guardarItemsCombo: (id, items) => ipcRenderer.invoke('guardar-items-combo', id, items),
+
 });

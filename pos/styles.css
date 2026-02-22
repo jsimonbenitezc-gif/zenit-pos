@@ -1597,3 +1597,92 @@ body.dark .top-producto-item {
     background: #0b1220;
     border-bottom: 1px solid #1e293b;
 }
+
+/* ========================================
+   INVENTARIO
+   ======================================== */
+.inv-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    background: white;
+    padding: 8px;
+    border-radius: 14px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    border: 1px solid #f3f4f6;
+    width: fit-content;
+}
+
+.inv-tab {
+    background: transparent;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.9em;
+    font-weight: 500;
+    color: #6b7280;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+}
+
+.inv-tab:hover {
+    background: #f3f4f6;
+    color: #374151;
+}
+
+.inv-tab.active {
+    background: #2563eb;
+    color: white;
+    box-shadow: 0 4px 10px rgba(37,99,235,0.3);
+}
+
+.inv-tab.active svg {
+    stroke: white;
+}
+
+.stock-ok   { color: #10b981; font-weight: 600; }
+.stock-bajo { color: #f59e0b; font-weight: 600; }
+.stock-cero { color: #ef4444; font-weight: 600; }
+
+.badge-stock-ok   { background:#d1fae5; color:#065f46; padding:3px 10px; border-radius:12px; font-size:0.78em; font-weight:600; }
+.badge-stock-bajo { background:#fef3c7; color:#92400e; padding:3px 10px; border-radius:12px; font-size:0.78em; font-weight:600; }
+.badge-stock-cero { background:#fee2e2; color:#991b1b; padding:3px 10px; border-radius:12px; font-size:0.78em; font-weight:600; }
+
+.receta-linea {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: #f9fafb;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid #f3f4f6;
+}
+
+.receta-linea select,
+.receta-linea input {
+    font-size: 0.88em;
+    padding: 6px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+}
+
+.receta-linea select { flex: 2; }
+.receta-linea input  { flex: 1; }
+
+.receta-linea .btn-quitar {
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    font-size: 1.1em;
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+}
+
+body.dark .inv-tabs { background: #0b1220; border-color: #1e293b; }
+body.dark .inv-tab  { color: #94a3b8; }
+body.dark .inv-tab:hover { background: #1e293b; color: #e5e7eb; }
+body.dark .receta-linea { background: #020617; border-color: #1e293b; }

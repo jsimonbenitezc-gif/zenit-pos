@@ -193,6 +193,10 @@ setTimeout(() => {
         cargarCatalogoVenta();
     } else if (vista === 'clientes') {
         cargarClientes();
+    } else if (vista === 'ofertas') {
+        cargarOfertas();
+    } else if (vista === 'inventario') {
+        cargarInventario();
     } else if (vista === 'ajustes') {
         cargarAjustesInstalados();
     }
@@ -205,6 +209,8 @@ setTimeout(() => {
     productos: 'Productos',
     'nueva-venta': 'Nueva Venta',
     clientes: 'Clientes',
+    ofertas: 'Ofertas',
+    inventario: 'Inventario',
     ajustes: 'Configuración ⚙️'
 };
 
@@ -386,12 +392,34 @@ function renderizarGridVenta(listaProductos) {
         grid.innerHTML = '<p style="color:#9ca3af; text-align:center; width:100%;">No hay productos</p>';
         return;
     }
+    const mostrarStock = document.getElementById('adj-mostrar-stock')?.checked;
+
     grid.innerHTML = listaProductos.map(p => `
-        <div class="product-card" onclick="agregarAlCarrito(${p.id})">
+        <div class="product-card" onclick="agregarAlCarrito(${p.id})" id="pcard-${p.id}">
             <div class="product-visual">${p.imagen ? `<img src="file://${p.imagen}" class="product-img-display">` : `<span class="product-emoji">${p.emoji || '📦'}</span>`}</div>
             <h4>${p.nombre}</h4>
             <p class="precio">$${p.precio.toFixed(2)}</p>
+            ${mostrarStock ? `<div id="stock-badge-${p.id}" style="font-size:0.75em; color:#9ca3af; margin-top:3px;">...</div>` : ''}
         </div>`).join('');
+
+    if (mostrarStock) {
+        listaProductos.forEach(p => {
+            window.api.calcularStockProducto(p.id).then(stock => {
+                const el = document.getElementById(`stock-badge-${p.id}`);
+                if (!el) return;
+                if (stock === null) {
+                    el.innerHTML = '';
+                } else if (stock === 0) {
+                    el.innerHTML = '<span style="color:#ef4444; font-weight:600;">Sin stock</span>';
+                    document.getElementById(`pcard-${p.id}`)?.style.setProperty('opacity', '0.5');
+                } else if (stock <= 3) {
+                    el.innerHTML = `<span style="color:#f59e0b; font-weight:600;">⚠ ${stock} disponibles</span>`;
+                } else {
+                    el.innerHTML = `<span style="color:#10b981;">${stock} disponibles</span>`;
+                }
+            }).catch(() => {});
+        });
+    }
 }
 
 // --- CARRITO ---
@@ -436,9 +464,13 @@ function renderizarCarrito() {
                 ${item.nota ? `<span class="cart-note">📝 ${item.nota}</span>` : ''}
             </div>
             <div class="cart-actions">
-                <button class="btn-ticket-action" onclick="abrirModalNotas(${index})">✏️</button>
-                <button class="btn-ticket-action" onclick="eliminarDelCarrito(${index})" style="color:#ef4444">✖</button>
-            </div>
+    <button class="btn-ticket-action" onclick="abrirModalNotas(${index})" title="Agregar nota" style="display:flex; align-items:center; justify-content:center; color:#6b7280;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
+    </button>
+    <button class="btn-ticket-action" onclick="eliminarDelCarrito(${index})" title="Eliminar" style="display:flex; align-items:center; justify-content:center; color:#ef4444;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </button>
+</div>
         </div>`;
     }).join('');
     
@@ -669,13 +701,75 @@ function cerrarModalPago() {
 }
 
 // --- APLICAR DESCUENTO ---
-function abrirModalDescuento() {
-    const desc = prompt("Introduce el monto del descuento ($):", "0");
-    if (desc !== null) {
-        descuentoActual = parseFloat(desc) || 0;
-        if (descuentoActual < 0) descuentoActual = 0;
-        renderizarCarrito();
+async function abrirModalDescuento() {
+    const inputMonto = document.getElementById('desc-monto-custom');
+    const inputPct = document.getElementById('desc-pct-custom');
+    if (inputMonto) inputMonto.value = descuentoActual > 0 ? descuentoActual : '';
+    if (inputPct) inputPct.value = '';
+    
+    // Cargar descuentos predefinidos
+    const contenedor = document.getElementById('descuentos-rapidos');
+    try {
+        const descuentos = await window.api.obtenerDescuentos();
+        if (!descuentos.length) {
+            contenedor.innerHTML = '<span style="color:#9ca3af; font-size:0.85em;">Sin descuentos predefinidos. Créalos en la sección Ofertas.</span>';
+        } else {
+            const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
+            contenedor.innerHTML = descuentos.map(d => {
+                const montoCalc = d.tipo === 'porcentaje'
+                    ? (subtotal * d.valor / 100).toFixed(2)
+                    : parseFloat(d.valor).toFixed(2);
+                return `<button onclick="aplicarDescuentoRapido(${d.tipo === 'porcentaje' ? d.valor : 0}, ${d.tipo === 'monto_fijo' ? d.valor : 0})"
+                    style="background:#eff6ff; border:1px solid #bfdbfe; color:#1d4ed8; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:0.85em; font-weight:600; transition:0.2s;"
+                    onmouseover="this.style.background='#dbeafe'" onmouseout="this.style.background='#eff6ff'">
+                    ${d.nombre}<br><span style="font-weight:400; color:#6b7280;">-$${montoCalc}</span>
+                </button>`;
+            }).join('');
+        }
+    } catch(e) {
+        contenedor.innerHTML = '<span style="color:#9ca3af; font-size:0.85em;">No se pudieron cargar.</span>';
     }
+
+    actualizarPreviewDescuento();
+    document.getElementById('modal-descuento').classList.remove('hidden');
+}
+
+function aplicarDescuentoRapido(pct, monto) {
+    const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
+    descuentoActual = pct > 0 ? (subtotal * pct / 100) : monto;
+    cerrarModalDescuento();
+    renderizarCarrito();
+}
+
+function cerrarModalDescuento() {
+    document.getElementById('modal-descuento').classList.add('hidden');
+}
+
+function actualizarPreviewDescuento() {
+    const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
+    const pct = parseFloat(document.getElementById('desc-pct-custom')?.value) || 0;
+    const monto = parseFloat(document.getElementById('desc-monto-custom')?.value) || 0;
+    const descPreview = pct > 0 ? (subtotal * pct / 100) : monto;
+    const totalPreview = Math.max(0, subtotal - descPreview);
+    const el = document.getElementById('desc-preview-total');
+    if (el) el.innerText = `$${totalPreview.toFixed(2)}`;
+}
+
+function aplicarDescuentoModal() {
+    const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
+    const pct = parseFloat(document.getElementById('desc-pct-custom').value) || 0;
+    const monto = parseFloat(document.getElementById('desc-monto-custom').value) || 0;
+    descuentoActual = pct > 0 ? (subtotal * pct / 100) : monto;
+    if (descuentoActual < 0) descuentoActual = 0;
+    if (descuentoActual > subtotal) descuentoActual = subtotal;
+    cerrarModalDescuento();
+    renderizarCarrito();
+}
+
+function quitarDescuento() {
+    descuentoActual = 0;
+    cerrarModalDescuento();
+    renderizarCarrito();
 }
 
 // --- MOSTRAR NOTIFICACIÓN DE ÉXITO ---
@@ -1130,7 +1224,6 @@ async function cargarProductosAdmin() {
                             </div>
                             <h4>${p.nombre}</h4>
                             <p class="precio">$${p.precio.toFixed(2)}</p>
-                            <p style="font-size: 0.8em; color: #6b7280;">Stock: ${p.stock}</p>
                         </div>
                     `).join('') : '<p style="color: #9ca3af; padding: 20px;">No hay productos en esta categoría</p>'}
                 </div>
@@ -1156,6 +1249,25 @@ async function abrirModalProducto(p = null) {
     sel.innerHTML = '<option value="">Sin Categoría</option>' + 
         cats.map(c => `<option value="${c.id}" ${p && p.clasificacion_id==c.id ? 'selected':''}>${c.nombre}</option>`).join('');
     
+
+// Resetear estado de imagen siempre al abrir
+    rutaImagenTemporal = null;
+    document.getElementById('prodImagenRuta').value = '';
+    
+    if (p && p.imagen) {
+        // Producto existente CON imagen: mostrar imagen, ocultar emoji
+        const preview = document.getElementById('prodImagenPreview');
+        preview.src = 'file://' + p.imagen;
+        preview.style.display = 'block';
+        document.getElementById('prodEmojiDisplay').style.display = 'none';
+    } else {
+        // Producto nuevo O existente sin imagen: mostrar emoji, ocultar imagen
+        document.getElementById('prodImagenPreview').style.display = 'none';
+        document.getElementById('prodImagenPreview').src = '';
+        document.getElementById('prodEmojiDisplay').style.display = 'inline';
+        document.getElementById('prodEmojiDisplay').innerText = emojiSeleccionado;
+    }
+
     document.getElementById('modalProducto').classList.remove('hidden');
 }
 
@@ -1298,14 +1410,14 @@ async function cargarPedidos() {
         <td style="text-transform: capitalize;">${p.metodo_pago}</td>
         <td><strong>$${parseFloat(p.total).toFixed(2)}</strong></td>
         <td>${renderizarEstadoPedido(p.id, p.estado)}</td>
-        <td><span class="status-badge">Completado</span></td>
         <td>
-            <button class="btn-secondary small" onclick="verDetallePedido(${p.id}, '${p.telefono || 'General'}', ${p.total}, '${p.metodo_pago}')">
-                👁️ Ver
-            </button>
-            <button class="btn-icon" onclick="imprimirTicket(${p.id})" title="Imprimir ticket" style="margin-left: 5px;">
-                🖨️
-            </button>
+            <button class="btn-secondary small" onclick="verDetallePedido(${p.id}, '${p.telefono || 'General'}', ${p.total}, '${p.metodo_pago}')" style="display:inline-flex; align-items:center; gap:5px;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+    Ver
+</button>
+<button class="btn-icon" onclick="imprimirTicket(${p.id})" title="Imprimir ticket" style="margin-left: 5px; display:inline-flex; align-items:center;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6"/><rect x="6" y="14" width="12" height="8" rx="1"/></svg>
+</button>
         </td>
     `;
     contenedor.appendChild(fila);
@@ -1917,8 +2029,12 @@ async function cargarAjustesInstalados() {
             if(document.getElementById('preview-logo-ajustes')) {
                 document.getElementById('preview-logo-ajustes').src = ajustes.logo_path;
             }
-        }
-        
+        }   
+
+        // Stock en Nueva Venta
+        if(document.getElementById('adj-mostrar-stock'))
+            document.getElementById('adj-mostrar-stock').checked = (ajustes.mostrar_stock_venta === 'true');
+
         // Modo oscuro
         if(ajustes.dark_mode === 'true') {
             const checkDark = document.getElementById('adj-darkmode');
@@ -2393,4 +2509,836 @@ function guardarTodosLosAjustes() {
     }
     // Muestra el mensaje de éxito en pantalla
     mostrarNotificacionExito('Los ajustes se han guardado correctamente', '¡Ajustes Guardados!');
+}
+
+// ============================================
+// MÓDULO DE INVENTARIO
+// ============================================
+
+let insumosCache = [];
+let preparacionesCache = [];
+let productosRecetaCache = [];
+let insumoEditandoId = null;
+let preparacionEditandoId = null;
+let productoRecetaActual = null;
+
+async function cargarInventario() {
+    try {
+        insumosCache = await window.api.obtenerInsumos();
+        preparacionesCache = await window.api.obtenerPreparaciones();
+        const agrupados = await window.api.obtenerProductosAgrupados();
+        productosRecetaCache = [];
+        agrupados.forEach(cat => {
+            cat.productos.forEach(p => {
+                productosRecetaCache.push({ ...p, categoria: cat.nombre });
+            });
+        });
+        renderizarTablaInsumos();
+        renderizarTablaPreparaciones();
+        renderizarTablaRecetas();
+    } catch (e) {
+        console.error('Error al cargar inventario:', e);
+    }
+}
+
+function cambiarTabInventario(tab, btn) {
+    document.querySelectorAll('.inv-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.inv-panel').forEach(p => p.style.display = 'none');
+    document.getElementById(`inv-panel-${tab}`).style.display = 'block';
+    if (tab === 'entradas') cargarTablaEntradas();
+    if (tab === 'salidas') cargarTablaSalidas();
+}
+
+// --- INSUMOS ---
+function renderizarTablaInsumos() {
+    const tbody = document.getElementById('tabla-insumos');
+    if (!insumosCache.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:#9ca3af;">
+            Aún no has registrado insumos. Haz clic en "+ Agregar Insumo" para comenzar.
+        </td></tr>`;
+        return;
+    }
+    tbody.innerHTML = insumosCache.map(ins => {
+        let estadoBadge, estadoClase;
+        if (ins.stock_actual <= 0) {
+            estadoBadge = 'Sin stock'; estadoClase = 'badge-stock-cero';
+        } else if (ins.stock_minimo > 0 && ins.stock_actual <= ins.stock_minimo) {
+            estadoBadge = 'Stock bajo'; estadoClase = 'badge-stock-bajo';
+        } else {
+            estadoBadge = 'Normal'; estadoClase = 'badge-stock-ok';
+        }
+        return `<tr>
+            <td><strong>${ins.nombre}</strong></td>
+            <td><span class="badge-info">${ins.unidad}</span></td>
+            <td class="${ins.stock_actual <= 0 ? 'stock-cero' : ins.stock_actual <= ins.stock_minimo && ins.stock_minimo > 0 ? 'stock-bajo' : 'stock-ok'}">
+                ${ins.stock_actual} ${ins.unidad}
+            </td>
+            <td style="color:#6b7280;">${ins.stock_minimo > 0 ? ins.stock_minimo + ' ' + ins.unidad : '—'}</td>
+            <td><span class="${estadoClase}">${estadoBadge}</span></td>
+            <td>
+                <div style="display:flex; gap:6px;">
+                    <button class="btn-secondary small" onclick="editarInsumo(${ins.id})" style="display:inline-flex;align-items:center;gap:4px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
+                        Editar
+                    </button>
+                    <button class="btn-secondary small" onclick="confirmarEliminarInsumo(${ins.id}, '${ins.nombre}')" style="color:#ef4444; display:inline-flex;align-items:center;gap:4px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+// Unidades que necesitan conversión (no son nativas de peso/volumen)
+const UNIDADES_CON_CONVERSION = ['pzas', 'latas', 'bolsas', 'porciones'];
+
+function abrirModalInsumo(ins = null) {
+    insumoEditandoId = ins ? ins.id : null;
+    document.getElementById('modal-insumo-titulo').innerText = ins ? 'Editar Insumo' : 'Nuevo Insumo';
+    document.getElementById('ins-nombre').value = ins ? ins.nombre : '';
+    document.getElementById('ins-unidad').value = ins ? ins.unidad : 'kg';
+    document.getElementById('ins-stock').value = ins ? ins.stock_actual : '';
+    document.getElementById('ins-minimo').value = ins ? ins.stock_minimo : '';
+
+    // Mostrar/ocultar bloque de conversión según unidad
+    const unidad = ins ? ins.unidad : 'kg';
+    const bloqueConv = document.getElementById('bloque-conversion');
+    if (UNIDADES_CON_CONVERSION.includes(unidad)) {
+        bloqueConv.style.display = 'block';
+        document.getElementById('conv-unidad-label').innerText = unidad;
+        document.getElementById('ins-contenido-cantidad').value = ins ? ins.contenido_cantidad || '' : '';
+        document.getElementById('ins-contenido-unidad').value = ins ? ins.contenido_unidad || 'g' : 'g';
+    } else {
+        bloqueConv.style.display = 'none';
+    }
+
+    // Listener para que el bloque aparezca/desaparezca al cambiar la unidad
+    document.getElementById('ins-unidad').onchange = function() {
+        const u = this.value;
+        document.getElementById('conv-unidad-label').innerText = u;
+        document.getElementById('bloque-conversion').style.display =
+            UNIDADES_CON_CONVERSION.includes(u) ? 'block' : 'none';
+    };
+
+    document.getElementById('modal-insumo').classList.remove('hidden');
+}
+
+function cerrarModalInsumo() {
+    document.getElementById('modal-insumo').classList.add('hidden');
+    insumoEditandoId = null;
+}
+
+async function guardarInsumo() {
+    const nombre = document.getElementById('ins-nombre').value.trim();
+    const unidad = document.getElementById('ins-unidad').value;
+    const stock_actual = parseFloat(document.getElementById('ins-stock').value) || 0;
+    const stock_minimo = parseFloat(document.getElementById('ins-minimo').value) || 0;
+    if (!nombre) { alert('El nombre es obligatorio'); return; }
+    try {
+        const contenido_cantidad = parseFloat(document.getElementById('ins-contenido-cantidad').value) || null;
+        const contenido_unidad = document.getElementById('ins-contenido-unidad').value || null;
+        const datos = { nombre, unidad, stock_actual, stock_minimo, contenido_cantidad, contenido_unidad };
+        if (insumoEditandoId) {
+            await window.api.actualizarInsumo(insumoEditandoId, datos);
+        } else {
+            await window.api.agregarInsumo(datos);
+        }
+        cerrarModalInsumo();
+        insumosCache = await window.api.obtenerInsumos();
+        renderizarTablaInsumos();
+        mostrarNotificacionExito('Insumo guardado', '¡Guardado!');
+    } catch (e) { alert('Error al guardar el insumo'); }
+}
+
+function editarInsumo(id) {
+    const ins = insumosCache.find(i => i.id === id);
+    if (ins) abrirModalInsumo(ins);
+}
+
+async function confirmarEliminarInsumo(id, nombre) {
+    if (confirm(`¿Eliminar el insumo "${nombre}"?\n\nSe eliminará de todas las preparaciones y recetas donde aparezca.`)) {
+        await window.api.eliminarInsumo(id);
+        insumosCache = await window.api.obtenerInsumos();
+        renderizarTablaInsumos();
+        mostrarNotificacionExito('Insumo eliminado', '¡Eliminado!');
+    }
+}
+
+// --- PREPARACIONES ---
+function renderizarTablaPreparaciones() {
+    const tbody = document.getElementById('tabla-preparaciones');
+    if (!preparacionesCache.length) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:30px; color:#9ca3af;">
+            Aún no hay preparaciones. Úsalas para modelar mezclas o concentrados hechos en cocina.
+        </td></tr>`;
+        return;
+    }
+    tbody.innerHTML = preparacionesCache.map(prep => `<tr>
+        <td><strong>${prep.nombre}</strong></td>
+        <td style="color:#6b7280;">${prep.descripcion || '—'}</td>
+        <td>
+            <span class="badge-info" id="prep-count-${prep.id}">...</span>
+            <span id="prep-stock-${prep.id}" style="display:block; font-size:0.8em; margin-top:4px; color:#9ca3af;">...</span>
+        </td>
+        <td>
+            <div style="display:flex; gap:6px;">
+                <button class="btn-secondary small" onclick="editarPreparacion(${prep.id})" style="display:inline-flex;align-items:center;gap:4px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
+                    Editar
+                </button>
+                <button class="btn-secondary small" onclick="confirmarEliminarPreparacion(${prep.id}, '${prep.nombre}')" style="color:#ef4444; display:inline-flex;align-items:center;gap:4px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+            </div>
+        </td>
+    </tr>`).join('');
+
+    // Cargar conteo de items por preparación
+    preparacionesCache.forEach(prep => {
+        window.api.obtenerItemsPreparacion(prep.id).then(items => {
+            const el = document.getElementById(`prep-count-${prep.id}`);
+            if (el) el.innerText = `${items.length} insumo${items.length !== 1 ? 's' : ''}`;
+        });
+        window.api.calcularStockPreparacion(prep.id).then(stock => {
+            const el = document.getElementById(`prep-stock-${prep.id}`);
+            if (!el) return;
+            if (stock === null) { el.innerText = ''; return; }
+            if (stock === 0) {
+                el.innerHTML = '<span style="color:#ef4444; font-weight:600;">Sin stock para preparar</span>';
+            } else {
+                el.innerHTML = `<span style="color:#10b981; font-weight:600;">✓ ${stock} porción${stock !== 1 ? 'es' : ''} posibles</span>`;
+            }
+        }).catch(() => {});
+    });
+}
+
+function abrirModalPreparacion(prep = null) {
+    preparacionEditandoId = prep ? prep.id : null;
+    document.getElementById('modal-prep-titulo').innerText = prep ? 'Editar Preparación' : 'Nueva Preparación';
+    document.getElementById('prep-nombre').value = prep ? prep.nombre : '';
+    document.getElementById('prep-descripcion').value = prep ? prep.descripcion || '' : '';
+    document.getElementById('prep-items-lista').innerHTML = '';
+
+    if (prep) {
+        window.api.obtenerItemsPreparacion(prep.id).then(items => {
+            items.forEach(item => agregarLineaPrep(item));
+        });
+    } else {
+        agregarLineaPrep();
+    }
+    document.getElementById('modal-preparacion').classList.remove('hidden');
+}
+
+function cerrarModalPreparacion() {
+    document.getElementById('modal-preparacion').classList.add('hidden');
+    preparacionEditandoId = null;
+}
+
+function agregarLineaPrep(itemExistente = null) {
+    const lista = document.getElementById('prep-items-lista');
+    const div = document.createElement('div');
+    div.className = 'receta-linea';
+    const opcionesInsumos = insumosCache.map(i =>
+        `<option value="${i.id}" ${itemExistente && itemExistente.insumo_id === i.id ? 'selected' : ''}>${i.nombre} (${i.unidad})</option>`
+    ).join('');
+    div.innerHTML = `
+        <select>${insumosCache.length ? opcionesInsumos : '<option value="">— Sin insumos —</option>'}</select>
+        <input type="number" placeholder="Cantidad" min="0" step="0.01" value="${itemExistente ? itemExistente.cantidad : ''}">
+        <button class="btn-quitar" onclick="this.parentElement.remove()" title="Quitar">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+    `;
+    lista.appendChild(div);
+}
+
+async function guardarPreparacion() {
+    const nombre = document.getElementById('prep-nombre').value.trim();
+    if (!nombre) { alert('El nombre es obligatorio'); return; }
+    const items = [];
+    document.querySelectorAll('#prep-items-lista .receta-linea').forEach(linea => {
+        const sel = linea.querySelector('select');
+        const inp = linea.querySelector('input');
+        if (sel.value && inp.value) {
+            items.push({ insumo_id: parseInt(sel.value), cantidad: parseFloat(inp.value) });
+        }
+    });
+    try {
+        const datos = { nombre, descripcion: document.getElementById('prep-descripcion').value.trim() };
+        if (preparacionEditandoId) {
+            await window.api.actualizarPreparacion(preparacionEditandoId, datos);
+            await window.api.guardarItemsPreparacion(preparacionEditandoId, items);
+        } else {
+            await window.api.agregarPreparacion(datos);
+            const preps = await window.api.obtenerPreparaciones();
+            const nueva = preps[preps.length - 1];
+            await window.api.guardarItemsPreparacion(nueva.id, items);
+        }
+        cerrarModalPreparacion();
+        preparacionesCache = await window.api.obtenerPreparaciones();
+        renderizarTablaPreparaciones();
+        mostrarNotificacionExito('Preparación guardada', '¡Guardado!');
+    } catch (e) { console.error(e); alert('Error al guardar la preparación'); }
+}
+
+async function editarPreparacion(id) {
+    const prep = preparacionesCache.find(p => p.id === id);
+    if (prep) abrirModalPreparacion(prep);
+}
+
+async function confirmarEliminarPreparacion(id, nombre) {
+    if (confirm(`¿Eliminar la preparación "${nombre}"?`)) {
+        await window.api.eliminarPreparacion(id);
+        preparacionesCache = await window.api.obtenerPreparaciones();
+        renderizarTablaPreparaciones();
+        mostrarNotificacionExito('Preparación eliminada', '¡Eliminado!');
+    }
+}
+
+// --- RECETAS ---
+function renderizarTablaRecetas() {
+    const tbody = document.getElementById('tabla-recetas');
+    if (!productosRecetaCache.length) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:30px; color:#9ca3af;">No hay productos en el menú.</td></tr>`;
+        return;
+    }
+    tbody.innerHTML = productosRecetaCache.map(p => `<tr>
+        <td>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span>${p.emoji || '📦'}</span>
+                <strong>${p.nombre}</strong>
+            </div>
+        </td>
+        <td><span class="badge-info">${p.categoria || '—'}</span></td>
+        <td><span id="receta-count-${p.id}" style="color:#6b7280; font-size:0.9em;">Cargando...</span></td>
+        <td>
+            <button class="btn-secondary small" onclick="abrirModalReceta(${p.id}, '${p.nombre.replace(/'/g,'')}')" style="display:inline-flex;align-items:center;gap:4px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
+                Editar receta
+            </button>
+        </td>
+    </tr>`).join('');
+
+    productosRecetaCache.forEach(p => {
+        window.api.obtenerRecetaProducto(p.id).then(items => {
+            const el = document.getElementById(`receta-count-${p.id}`);
+            if (el) el.innerText = items.length > 0
+                ? `${items.length} ingrediente${items.length !== 1 ? 's' : ''}`
+                : 'Sin receta';
+        });
+    });
+}
+
+async function abrirModalReceta(productoId, nombre) {
+    productoRecetaActual = productoId;
+    document.getElementById('modal-receta-titulo').innerText = `Receta: ${nombre}`;
+    document.getElementById('receta-items-lista').innerHTML = '';
+    const items = await window.api.obtenerRecetaProducto(productoId);
+    if (items.length > 0) {
+        items.forEach(item => agregarLineaReceta(item));
+    } else {
+        agregarLineaReceta();
+    }
+    document.getElementById('modal-receta').classList.remove('hidden');
+}
+
+function cerrarModalReceta() {
+    document.getElementById('modal-receta').classList.add('hidden');
+    productoRecetaActual = null;
+}
+
+function agregarLineaReceta(itemExistente = null) {
+    const lista = document.getElementById('receta-items-lista');
+    const div = document.createElement('div');
+    div.className = 'receta-linea';
+
+    const opcionesInsumos = insumosCache.map(i =>
+        `<option value="insumo_${i.id}" ${itemExistente && itemExistente.tipo === 'insumo' && itemExistente.referencia_id === i.id ? 'selected' : ''}>🧂 ${i.nombre} (${i.unidad})</option>`
+    ).join('');
+    const opcionesPrep = preparacionesCache.map(p =>
+        `<option value="preparacion_${p.id}" ${itemExistente && itemExistente.tipo === 'preparacion' && itemExistente.referencia_id === p.id ? 'selected' : ''}>🧪 ${p.nombre}</option>`
+    ).join('');
+
+    div.innerHTML = `
+        <select class="sel-ingrediente" onchange="actualizarUnidadReceta(this)">
+            <optgroup label="Insumos">${opcionesInsumos || '<option disabled>Sin insumos</option>'}</optgroup>
+            <optgroup label="Preparaciones">${opcionesPrep || '<option disabled>Sin preparaciones</option>'}</optgroup>
+        </select>
+        <input type="number" placeholder="Cantidad" min="0" step="0.01" value="${itemExistente ? itemExistente.cantidad : ''}">
+        <select class="sel-unidad-receta" style="flex:1; min-width:60px;">
+            <option value="">—</option>
+        </select>
+        <button class="btn-quitar" onclick="this.parentElement.remove()" title="Quitar">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+    `;
+    lista.appendChild(div);
+
+    // Inicializar unidades al cargar
+    const selIngrediente = div.querySelector('.sel-ingrediente');
+    actualizarUnidadReceta(selIngrediente, itemExistente ? itemExistente.unidad_receta : null);
+}
+
+// Equivalencias automáticas entre unidades del mismo tipo
+const EQUIVALENCIAS_UNIDAD = {
+    'kg':     [{ unidad: 'g',   factor: 1000,    label: 'g (gramos)' }],
+    'g':      [{ unidad: 'kg',  factor: 0.001,   label: 'kg (kilogramos)' }],
+    'l':      [{ unidad: 'ml',  factor: 1000,    label: 'ml (mililitros)' },
+               { unidad: 'gal', factor: 0.26417, label: 'gal (galones)' }],
+    'ml':     [{ unidad: 'l',   factor: 0.001,   label: 'l (litros)' }],
+    'gal':    [{ unidad: 'l',   factor: 3.78541, label: 'l (litros)' },
+               { unidad: 'ml',  factor: 3785.41, label: 'ml (mililitros)' }],
+    'latas':  [],
+    'bolsas': [],
+    'pzas':   [],
+    'porciones': [],
+};
+
+// Unidades compatibles entre sí para conversiones cruzadas
+const FAMILIAS_UNIDAD = {
+    peso:   ['kg', 'g'],
+    volumen: ['l', 'ml', 'gal'],
+};
+
+function obtenerUnidadesCompatibles(unidadNativa, contenidoUnidad) {
+    // Todas las unidades que el usuario puede elegir en la receta
+    const opciones = new Set([unidadNativa]);
+
+    // Equivalencias directas de la unidad nativa
+    (EQUIVALENCIAS_UNIDAD[unidadNativa] || []).forEach(eq => opciones.add(eq.unidad));
+
+    // Si el insumo tiene conversión de presentación (latas→kg, bolsas→ml etc.)
+    if (contenidoUnidad) {
+        opciones.add(contenidoUnidad);
+        // Y también las equivalencias de esa unidad de contenido (si es kg, agregar g; si es l, agregar ml)
+        (EQUIVALENCIAS_UNIDAD[contenidoUnidad] || []).forEach(eq => opciones.add(eq.unidad));
+    }
+
+    return [...opciones];
+}
+
+function actualizarUnidadReceta(selectIngrediente, unidadGuardada = null) {
+    const linea = selectIngrediente.closest('.receta-linea');
+    const selUnidad = linea.querySelector('.sel-unidad-receta');
+    const val = selectIngrediente.value;
+
+    if (!val || val.startsWith('preparacion_')) {
+        selUnidad.innerHTML = '<option value="">—</option>';
+        selUnidad.style.display = 'none';
+        return;
+    }
+
+    const insumoId = parseInt(val.replace('insumo_', ''));
+    const insumo = insumosCache.find(i => i.id === insumoId);
+    if (!insumo) { selUnidad.innerHTML = '<option value="">—</option>'; return; }
+
+    selUnidad.style.display = 'inline-block';
+
+    const unidadesDisponibles = obtenerUnidadesCompatibles(insumo.unidad, insumo.contenido_unidad);
+
+    // Etiquetas amigables para cada unidad
+    const etiquetas = {
+        'kg': 'kg', 'g': 'g', 'l': 'l', 'ml': 'ml', 'gal': 'gal',
+        'latas': 'latas', 'bolsas': 'bolsas', 'pzas': 'pzas', 'porciones': 'porciones'
+    };
+
+    selUnidad.innerHTML = unidadesDisponibles.map(u => {
+        let label = etiquetas[u] || u;
+        // Si es la unidad de contenido, mostrar la conversión como referencia
+        if (u === insumo.contenido_unidad && insumo.contenido_cantidad && u !== insumo.unidad) {
+            label += ` (1 ${insumo.unidad} = ${insumo.contenido_cantidad}${u})`;
+        }
+        const selected = (unidadGuardada === u) || (!unidadGuardada && u === insumo.unidad) ? 'selected' : '';
+        return `<option value="${u}" ${selected}>${label}</option>`;
+    }).join('');
+}
+
+async function guardarReceta() {
+    const items = [];
+    document.querySelectorAll('#receta-items-lista .receta-linea').forEach(linea => {
+        const sel = linea.querySelector('.sel-ingrediente');
+        const inp = linea.querySelector('input');
+        const selUnidad = linea.querySelector('.sel-unidad-receta');
+        if (sel && sel.value && inp && inp.value) {
+            const [tipo, idStr] = sel.value.split('_');
+            const unidad_receta = selUnidad && selUnidad.value ? selUnidad.value : null;
+            items.push({ tipo, referencia_id: parseInt(idStr), cantidad: parseFloat(inp.value), unidad_receta });
+        }
+    });
+    try {
+        await window.api.guardarRecetaProducto(productoRecetaActual, items);
+        cerrarModalReceta();
+        renderizarTablaRecetas();
+        mostrarNotificacionExito('Receta guardada', '¡Guardado!');
+    } catch (e) { alert('Error al guardar la receta'); }
+}
+
+function guardarAjusteDirecto(clave, valor) {
+    window.api.guardarAjuste(clave, String(valor));
+}
+
+// ============================================
+// INVENTARIO — ENTRADAS DE INSUMOS
+// ============================================
+
+async function cargarTablaEntradas() {
+    const tbody = document.getElementById('tabla-entradas');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px; color:#9ca3af;">Cargando...</td></tr>';
+    try {
+        const entradas = await window.api.obtenerEntradasInsumo(null);
+        if (!entradas.length) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:30px; color:#9ca3af;">Aún no hay entradas registradas. Usa "+ Registrar Entrada" para iniciar el historial.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = entradas.map(e => {
+            const fecha = new Date(e.fecha.replace(' ', 'T')).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+            return `<tr>
+                <td><strong>${e.insumo_nombre}</strong></td>
+                <td><span style="color:#10b981; font-weight:600;">+${e.cantidad} ${e.unidad}</span></td>
+                <td style="color:#6b7280;">${e.notas || '—'}</td>
+                <td style="color:#9ca3af; font-size:0.9em;">${fecha}</td>
+            </tr>`;
+        }).join('');
+    } catch(e) { console.error(e); }
+}
+
+function abrirModalEntrada() {
+    const select = document.getElementById('entrada-insumo-id');
+    select.innerHTML = insumosCache.map(i => `<option value="${i.id}">${i.nombre} (${i.unidad}) — Stock actual: ${i.stock_actual}</option>`).join('');
+    document.getElementById('entrada-cantidad').value = '';
+    document.getElementById('entrada-notas').value = '';
+    document.getElementById('modal-entrada').classList.remove('hidden');
+}
+
+function cerrarModalEntrada() {
+    document.getElementById('modal-entrada').classList.add('hidden');
+}
+
+async function guardarEntrada() {
+    const insumo_id = parseInt(document.getElementById('entrada-insumo-id').value);
+    const cantidad = parseFloat(document.getElementById('entrada-cantidad').value);
+    const notas = document.getElementById('entrada-notas').value.trim();
+    if (!insumo_id || !cantidad || cantidad <= 0) { alert('Selecciona un insumo y escribe una cantidad válida.'); return; }
+    try {
+        await window.api.registrarEntradaInsumo({ insumo_id, cantidad, notas });
+        cerrarModalEntrada();
+        insumosCache = await window.api.obtenerInsumos();
+        renderizarTablaInsumos();
+        renderizarTablaPreparaciones();
+        cargarTablaEntradas();
+        mostrarNotificacionExito(`+${cantidad} registrado correctamente`, '¡Entrada Registrada!');
+    } catch(e) { alert('Error al registrar la entrada'); }
+}
+
+// ============================================
+// INVENTARIO — SALIDAS DE INSUMOS
+// ============================================
+
+async function cargarTablaSalidas() {
+    const tbody = document.getElementById('tabla-salidas');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:#9ca3af;">Cargando...</td></tr>';
+    try {
+        const salidas = await window.api.obtenerSalidasInsumo(null);
+        if (!salidas.length) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:30px; color:#9ca3af;">Sin salidas registradas.</td></tr>';
+            return;
+        }
+        const motivos = { merma:'Merma', caducidad:'Caducidad', accidente:'Accidente', robo:'Pérdida/Robo', ajuste:'Ajuste', otro:'Otro' };
+        tbody.innerHTML = salidas.map(s => {
+            const fecha = new Date(s.fecha.replace(' ','T')).toLocaleString('es-MX', { dateStyle:'short', timeStyle:'short' });
+            return `<tr>
+                <td><strong>${s.insumo_nombre}</strong></td>
+                <td><span style="color:#ef4444; font-weight:600;">−${s.cantidad} ${s.unidad}</span></td>
+                <td><span class="badge-info">${motivos[s.motivo] || s.motivo}</span></td>
+                <td style="color:#6b7280;">${s.notas || '—'}</td>
+                <td style="color:#9ca3af; font-size:0.9em;">${fecha}</td>
+            </tr>`;
+        }).join('');
+    } catch(e) { console.error(e); }
+}
+
+function abrirModalSalida() {
+    const select = document.getElementById('salida-insumo-id');
+    select.innerHTML = insumosCache.map(i =>
+        `<option value="${i.id}">${i.nombre} (${i.unidad}) — Stock: ${i.stock_actual}</option>`
+    ).join('');
+    document.getElementById('salida-cantidad').value = '';
+    document.getElementById('salida-notas').value = '';
+    document.getElementById('modal-salida').classList.remove('hidden');
+}
+
+function cerrarModalSalida() {
+    document.getElementById('modal-salida').classList.add('hidden');
+}
+
+async function guardarSalida() {
+    const insumo_id = parseInt(document.getElementById('salida-insumo-id').value);
+    const cantidad = parseFloat(document.getElementById('salida-cantidad').value);
+    const motivo = document.getElementById('salida-motivo').value;
+    const notas = document.getElementById('salida-notas').value.trim();
+    if (!insumo_id || !cantidad || cantidad <= 0) { alert('Selecciona un insumo y escribe una cantidad válida.'); return; }
+    try {
+        await window.api.registrarSalidaInsumo({ insumo_id, cantidad, motivo, notas });
+        cerrarModalSalida();
+        insumosCache = await window.api.obtenerInsumos();
+        renderizarTablaInsumos();
+        renderizarTablaPreparaciones();
+        cargarTablaSalidas();
+        mostrarNotificacionExito(`−${cantidad} registrado`, '¡Salida Registrada!');
+    } catch(e) { alert('Error al registrar la salida'); }
+}
+
+// ============================================
+// MÓDULO DE OFERTAS
+// ============================================
+
+let descuentosCache = [];
+let combosCache = [];
+let descuentoEditandoId = null;
+let comboEditandoId = null;
+
+async function cargarOfertas() {
+    try {
+        descuentosCache = await window.api.obtenerDescuentos();
+        combosCache = await window.api.obtenerCombos();
+        // También recargar productos para el selector de combos
+        if (!productosGlobales.length) {
+            const agrupados = await window.api.obtenerProductosAgrupados();
+            productosGlobales = [];
+            agrupados.forEach(cat => cat.productos.forEach(p => productosGlobales.push({...p, categoria: cat.nombre})));
+        }
+        renderizarTablaDescuentos();
+        renderizarTablaCombos();
+    } catch(e) { console.error('Error al cargar ofertas:', e); }
+}
+
+function cambiarTabOfertas(tab, btn) {
+    document.querySelectorAll('.inv-tabs .inv-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('oferta-panel-descuentos').style.display = tab === 'descuentos' ? 'block' : 'none';
+    document.getElementById('oferta-panel-combos').style.display = tab === 'combos' ? 'block' : 'none';
+}
+
+// --- DESCUENTOS ---
+function renderizarTablaDescuentos() {
+    const tbody = document.getElementById('tabla-descuentos');
+    if (!descuentosCache.length) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:30px; color:#9ca3af;">
+            Sin descuentos. Crea uno con el botón de arriba — aparecerán en el modal de cobro de Nueva Venta.
+        </td></tr>`;
+        return;
+    }
+    tbody.innerHTML = descuentosCache.map(d => `<tr>
+        <td><strong>${d.nombre}</strong></td>
+        <td><span class="badge-info">${d.tipo === 'porcentaje' ? 'Porcentaje' : 'Monto fijo'}</span></td>
+        <td style="font-weight:600; color:#2563eb;">${d.tipo === 'porcentaje' ? d.valor + '%' : '$' + parseFloat(d.valor).toFixed(2)}</td>
+        <td>
+            <div style="display:flex; gap:6px;">
+                <button class="btn-secondary small" onclick="editarDescuento(${d.id})" style="display:inline-flex;align-items:center;gap:4px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
+                    Editar
+                </button>
+                <button class="btn-secondary small" onclick="confirmarEliminarDescuento(${d.id}, '${d.nombre}')" style="color:#ef4444; display:inline-flex;align-items:center;gap:4px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+            </div>
+        </td>
+    </tr>`).join('');
+}
+
+function abrirModalNuevoDescuento(d = null) {
+    descuentoEditandoId = d ? d.id : null;
+    document.getElementById('modal-desc-titulo').innerText = d ? 'Editar Descuento' : 'Nuevo Descuento';
+    document.getElementById('ndesc-nombre').value = d ? d.nombre : '';
+    document.getElementById('ndesc-tipo').value = d ? d.tipo : 'porcentaje';
+    document.getElementById('ndesc-valor').value = d ? d.valor : '';
+    actualizarLabelDescuento();
+    document.getElementById('modal-nuevo-descuento').classList.remove('hidden');
+}
+
+function cerrarModalNuevoDescuento() {
+    document.getElementById('modal-nuevo-descuento').classList.add('hidden');
+    descuentoEditandoId = null;
+}
+
+function actualizarLabelDescuento() {
+    const tipo = document.getElementById('ndesc-tipo').value;
+    document.getElementById('ndesc-valor-label').innerText = tipo === 'porcentaje' ? 'Valor (%)' : 'Valor ($)';
+}
+
+async function guardarDescuento() {
+    const nombre = document.getElementById('ndesc-nombre').value.trim();
+    const tipo = document.getElementById('ndesc-tipo').value;
+    const valor = parseFloat(document.getElementById('ndesc-valor').value);
+    if (!nombre || isNaN(valor) || valor <= 0) { alert('Completa todos los campos correctamente.'); return; }
+    try {
+        const datos = { nombre, tipo, valor };
+        if (descuentoEditandoId) {
+            await window.api.actualizarDescuento(descuentoEditandoId, datos);
+        } else {
+            await window.api.agregarDescuento(datos);
+        }
+        cerrarModalNuevoDescuento();
+        descuentosCache = await window.api.obtenerDescuentos();
+        renderizarTablaDescuentos();
+        mostrarNotificacionExito('Descuento guardado', '¡Guardado!');
+    } catch(e) { alert('Error al guardar el descuento'); }
+}
+
+function editarDescuento(id) {
+    const d = descuentosCache.find(x => x.id === id);
+    if (d) abrirModalNuevoDescuento(d);
+}
+
+async function confirmarEliminarDescuento(id, nombre) {
+    if (confirm(`¿Eliminar el descuento "${nombre}"?`)) {
+        await window.api.eliminarDescuento(id);
+        descuentosCache = await window.api.obtenerDescuentos();
+        renderizarTablaDescuentos();
+        mostrarNotificacionExito('Descuento eliminado', '¡Eliminado!');
+    }
+}
+
+// --- COMBOS ---
+function renderizarTablaCombos() {
+    const tbody = document.getElementById('tabla-combos');
+    if (!combosCache.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:#9ca3af;">
+            Sin combos. Crea uno agrupando productos con un precio especial.
+        </td></tr>`;
+        return;
+    }
+    tbody.innerHTML = combosCache.map(c => `<tr>
+        <td><strong>${c.nombre}</strong></td>
+        <td style="color:#6b7280;">${c.descripcion || '—'}</td>
+        <td style="font-weight:700; color:#10b981;">$${parseFloat(c.precio_especial).toFixed(2)}</td>
+        <td><span id="combo-count-${c.id}" class="badge-info">...</span></td>
+        <td>
+            <div style="display:flex; gap:6px;">
+                <button class="btn-secondary small" onclick="editarCombo(${c.id})" style="display:inline-flex;align-items:center;gap:4px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
+                    Editar
+                </button>
+                <button class="btn-secondary small" onclick="confirmarEliminarCombo(${c.id}, '${c.nombre}')" style="color:#ef4444; display:inline-flex;align-items:center;gap:4px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+            </div>
+        </td>
+    </tr>`).join('');
+
+    combosCache.forEach(c => {
+        window.api.obtenerItemsCombo(c.id).then(items => {
+            const el = document.getElementById(`combo-count-${c.id}`);
+            if (el) el.innerText = `${items.length} producto${items.length !== 1 ? 's' : ''}`;
+        });
+    });
+}
+
+function abrirModalNuevoCombo(combo = null) {
+    comboEditandoId = combo ? combo.id : null;
+    document.getElementById('modal-combo-titulo').innerText = combo ? 'Editar Combo' : 'Nuevo Combo';
+    document.getElementById('ncombo-nombre').value = combo ? combo.nombre : '';
+    document.getElementById('ncombo-precio').value = combo ? combo.precio_especial : '';
+    document.getElementById('ncombo-descripcion').value = combo ? combo.descripcion || '' : '';
+    document.getElementById('combo-items-lista').innerHTML = '';
+    document.getElementById('combo-precio-ref').innerText = '';
+
+    if (combo) {
+        window.api.obtenerItemsCombo(combo.id).then(items => {
+            items.forEach(item => agregarLineaCombo(item));
+            calcularPrecioReferenciaCombo();
+        });
+    } else {
+        agregarLineaCombo();
+    }
+    document.getElementById('modal-nuevo-combo').classList.remove('hidden');
+}
+
+function cerrarModalNuevoCombo() {
+    document.getElementById('modal-nuevo-combo').classList.add('hidden');
+    comboEditandoId = null;
+}
+
+function agregarLineaCombo(itemExistente = null) {
+    const lista = document.getElementById('combo-items-lista');
+    const div = document.createElement('div');
+    div.className = 'receta-linea';
+    const opciones = productosGlobales.map(p =>
+        `<option value="${p.id}" data-precio="${p.precio}" ${itemExistente && itemExistente.producto_id === p.id ? 'selected' : ''}>${p.emoji || '📦'} ${p.nombre} — $${p.precio.toFixed(2)}</option>`
+    ).join('');
+    div.innerHTML = `
+        <select style="flex:3;" onchange="calcularPrecioReferenciaCombo()">
+            ${opciones || '<option>Sin productos</option>'}
+        </select>
+        <input type="number" placeholder="Cant." min="1" step="1" value="${itemExistente ? itemExistente.cantidad : 1}" style="flex:0.6;" oninput="calcularPrecioReferenciaCombo()">
+        <button class="btn-quitar" onclick="this.parentElement.remove(); calcularPrecioReferenciaCombo();" title="Quitar">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
+    `;
+    lista.appendChild(div);
+}
+
+function calcularPrecioReferenciaCombo() {
+    let total = 0;
+    document.querySelectorAll('#combo-items-lista .receta-linea').forEach(linea => {
+        const sel = linea.querySelector('select');
+        const inp = linea.querySelector('input');
+        const precio = parseFloat(sel.selectedOptions[0]?.dataset.precio) || 0;
+        const cant = parseInt(inp?.value) || 1;
+        total += precio * cant;
+    });
+    const ref = document.getElementById('combo-precio-ref');
+    if (ref) ref.innerHTML = total > 0
+        ? `Precio normal: <strong>$${total.toFixed(2)}</strong> — El combo debería costar menos que esto`
+        : '';
+}
+
+async function guardarCombo() {
+    const nombre = document.getElementById('ncombo-nombre').value.trim();
+    const precio_especial = parseFloat(document.getElementById('ncombo-precio').value);
+    const descripcion = document.getElementById('ncombo-descripcion').value.trim();
+    if (!nombre || isNaN(precio_especial) || precio_especial <= 0) {
+        alert('El nombre y el precio especial son obligatorios.');
+        return;
+    }
+    const items = [];
+    document.querySelectorAll('#combo-items-lista .receta-linea').forEach(linea => {
+        const sel = linea.querySelector('select');
+        const inp = linea.querySelector('input');
+        if (sel?.value && inp?.value) {
+            items.push({ producto_id: parseInt(sel.value), cantidad: parseInt(inp.value) || 1 });
+        }
+    });
+    if (items.length === 0) { alert('Agrega al menos un producto al combo.'); return; }
+    try {
+        const datos = { nombre, descripcion, precio_especial };
+        if (comboEditandoId) {
+            await window.api.actualizarCombo(comboEditandoId, datos);
+            await window.api.guardarItemsCombo(comboEditandoId, items);
+        } else {
+            const nuevoId = await window.api.agregarCombo(datos);
+            await window.api.guardarItemsCombo(nuevoId, items);
+        }
+        cerrarModalNuevoCombo();
+        combosCache = await window.api.obtenerCombos();
+        renderizarTablaCombos();
+        mostrarNotificacionExito('Combo guardado correctamente', '¡Combo Guardado!');
+    } catch(e) { console.error(e); alert('Error al guardar el combo'); }
+}
+
+async function editarCombo(id) {
+    const combo = combosCache.find(c => c.id === id);
+    if (combo) abrirModalNuevoCombo(combo);
+}
+
+async function confirmarEliminarCombo(id, nombre) {
+    if (confirm(`¿Eliminar el combo "${nombre}"?`)) {
+        await window.api.eliminarCombo(id);
+        combosCache = await window.api.obtenerCombos();
+        renderizarTablaCombos();
+        mostrarNotificacionExito('Combo eliminado', '¡Eliminado!');
+    }
 }

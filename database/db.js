@@ -117,6 +117,73 @@ function inicializarTablas() {
         fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (producto_id) REFERENCES productos(id)
     )`);
+
+// 9. INSUMOS (Materias primas)
+    db.run(`CREATE TABLE IF NOT EXISTS insumos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        unidad TEXT NOT NULL DEFAULT 'kg',
+        stock_actual REAL DEFAULT 0,
+        stock_minimo REAL DEFAULT 0,
+        activo INTEGER DEFAULT 1
+    )`);
+
+    // 10. PREPARACIONES (Mezclas o concentrados hechos en cocina)
+    db.run(`CREATE TABLE IF NOT EXISTS preparaciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        descripcion TEXT,
+        activo INTEGER DEFAULT 1
+    )`);
+
+    // 11. ITEMS DE PREPARACIÓN (Insumos que componen una preparación)
+    db.run(`CREATE TABLE IF NOT EXISTS preparacion_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        preparacion_id INTEGER NOT NULL,
+        insumo_id INTEGER NOT NULL,
+        cantidad REAL NOT NULL,
+        FOREIGN KEY (preparacion_id) REFERENCES preparaciones(id),
+        FOREIGN KEY (insumo_id) REFERENCES insumos(id)
+    )`);
+
+    // 12. RECETAS (Qué insumos/preparaciones usa cada producto del menú)
+    db.run(`CREATE TABLE IF NOT EXISTS receta_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        producto_id INTEGER NOT NULL,
+        tipo TEXT NOT NULL,
+        referencia_id INTEGER NOT NULL,
+        cantidad REAL NOT NULL,
+        FOREIGN KEY (producto_id) REFERENCES productos(id)
+    )`);
+
+// 13. ENTRADAS DE INSUMOS (registro de abastecimiento)
+    db.run(`CREATE TABLE IF NOT EXISTS entradas_insumos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        insumo_id INTEGER NOT NULL,
+        cantidad REAL NOT NULL,
+        notas TEXT,
+        fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (insumo_id) REFERENCES insumos(id)
+    )`);
+
+// 14. COMBOS (Paquetes con precio especial)
+    db.run(`CREATE TABLE IF NOT EXISTS combos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        descripcion TEXT,
+        precio_especial REAL NOT NULL,
+        activo INTEGER DEFAULT 1
+    )`);
+
+    // 15. ITEMS DE COMBO
+    db.run(`CREATE TABLE IF NOT EXISTS combo_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        combo_id INTEGER NOT NULL,
+        producto_id INTEGER NOT NULL,
+        cantidad INTEGER DEFAULT 1,
+        FOREIGN KEY (combo_id) REFERENCES combos(id),
+        FOREIGN KEY (producto_id) REFERENCES productos(id)
+    )`);
     
   // 9. MIGRACIÓN AUTOMÁTICA: 
     const columnasNuevas = [
@@ -128,6 +195,20 @@ function inicializarTablas() {
 
 // Migración: agregar campo para info de cliente temporal
     db.run("ALTER TABLE pedidos ADD COLUMN info_cliente_temp TEXT", () => {});
+    db.run("ALTER TABLE insumos ADD COLUMN tipo TEXT DEFAULT 'ingrediente'", () => {});
+    db.run("ALTER TABLE insumos ADD COLUMN contenido_cantidad REAL", () => {});
+    db.run("ALTER TABLE insumos ADD COLUMN contenido_unidad TEXT", () => {});
+    db.run("ALTER TABLE receta_items ADD COLUMN unidad_receta TEXT", () => {});
+
+    db.run(`CREATE TABLE IF NOT EXISTS salidas_insumos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        insumo_id INTEGER NOT NULL,
+        cantidad REAL NOT NULL,
+        motivo TEXT DEFAULT 'merma',
+        notas TEXT,
+        fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (insumo_id) REFERENCES insumos(id)
+    )`);
 
     columnasNuevas.forEach(sql => {
         db.run(sql, (err) => { /* Ignoramos error si la columna ya existe */ });
@@ -215,6 +296,65 @@ function actualizarProducto(id, p, cb) {
 }
 function eliminarProducto(id, cb) { db.run('UPDATE productos SET activo = 0 WHERE id = ?', [id], cb); }
 
+// Convierte una cantidad de unidad_receta a la unidad nativa del insumo
+const FACTORES_CONVERSION = {
+    'g_kg':   0.001,    'kg_g':   1000,
+    'ml_l':   0.001,    'l_ml':   1000,
+    'ml_gal': 0.000264, 'gal_ml': 3785.41,
+    'l_gal':  0.26417,  'gal_l':  3.78541,
+};
+
+function convertirUnidad(cantidad, unidadReceta, insumo) {
+    if (!unidadReceta || unidadReceta === insumo.unidad) return cantidad;
+
+    // 1. Equivalencia natural directa (g→kg, ml→l, gal→l, etc.)
+    const claveNatural = `${unidadReceta}_${insumo.unidad}`;
+    if (FACTORES_CONVERSION[claveNatural]) {
+        return cantidad * FACTORES_CONVERSION[claveNatural];
+    }
+
+    // 2. Conversión a través de presentación (latas con kg definido)
+    if (insumo.contenido_cantidad && insumo.contenido_unidad) {
+        // Receta en la misma unidad de contenido (kg en latas-con-kg)
+        if (unidadReceta === insumo.contenido_unidad) {
+            return cantidad / insumo.contenido_cantidad;
+        }
+        // Receta en equivalente de la unidad de contenido (g cuando contenido es kg)
+        const claveHaciaContenido = `${unidadReceta}_${insumo.contenido_unidad}`;
+        if (FACTORES_CONVERSION[claveHaciaContenido]) {
+            const enContenidoUnidad = cantidad * FACTORES_CONVERSION[claveHaciaContenido];
+            return enContenidoUnidad / insumo.contenido_cantidad;
+        }
+    }
+
+    // 3. Sin conversión conocida — devolver tal cual
+    return cantidad;
+}
+
+function descontarInsumosDeVenta(productoId, cantidadVendida) {
+    db.all("SELECT ri.*, i.unidad, i.contenido_cantidad, i.contenido_unidad FROM receta_items ri LEFT JOIN insumos i ON ri.tipo='insumo' AND ri.referencia_id=i.id WHERE ri.producto_id = ?", [productoId], (err, recetaItems) => {
+        if (err || !recetaItems || recetaItems.length === 0) return;
+        recetaItems.forEach(ri => {
+            if (ri.tipo === 'insumo') {
+                const cantConvertida = convertirUnidad(ri.cantidad, ri.unidad_receta, ri) * cantidadVendida;
+                db.run("UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
+                    [cantConvertida, ri.referencia_id]);
+            } else if (ri.tipo === 'preparacion') {
+                const cantPrep = ri.cantidad * cantidadVendida;
+                db.all("SELECT pi.*, i.unidad, i.contenido_cantidad, i.contenido_unidad FROM preparacion_items pi JOIN insumos i ON pi.insumo_id=i.id WHERE pi.preparacion_id = ?",
+                    [ri.referencia_id], (err, prepItems) => {
+                        if (err || !prepItems) return;
+                        prepItems.forEach(pi => {
+                            const cantConvertida = convertirUnidad(pi.cantidad, pi.unidad_receta, pi) * cantPrep;
+                            db.run("UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
+                                [cantConvertida, pi.insumo_id]);
+                        });
+                    });
+            }
+        });
+    });
+}
+
 // --- VENTAS Y PEDIDOS ---
 
 function crearPedido(datos, items, callback) {
@@ -254,6 +394,7 @@ function crearPedido(datos, items, callback) {
         items.forEach(item => {
             stmt.run(pedidoId, item.id, item.cantidad, item.precio, item.subtotal, item.nota || '');
             db.run('UPDATE productos SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
+            descontarInsumosDeVenta(item.id, item.cantidad);
         });
         
         stmt.finalize();
@@ -586,6 +727,248 @@ function obtenerAjustes(callback) {
     });
 }
 
+// ============================================
+// INVENTARIO — INSUMOS
+// ============================================
+function obtenerInsumos(callback) {
+    db.all("SELECT * FROM insumos WHERE activo = 1 ORDER BY nombre ASC", [], callback);
+}
+function agregarInsumo(d, cb) {
+    db.run("INSERT INTO insumos (nombre, unidad, stock_actual, stock_minimo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, ?)",
+        [d.nombre, d.unidad, d.stock_actual || 0, d.stock_minimo || 0, d.contenido_cantidad || null, d.contenido_unidad || null], cb);
+}
+function actualizarInsumo(id, d, cb) {
+    db.run("UPDATE insumos SET nombre=?, unidad=?, stock_actual=?, stock_minimo=?, contenido_cantidad=?, contenido_unidad=? WHERE id=?",
+        [d.nombre, d.unidad, d.stock_actual, d.stock_minimo, d.contenido_cantidad || null, d.contenido_unidad || null, id], cb);
+}
+function eliminarInsumo(id, cb) {
+    db.run("UPDATE insumos SET activo = 0 WHERE id = ?", [id], cb);
+}
+
+// ============================================
+// INVENTARIO — PREPARACIONES
+// ============================================
+function obtenerPreparaciones(callback) {
+    db.all("SELECT * FROM preparaciones WHERE activo = 1 ORDER BY nombre ASC", [], callback);
+}
+function agregarPreparacion(d, cb) {
+    db.run("INSERT INTO preparaciones (nombre, descripcion) VALUES (?, ?)",
+        [d.nombre, d.descripcion || ''], cb);
+}
+function actualizarPreparacion(id, d, cb) {
+    db.run("UPDATE preparaciones SET nombre=?, descripcion=? WHERE id=?",
+        [d.nombre, d.descripcion || '', id], cb);
+}
+function eliminarPreparacion(id, cb) {
+    db.run("UPDATE preparaciones SET activo = 0 WHERE id = ?", [id], (err) => {
+        if (err) return cb(err);
+        db.run("DELETE FROM preparacion_items WHERE preparacion_id = ?", [id], cb);
+    });
+}
+function obtenerItemsPreparacion(preparacionId, callback) {
+    db.all(`
+        SELECT pi.*, i.nombre as insumo_nombre, i.unidad
+        FROM preparacion_items pi
+        JOIN insumos i ON pi.insumo_id = i.id
+        WHERE pi.preparacion_id = ?
+    `, [preparacionId], callback);
+}
+function guardarItemsPreparacion(preparacionId, items, cb) {
+    db.run("DELETE FROM preparacion_items WHERE preparacion_id = ?", [preparacionId], (err) => {
+        if (err) return cb(err);
+        if (!items || items.length === 0) return cb(null);
+        const stmt = db.prepare("INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad) VALUES (?, ?, ?)");
+        items.forEach(item => stmt.run(preparacionId, item.insumo_id, item.cantidad));
+        stmt.finalize(cb);
+    });
+}
+
+// ============================================
+// INVENTARIO — RECETAS
+// ============================================
+function obtenerRecetaProducto(productoId, callback) {
+    db.all(`
+        SELECT 
+            ri.*,
+            CASE ri.tipo
+                WHEN 'insumo' THEN i.nombre
+                WHEN 'preparacion' THEN pr.nombre
+            END as nombre_ref,
+            CASE ri.tipo
+                WHEN 'insumo' THEN i.unidad
+                ELSE 'porción'
+            END as unidad_ref
+        FROM receta_items ri
+        LEFT JOIN insumos i ON ri.tipo = 'insumo' AND ri.referencia_id = i.id
+        LEFT JOIN preparaciones pr ON ri.tipo = 'preparacion' AND ri.referencia_id = pr.id
+        WHERE ri.producto_id = ?
+    `, [productoId], callback);
+}
+function guardarRecetaProducto(productoId, items, cb) {
+    db.run("DELETE FROM receta_items WHERE producto_id = ?", [productoId], (err) => {
+        if (err) return cb(err);
+        if (!items || items.length === 0) return cb(null);
+        const stmt = db.prepare("INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad) VALUES (?, ?, ?, ?)");
+        items.forEach(item => stmt.run(productoId, item.tipo, item.referencia_id, item.cantidad));
+        stmt.finalize(cb);
+    });
+}
+
+// Calcula cuántas "porciones" de una preparación se pueden hacer con el stock actual
+function calcularStockPreparacion(preparacionId, callback) {
+    db.all(`SELECT pi.cantidad, i.stock_actual 
+            FROM preparacion_items pi 
+            JOIN insumos i ON pi.insumo_id = i.id 
+            WHERE pi.preparacion_id = ?`, [preparacionId], (err, items) => {
+        if (err || !items || items.length === 0) return callback(null, null);
+        let min = Infinity;
+        items.forEach(item => {
+            const posible = item.stock_actual / item.cantidad;
+            if (posible < min) min = posible;
+        });
+        callback(null, min === Infinity ? 0 : Math.floor(min * 100) / 100);
+    });
+}
+
+// Calcula cuántas unidades de un producto se pueden preparar según sus insumos
+function calcularStockProducto(productoId, callback) {
+    db.all("SELECT ri.*, i.unidad, i.stock_actual as ins_stock, i.contenido_cantidad, i.contenido_unidad FROM receta_items ri LEFT JOIN insumos i ON ri.tipo='insumo' AND ri.referencia_id=i.id WHERE ri.producto_id = ?", [productoId], (err, recetaItems) => {
+        if (err || !recetaItems || recetaItems.length === 0) return callback(null, null);
+        let min = Infinity;
+        let pendientes = recetaItems.length;
+        recetaItems.forEach(ri => {
+           if (ri.tipo === 'insumo') {
+                db.get("SELECT stock_actual, unidad, contenido_cantidad, contenido_unidad FROM insumos WHERE id = ?", [ri.referencia_id], (err, ins) => {
+                    if (!err && ins) {
+                        const cantConvertida = convertirUnidad(ri.cantidad, ri.unidad_receta, ins);
+                        const posible = Math.floor(ins.stock_actual / cantConvertida);
+                        if (posible < min) min = posible;
+                    }
+                    pendientes--;
+                    if (pendientes === 0) callback(null, min === Infinity ? 0 : min);
+                });
+            } else if (ri.tipo === 'preparacion') {
+                db.all(`SELECT pi.cantidad, i.stock_actual 
+                        FROM preparacion_items pi 
+                        JOIN insumos i ON pi.insumo_id = i.id 
+                        WHERE pi.preparacion_id = ?`, [ri.referencia_id], (err, prepItems) => {
+                    if (!err && prepItems && prepItems.length > 0) {
+                        let minPrep = Infinity;
+                        prepItems.forEach(pi => {
+                            const dp = pi.stock_actual / pi.cantidad;
+                            if (dp < minPrep) minPrep = dp;
+                        });
+                        const posible = Math.floor(minPrep / ri.cantidad);
+                        if (posible < min) min = posible;
+                    }
+                    pendientes--;
+                    if (pendientes === 0) callback(null, min === Infinity ? 0 : min);
+                });
+            }
+        });
+    });
+}
+
+// Registro de entrada de insumos (abastecimiento)
+function registrarEntradaInsumo(datos, callback) {
+    db.run("INSERT INTO entradas_insumos (insumo_id, cantidad, notas) VALUES (?, ?, ?)",
+        [datos.insumo_id, datos.cantidad, datos.notas || ''], function(err) {
+            if (err) return callback(err);
+            db.run("UPDATE insumos SET stock_actual = stock_actual + ? WHERE id = ?",
+                [datos.cantidad, datos.insumo_id], callback);
+        });
+}
+
+function obtenerEntradasInsumo(insumoId, callback) {
+    const sql = insumoId
+        ? `SELECT e.*, i.nombre as insumo_nombre, i.unidad 
+           FROM entradas_insumos e 
+           JOIN insumos i ON e.insumo_id = i.id 
+           WHERE e.insumo_id = ? 
+           ORDER BY e.fecha DESC LIMIT 50`
+        : `SELECT e.*, i.nombre as insumo_nombre, i.unidad 
+           FROM entradas_insumos e 
+           JOIN insumos i ON e.insumo_id = i.id 
+           ORDER BY e.fecha DESC LIMIT 100`;
+    const params = insumoId ? [insumoId] : [];
+    db.all(sql, params, callback);
+}
+
+function registrarSalidaInsumo(datos, callback) {
+    db.run("INSERT INTO salidas_insumos (insumo_id, cantidad, motivo, notas) VALUES (?, ?, ?, ?)",
+        [datos.insumo_id, datos.cantidad, datos.motivo || 'merma', datos.notas || ''], function(err) {
+            if (err) return callback(err);
+            db.run("UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
+                [datos.cantidad, datos.insumo_id], callback);
+        });
+}
+
+function obtenerSalidasInsumo(insumoId, callback) {
+    const sql = insumoId
+        ? `SELECT s.*, i.nombre as insumo_nombre, i.unidad FROM salidas_insumos s JOIN insumos i ON s.insumo_id = i.id WHERE s.insumo_id = ? ORDER BY s.fecha DESC LIMIT 50`
+        : `SELECT s.*, i.nombre as insumo_nombre, i.unidad FROM salidas_insumos s JOIN insumos i ON s.insumo_id = i.id ORDER BY s.fecha DESC LIMIT 100`;
+    db.all(sql, insumoId ? [insumoId] : [], callback);
+}
+
+// ============================================
+// OFERTAS — DESCUENTOS
+// ============================================
+function obtenerDescuentos(callback) {
+    db.all("SELECT * FROM promociones WHERE activa = 1 ORDER BY nombre ASC", [], callback);
+}
+function agregarDescuento(d, cb) {
+    db.run("INSERT INTO promociones (nombre, tipo, valor) VALUES (?, ?, ?)",
+        [d.nombre, d.tipo, d.valor], cb);
+}
+function actualizarDescuento(id, d, cb) {
+    db.run("UPDATE promociones SET nombre=?, tipo=?, valor=? WHERE id=?",
+        [d.nombre, d.tipo, d.valor, id], cb);
+}
+function eliminarDescuento(id, cb) {
+    db.run("UPDATE promociones SET activa = 0 WHERE id = ?", [id], cb);
+}
+
+// ============================================
+// OFERTAS — COMBOS
+// ============================================
+function obtenerCombos(callback) {
+    db.all("SELECT * FROM combos WHERE activo = 1 ORDER BY nombre ASC", [], callback);
+}
+function agregarCombo(d, cb) {
+    db.run("INSERT INTO combos (nombre, descripcion, precio_especial) VALUES (?, ?, ?)",
+        [d.nombre, d.descripcion || '', d.precio_especial], function(err) {
+            if (err) return cb(err);
+            cb(null, this.lastID);
+        });
+}
+function actualizarCombo(id, d, cb) {
+    db.run("UPDATE combos SET nombre=?, descripcion=?, precio_especial=? WHERE id=?",
+        [d.nombre, d.descripcion || '', d.precio_especial, id], cb);
+}
+function eliminarCombo(id, cb) {
+    db.run("UPDATE combos SET activo = 0 WHERE id = ?", [id], (err) => {
+        if (err) return cb(err);
+        db.run("DELETE FROM combo_items WHERE combo_id = ?", [id], cb);
+    });
+}
+function obtenerItemsCombo(comboId, callback) {
+    db.all(`
+        SELECT ci.*, p.nombre as producto_nombre, p.precio, p.emoji
+        FROM combo_items ci
+        JOIN productos p ON ci.producto_id = p.id
+        WHERE ci.combo_id = ?
+    `, [comboId], callback);
+}
+function guardarItemsCombo(comboId, items, cb) {
+    db.run("DELETE FROM combo_items WHERE combo_id = ?", [comboId], (err) => {
+        if (err) return cb(err);
+        if (!items || items.length === 0) return cb(null);
+        const stmt = db.prepare("INSERT INTO combo_items (combo_id, producto_id, cantidad) VALUES (?, ?, ?)");
+        items.forEach(item => stmt.run(comboId, item.producto_id, item.cantidad || 1));
+        stmt.finalize(cb);
+    });
+}
+
 module.exports = {
     db, 
     obtenerProductosAgrupados, 
@@ -611,6 +994,34 @@ module.exports = {
     obtenerClientesConCompras,
     eliminarCliente,
     guardarAjuste,
-    obtenerAjustes,        
+    obtenerAjustes,
+    obtenerInsumos,
+    agregarInsumo,
+    actualizarInsumo,
+    eliminarInsumo,
+    obtenerPreparaciones,
+    agregarPreparacion,
+    actualizarPreparacion,
+    eliminarPreparacion,
+    obtenerItemsPreparacion,
+    guardarItemsPreparacion,
+    obtenerRecetaProducto,
+    guardarRecetaProducto,
+    calcularStockPreparacion,
+    calcularStockProducto,
+    registrarEntradaInsumo,
+    obtenerEntradasInsumo,   
+    registrarSalidaInsumo,
+    obtenerSalidasInsumo,
+    obtenerDescuentos,
+    agregarDescuento,
+    actualizarDescuento,
+    eliminarDescuento,
+    obtenerCombos,
+    agregarCombo,
+    actualizarCombo,
+    eliminarCombo,
+    obtenerItemsCombo,
+    guardarItemsCombo,     
     obtenerProductos: (cb) => db.all('SELECT * FROM productos WHERE activo = 1', cb),
 }

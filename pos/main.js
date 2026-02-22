@@ -5,7 +5,8 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
-const db = require('../database/db'); 
+const db = require('../database/db');
+const { crearBackup } = require('./backup'); 
 
 let mainWindow;
 
@@ -67,6 +68,9 @@ function createWindow() {
 
 app.whenReady().then(() => {
     createWindow();
+
+// Backup automático al iniciar la app
+    crearBackup();
     
     if (app.isPackaged) {
         setTimeout(() => {
@@ -336,4 +340,99 @@ ipcMain.handle('obtener-ajustes', async () => {
 // Obtener impresoras del sistema
 ipcMain.handle('obtener-impresoras', async () => {
     return await mainWindow.webContents.getPrintersAsync();
+});
+
+// ============================================
+// INVENTARIO — HANDLERS
+// ============================================
+
+ipcMain.handle('obtener-insumos', async () => {
+    return new Promise((res, rej) => db.obtenerInsumos((err, rows) => err ? rej(err) : res(rows)));
+});
+ipcMain.handle('agregar-insumo', async (_, d) => {
+    return new Promise((res, rej) => db.agregarInsumo(d, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('actualizar-insumo', async (_, id, d) => {
+    return new Promise((res, rej) => db.actualizarInsumo(id, d, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('eliminar-insumo', async (_, id) => {
+    return new Promise((res, rej) => db.eliminarInsumo(id, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('obtener-preparaciones', async () => {
+    return new Promise((res, rej) => db.obtenerPreparaciones((err, rows) => err ? rej(err) : res(rows)));
+});
+ipcMain.handle('agregar-preparacion', async (_, d) => {
+    return new Promise((res, rej) => db.agregarPreparacion(d, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('actualizar-preparacion', async (_, id, d) => {
+    return new Promise((res, rej) => db.actualizarPreparacion(id, d, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('eliminar-preparacion', async (_, id) => {
+    return new Promise((res, rej) => db.eliminarPreparacion(id, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('obtener-items-preparacion', async (_, id) => {
+    return new Promise((res, rej) => db.obtenerItemsPreparacion(id, (err, rows) => err ? rej(err) : res(rows)));
+});
+ipcMain.handle('guardar-items-preparacion', async (_, id, items) => {
+    return new Promise((res, rej) => db.guardarItemsPreparacion(id, items, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('obtener-receta-producto', async (_, id) => {
+    return new Promise((res, rej) => db.obtenerRecetaProducto(id, (err, rows) => err ? rej(err) : res(rows)));
+});
+ipcMain.handle('guardar-receta-producto', async (_, id, items) => {
+    return new Promise((res, rej) => db.guardarRecetaProducto(id, items, (err) => err ? rej(err) : res(true)));
+});
+
+ipcMain.handle('calcular-stock-preparacion', async (_, id) => {
+    return new Promise((res, rej) => db.calcularStockPreparacion(id, (err, stock) => err ? rej(err) : res(stock)));
+});
+ipcMain.handle('calcular-stock-producto', async (_, id) => {
+    return new Promise((res, rej) => db.calcularStockProducto(id, (err, stock) => err ? rej(err) : res(stock)));
+});
+ipcMain.handle('registrar-entrada-insumo', async (_, datos) => {
+    return new Promise((res, rej) => db.registrarEntradaInsumo(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('obtener-entradas-insumo', async (_, id) => {
+    return new Promise((res, rej) => db.obtenerEntradasInsumo(id, (err, rows) => err ? rej(err) : res(rows)));
+});
+
+ipcMain.handle('registrar-salida-insumo', async (_, datos) => {
+    return new Promise((res, rej) => db.registrarSalidaInsumo(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('obtener-salidas-insumo', async (_, id) => {
+    return new Promise((res, rej) => db.obtenerSalidasInsumo(id, (err, rows) => err ? rej(err) : res(rows)));
+});
+
+// ============================================
+// OFERTAS — HANDLERS
+// ============================================
+ipcMain.handle('obtener-descuentos', async () => {
+    return new Promise((res, rej) => db.obtenerDescuentos((err, rows) => err ? rej(err) : res(rows)));
+});
+ipcMain.handle('agregar-descuento', async (_, d) => {
+    return new Promise((res, rej) => db.agregarDescuento(d, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('actualizar-descuento', async (_, id, d) => {
+    return new Promise((res, rej) => db.actualizarDescuento(id, d, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('eliminar-descuento', async (_, id) => {
+    return new Promise((res, rej) => db.eliminarDescuento(id, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('obtener-combos', async () => {
+    return new Promise((res, rej) => db.obtenerCombos((err, rows) => err ? rej(err) : res(rows)));
+});
+ipcMain.handle('agregar-combo', async (_, d) => {
+    return new Promise((res, rej) => db.agregarCombo(d, (err, id) => err ? rej(err) : res(id)));
+});
+ipcMain.handle('actualizar-combo', async (_, id, d) => {
+    return new Promise((res, rej) => db.actualizarCombo(id, d, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('eliminar-combo', async (_, id) => {
+    return new Promise((res, rej) => db.eliminarCombo(id, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('obtener-items-combo', async (_, id) => {
+    return new Promise((res, rej) => db.obtenerItemsCombo(id, (err, rows) => err ? rej(err) : res(rows)));
+});
+ipcMain.handle('guardar-items-combo', async (_, id, items) => {
+    return new Promise((res, rej) => db.guardarItemsCombo(id, items, (err) => err ? rej(err) : res(true)));
 });
