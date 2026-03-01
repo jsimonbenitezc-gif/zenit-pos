@@ -5,6 +5,298 @@ let clasificaciones = [];
 let productosGlobales = []; 
 let carrito = [];
 let itemNotaEditandoIndex = null; 
+let filtroActual = {}; // Filtros para pedidos
+let turnoActivo = null;
+let rolActivo = 'dueno'; // 'cajero' | 'encargado' | 'dueno'
+let ventaSinTurno = true; // si true, permite vender sin haber abierto turno (default: activo)
+
+const PERMISOS_DEFAULT = {
+    cajero:    { enabled: false, ver_dashboard: false, ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_productos: false, ver_clientes: true,  ver_ofertas: false, ver_inventario: false, ver_ajustes: false },
+    encargado: { enabled: false, ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_ajustes: false },
+    dueno:     { enabled: true,  ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_ajustes: true  }
+};
+
+let nombreActivo = '';
+
+/* ============================================
+   SISTEMA DE MODO (LOCAL vs CONECTADO)
+   ============================================ */
+
+let modoConectado = false;
+let apiClient = null;
+let tokenActual = null;
+
+// Inicializar API Client
+if (typeof APIClient !== 'undefined') {
+    apiClient = new APIClient('http://localhost:3000/api');
+}
+
+// Cargar configuración de modo al inicio
+async function cargarConfiguracionModo() {
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        modoConectado = ajustes.modo_conectado === 'true';
+        
+        if (modoConectado && ajustes.api_url) {
+            apiClient.setBaseURL(ajustes.api_url);
+        }
+        
+        if (modoConectado && ajustes.api_token) {
+            apiClient.setToken(ajustes.api_token);
+            tokenActual = ajustes.api_token;
+        }
+        
+        // Actualizar indicador visual
+        actualizarIndicadorModo();
+        
+        console.log(`🔧 Modo: ${modoConectado ? 'CONECTADO' : 'LOCAL'}`);
+    } catch (error) {
+        console.error('Error al cargar configuración:', error);
+        modoConectado = false;
+        actualizarIndicadorModo();
+    }
+}
+
+function actualizarIndicadorModo() {
+    const iconoModo = document.getElementById('icono-modo');
+    const textoModo = document.getElementById('texto-modo');
+    
+    if (!iconoModo || !textoModo) return;
+    
+    if (modoConectado) {
+        iconoModo.innerHTML = '<path d="M2 20h20"/><path d="m9 10 2 2 4-4"/><rect x="3" y="4" width="18" height="12" rx="2"/>';
+        textoModo.innerText = 'Modo Conectado';
+    } else {
+        iconoModo.innerHTML = '<path d="M2 20h20"/><path d="m9 10 2 2 4-4"/><rect x="3" y="4" width="18" height="12" rx="2"/>';
+        textoModo.innerText = 'Modo Local';
+    }
+}
+
+/* ============================================
+   WRAPPER LAYER - Abstracción de Modo
+   ============================================ */
+
+// PRODUCTOS
+async function obtenerProductosAgrupadosWrapper() {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            const productos = await apiClient.getProductsGrouped();
+            return productos.map(cat => ({
+                id: cat.id,
+                nombre: cat.nombre || cat.name,
+                emoji: cat.emoji,
+                imagen: cat.image || cat.imagen,
+                productos: (cat.productos || cat.products || []).map(p => ({
+                    id: p.id,
+                    nombre: p.nombre || p.name,
+                    descripcion: p.descripcion || p.description,
+                    precio: parseFloat(p.precio || p.price),
+                    stock: p.stock,
+                    emoji: p.emoji,
+                    imagen: p.imagen || p.image,
+                    activo: p.activo !== undefined ? p.activo : p.active
+                }))
+            }));
+        } catch (error) {
+            console.error('Error al obtener productos del backend:', error);
+            return await window.api.obtenerProductosAgrupados();
+        }
+    } else {
+        return await window.api.obtenerProductosAgrupados();
+    }
+}
+
+async function agregarProductoWrapper(producto) {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            const resultado = await apiClient.createProduct({
+                name: producto.nombre,
+                description: producto.descripcion,
+                price: producto.precio,
+                stock: producto.stock,
+                category_id: producto.clasificacion_id,
+                emoji: producto.emoji,
+                image: producto.imagen
+            });
+            await window.api.agregarProducto(producto);
+            return resultado;
+        } catch (error) {
+            console.error('Error al crear producto en backend:', error);
+            return await window.api.agregarProducto(producto);
+        }
+    } else {
+        return await window.api.agregarProducto(producto);
+    }
+}
+
+async function actualizarProductoWrapper(id, producto) {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            const resultado = await apiClient.updateProduct(id, {
+                name: producto.nombre,
+                description: producto.descripcion,
+                price: producto.precio,
+                stock: producto.stock,
+                category_id: producto.clasificacion_id,
+                emoji: producto.emoji,
+                image: producto.imagen,
+                active: producto.activo
+            });
+            await window.api.actualizarProducto(id, producto);
+            return resultado;
+        } catch (error) {
+            console.error('Error al actualizar producto en backend:', error);
+            return await window.api.actualizarProducto(id, producto);
+        }
+    } else {
+        return await window.api.actualizarProducto(id, producto);
+    }
+}
+
+// PEDIDOS
+async function crearPedidoWrapper(datosPedido, items) {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            // Traducir campos español → inglés para el backend
+            const datosAPI = {
+                customer_id: datosPedido.cliente_id || null,
+                customer_temp_info: datosPedido.info_cliente_temp || null,
+                total: datosPedido.total,
+                payment_method: datosPedido.metodo_pago,
+                order_type: datosPedido.tipo_pedido || 'comer',
+                reference: datosPedido.referencia || null,
+                delivery_address: datosPedido.direccion_domicilio || null,
+                maps_link: datosPedido.link_maps || null,
+                notes: datosPedido.notas_generales || null
+            };
+            const itemsAPI = items.map(i => ({
+                product_id: i.id,
+                quantity: i.cantidad || 1,
+                unit_price: i.precio,
+                subtotal: i.subtotal,
+                notes: i.nota || ''
+            }));
+            const resultado = await apiClient.createOrder(datosAPI, itemsAPI);
+            await window.api.crearPedidoDirecto(datosPedido, items);
+            return resultado.id;
+        } catch (error) {
+            console.error('Error al crear pedido en backend:', error);
+            return await window.api.crearPedidoDirecto(datosPedido, items);
+        }
+    } else {
+        return await window.api.crearPedidoDirecto(datosPedido, items);
+    }
+}
+
+async function obtenerPedidosWrapper(filtro) {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            const orders = await apiClient.getOrders(filtro);
+            // Traducir campos inglés → español para compatibilidad con el frontend
+            return orders.map(o => ({
+                id: o.id,
+                cliente_id: o.customer_id,
+                total: parseFloat(o.total),
+                estado: o.status,
+                metodo_pago: o.payment_method,
+                tipo_pedido: o.order_type,
+                referencia: o.reference,
+                direccion_domicilio: o.delivery_address,
+                notas_generales: o.notes,
+                info_cliente_temp: o.customer_temp_info,
+                cajero: null,
+                fecha: o.createdAt,
+                telefono: o.customer ? o.customer.name : (o.customer_temp_info || null),
+                _items: o.items  // guardar items para verDetallePedido
+            }));
+        } catch (error) {
+            console.error('Error al obtener pedidos del backend:', error);
+            return await window.api.obtenerPedidos(filtro);
+        }
+    } else {
+        return await window.api.obtenerPedidos(filtro);
+    }
+}
+
+async function obtenerDetallePedidoWrapper(id) {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            const order = await apiClient.getOrderDetails(id);
+            return (order.items || []).map(item => ({
+                cantidad: item.quantity,
+                nombre: item.product ? item.product.name : `Producto ${item.product_id}`,
+                precio: parseFloat(item.unit_price),
+                nota: item.notes || null,
+                subtotal: parseFloat(item.subtotal)
+            }));
+        } catch (error) {
+            console.error('Error al obtener detalle pedido del backend:', error);
+            return await window.api.obtenerDetallePedido(id);
+        }
+    } else {
+        return await window.api.obtenerDetallePedido(id);
+    }
+}
+
+// CLIENTES
+async function obtenerClientesWrapper() {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            const clientes = await apiClient.getCustomersWithStats();
+            // Traducir campos inglés → español para compatibilidad con el resto del frontend
+            return clientes.map(c => ({
+                id: c.id,
+                telefono: c.phone,
+                nombre: c.name,
+                direccion: c.address,
+                notas: c.notes,
+                fecha_registro: c.createdAt,
+                total_compras: parseInt(c.total_compras) || 0,
+                monto_total: parseFloat(c.monto_total) || 0
+            }));
+        } catch (error) {
+            console.error('Error al obtener clientes del backend:', error);
+            return await window.api.obtenerClientesConCompras();
+        }
+    } else {
+        return await window.api.obtenerClientesConCompras();
+    }
+}
+
+async function crearClienteWrapper(datos) {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            const resultado = await apiClient.createCustomer({
+                phone: datos.telefono,
+                name: datos.nombre,
+                address: datos.direccion,
+                notes: datos.notas
+            });
+            await window.api.crearCliente(datos);
+            return resultado;
+        } catch (error) {
+            console.error('Error al crear cliente en backend:', error);
+            return await window.api.crearCliente(datos);
+        }
+    } else {
+        return await window.api.crearCliente(datos);
+    }
+}
+
+// ESTADÍSTICAS
+async function obtenerEstadisticasWrapper() {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            return await apiClient.getDashboardStats();
+        } catch (error) {
+            console.error('Error al obtener estadísticas del backend:', error);
+            return await window.api.obtenerEstadisticas();
+        }
+    } else {
+        return await window.api.obtenerEstadisticas();
+    }
+}
+ 
 
 // Variables de Administración
 let productoEditandoId = null;
@@ -70,7 +362,108 @@ function cerrarModalActualizacion() {
     document.getElementById('modal-actualizacion').classList.add('hidden');
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+/* ============================================
+   LOGIN — Contraseña de acceso al app
+   ============================================ */
+async function inicializarLogin() {
+    return new Promise(async (resolve) => {
+        const loginScreen = document.getElementById('login-screen');
+        const appDiv = document.querySelector('.app');
+        const btnLogin = document.getElementById('login-btn');
+        const inputPassword = document.getElementById('login-password');
+        const inputConfirm = document.getElementById('login-password-confirm');
+        const labelSubtitle = document.getElementById('login-subtitle');
+        const labelError = document.getElementById('login-error');
+
+        const tiene = await window.api.tienePasswordApp();
+
+        // Si el switch está desactivado, saltar el login
+        const ajustesPwd = await window.api.obtenerAjustes();
+        if (ajustesPwd.pedir_password_inicio === 'false') {
+            resolve();
+            return;
+        }
+
+        if (!tiene) {
+            labelSubtitle.textContent = 'Crea una contraseña para el Administrador';
+            inputConfirm.style.display = 'block';
+            btnLogin.textContent = 'Crear contraseña';
+        } else {
+            labelSubtitle.textContent = 'Contraseña del Administrador';
+        }
+
+        loginScreen.style.display = 'flex';
+        appDiv.style.display = 'none';
+        inputPassword.value = '';
+        inputPassword.focus();
+
+        const controller = new AbortController();
+        const { signal } = controller;
+
+        const terminarLogin = () => {
+            controller.abort(); // elimina todos los listeners de este login
+            loginScreen.style.display = 'none';
+            appDiv.style.display = '';
+            resolve();
+        };
+
+        const intentarLogin = async () => {
+            const password = inputPassword.value;
+            labelError.textContent = '';
+
+            if (!tiene) {
+                const confirm = inputConfirm.value;
+                if (password.length < 4) {
+                    labelError.textContent = 'La contraseña debe tener al menos 4 caracteres';
+                    return;
+                }
+                if (password !== confirm) {
+                    labelError.textContent = 'Las contraseñas no coinciden';
+                    inputConfirm.value = '';
+                    inputConfirm.focus();
+                    return;
+                }
+                await window.api.establecerPasswordApp(password);
+                terminarLogin();
+            } else {
+                const valido = await window.api.verificarPasswordApp(password);
+                if (valido) {
+                    terminarLogin();
+                } else {
+                    labelError.textContent = 'Contraseña incorrecta. Intenta de nuevo.';
+                    inputPassword.value = '';
+                    inputPassword.focus();
+                }
+            }
+        };
+
+        btnLogin.addEventListener('click', intentarLogin, { signal });
+        inputPassword.addEventListener('keydown', (e) => { if (e.key === 'Enter') intentarLogin(); }, { signal });
+        inputConfirm.addEventListener('keydown', (e) => { if (e.key === 'Enter') intentarLogin(); }, { signal });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+
+    // ── PERFIL (primero) ────────────────────────────────
+    // Si hay perfiles activos → muestra pantalla de selección.
+    // Cajero/Encargado → verifican PIN y entran directamente.
+    // Administrador → pasa al login. Si no hay perfiles → va directo al login.
+    await inicializarPerfil();
+    // ───────────────────────────────────────────────────
+
+    // ── LOGIN (solo Administrador) ──────────────────────
+    if (rolActivo === 'dueno') {
+        await inicializarLogin();
+    }
+    // ───────────────────────────────────────────────────
+
+    // ── TURNO ──────────────────────────────────────────
+    await inicializarTurno();
+    // ───────────────────────────────────────────────────
+
+    // Cargar configuración de modo
+    await cargarConfiguracionModo();
 
     const logo = document.getElementById('brand-logo');
     if (logo && window.api?.obtenerRutaLogo) {
@@ -80,14 +473,12 @@ document.addEventListener('DOMContentLoaded', () => {
     configurarMenu();
     configurarBotones();
     configurarModales();
-    cambiarVista('dashboard'); 
+    navegarAPrimeraVistaDisponible();
     cargarSelectorEmojis('prod');
     cargarSelectorEmojis('cat');
     
     document.getElementById('buscador-venta')?.addEventListener('input', (e) => {
         filtrarProductosVenta(e.target.value);
-
-
     });
 
 // Configurar buscadores de clientes en Nueva Venta (solo una vez)
@@ -113,6 +504,23 @@ cargarAjustesInstalados();
             document.getElementById('sugerencias-telefono')?.classList.add('hidden');
         }
     });
+
+    // Configurar botón de modo de conexión
+    const btnModoConexion = document.getElementById('btn-modo-conexion');
+    if (btnModoConexion) {
+        btnModoConexion.addEventListener('click', window.abrirModalConfiguracionConexion);
+        console.log('✅ Event listener del botón configurado');
+    }
+
+    // Cerrar modal de configuración al hacer click fuera
+    const modalConfig = document.getElementById('modal-configuracion-conexion');
+    if (modalConfig) {
+        modalConfig.addEventListener('click', function(e) {
+            if (e.target === this) {
+                window.cerrarModalConfiguracionConexion();
+            }
+        });
+    }
 
 });
 
@@ -191,6 +599,12 @@ setTimeout(() => {
         cargarPedidos();
     } else if (vista === 'nueva-venta') {
         cargarCatalogoVenta();
+        if (!turnoActivo && !ventaSinTurno) {
+            setTimeout(() => {
+                const modal = document.getElementById('modal-turno-venta');
+                if (modal) modal.classList.remove('hidden');
+            }, 150);
+        }
     } else if (vista === 'clientes') {
         cargarClientes();
     } else if (vista === 'ofertas') {
@@ -199,6 +613,8 @@ setTimeout(() => {
         cargarInventario();
     } else if (vista === 'ajustes') {
         cargarAjustesInstalados();
+    } else if (vista === 'turno') {
+        cargarVistaTurno();
     }
 
     
@@ -211,7 +627,8 @@ setTimeout(() => {
     clientes: 'Clientes',
     ofertas: 'Ofertas',
     inventario: 'Inventario',
-    ajustes: 'Configuración ⚙️'
+    ajustes: 'Configuración ⚙️',
+    turno: 'Turno / Corte de Caja'
 };
 
     document.getElementById('page-title').innerText = titulos[vista] || 'Zenit POS';
@@ -228,7 +645,7 @@ function configurarBotones() {
 
 async function cargarCatalogoVenta() {
     try {
-        clasificaciones = await window.api.obtenerProductosAgrupados();
+        clasificaciones = await obtenerProductosAgrupadosWrapper();
         productosGlobales = [];
         clasificaciones.forEach(c => {
             c.productos.forEach(p => productosGlobales.push({...p, categoria: c.nombre}));
@@ -262,7 +679,7 @@ async function buscarClientesVenta(e, tipo) {
     }
     
     try {
-        const clientes = await window.api.obtenerClientesConCompras();
+        const clientes = await obtenerClientesWrapper();
         let resultados;
         
         if (tipo === 'nombre') {
@@ -396,7 +813,7 @@ function renderizarGridVenta(listaProductos) {
 
     grid.innerHTML = listaProductos.map(p => `
         <div class="product-card" onclick="agregarAlCarrito(${p.id})" id="pcard-${p.id}">
-            <div class="product-visual">${p.imagen ? `<img src="file://${p.imagen}" class="product-img-display">` : `<span class="product-emoji">${p.emoji || '📦'}</span>`}</div>
+            <div class="product-visual">${p.imagen ? `<img src="file://${p.imagen}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${p.emoji || '📦'}</span>` : `<span class="product-emoji">${p.emoji || '📦'}</span>`}</div>
             <h4>${p.nombre}</h4>
             <p class="precio">$${p.precio.toFixed(2)}</p>
             ${mostrarStock ? `<div id="stock-badge-${p.id}" style="font-size:0.75em; color:#9ca3af; margin-top:3px;">...</div>` : ''}
@@ -622,6 +1039,9 @@ async function ejecutarVenta() {
         alert('Selecciona un método de pago');
         return;
     }
+
+    const btnFinal = document.getElementById('btn-confirmar-final');
+    if (btnFinal) btnFinal.disabled = true;
     
     const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual;
     
@@ -650,7 +1070,8 @@ async function ejecutarVenta() {
             direccion_domicilio: document.getElementById('dom-direccion')?.value || '',
             link_maps: document.getElementById('dom-link')?.value || '',
             notas_generales: '',
-            info_cliente_temp: infoClienteTemp
+            info_cliente_temp: infoClienteTemp,
+            cajero: nombreActivo || null
         };
         
         const itemsParaDB = carrito.map(i => ({
@@ -661,7 +1082,7 @@ async function ejecutarVenta() {
             nota: i.nota || ''
         }));
         
-        const pedidoId = await window.api.crearPedidoDirecto(datosPedido, itemsParaDB);
+        const pedidoId = await crearPedidoWrapper(datosPedido, itemsParaDB);
         
         // Guardar ID del pedido para impresión
         window.ultimoPedidoId = pedidoId;
@@ -671,12 +1092,7 @@ async function ejecutarVenta() {
         mostrarNotificacionExito(`Venta registrada - Total: $${total.toFixed(2)}`, '¡Venta Exitosa!');
         
         // Preguntar si quiere imprimir el ticket
-        setTimeout(() => {
-            const confirmar = confirm(`✅ Venta #${pedidoId} registrada correctamente\n\n¿Deseas imprimir el ticket ahora?`);
-            if (confirmar) {
-                imprimirTicket(pedidoId);
-            }
-        }, 500);
+        mostrarModalImpresion(pedidoId);
         
         // Limpiar todo
         carrito = [];
@@ -690,6 +1106,8 @@ async function ejecutarVenta() {
     } catch (e) {
         console.error(e);
         alert("Error al guardar: " + e);
+        const btnFinal = document.getElementById('btn-confirmar-final');
+        if (btnFinal) btnFinal.disabled = false;
     }
 }
         
@@ -797,13 +1215,36 @@ function mostrarNotificacionExito(mensaje, titulo = '¡Operación Exitosa!') {
     }
 }
 
+function mostrarModalImpresion(pedidoId) {
+    const modal = document.getElementById('modal-imprimir-ticket');
+    if (!modal) return;
+
+    document.getElementById('print-confirm-sub').textContent = `Venta #${pedidoId} registrada correctamente`;
+    modal.classList.remove('hidden');
+
+    const btnSi = document.getElementById('btn-si-imprimir');
+    const btnNo = document.getElementById('btn-no-imprimir');
+
+    const autoClose = setTimeout(() => modal.classList.add('hidden'), 8000);
+
+    const cerrar = () => {
+        clearTimeout(autoClose);
+        modal.classList.add('hidden');
+        btnSi.onclick = null;
+        btnNo.onclick = null;
+    };
+
+    btnSi.onclick = () => { cerrar(); imprimirTicket(pedidoId); };
+    btnNo.onclick = () => cerrar();
+}
+
 /* ============================================
    ADMINISTRACIÓN (PRODUCTOS Y DASHBOARD)
    ============================================ */
 
 async function cargarDashboard() {
     try {
-        const stats = await window.api.obtenerEstadisticas();
+        const stats = await obtenerEstadisticasWrapper();
         console.log('📊 Stats completos:', stats); // ⬅️ LÍNEA TEMPORAL DE DEBUG
         
         // ============ KPIs PRINCIPALES ============
@@ -1192,7 +1633,7 @@ async function seleccionarImagenCategoria() {
 
 async function cargarProductosAdmin() {
     try {
-        clasificaciones = await window.api.obtenerProductosAgrupados();
+        clasificaciones = await obtenerProductosAgrupadosWrapper();
         const contenedor = document.getElementById('lista-productos');
         
         if (!contenedor) return;
@@ -1217,8 +1658,8 @@ async function cargarProductosAdmin() {
                     ${cat.productos.length > 0 ? cat.productos.map(p => `
                         <div class="product-card" onclick="editarProducto(${p.id})">
                             <div class="product-visual">
-                                ${p.imagen 
-                                    ? `<img src="file://${p.imagen}" class="product-img-display" onerror="this.style.display='none'">` 
+                                ${p.imagen
+                                    ? `<img src="file://${p.imagen}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${p.emoji || '📦'}</span>`
                                     : `<span class="product-emoji">${p.emoji || '📦'}</span>`
                                 }
                             </div>
@@ -1296,9 +1737,9 @@ async function guardarProducto() {
     
     try {
         if (productoEditandoId) {
-            await window.api.actualizarProducto(productoEditandoId, p);
+            await actualizarProductoWrapper(productoEditandoId, p);
         } else {
-            await window.api.agregarProducto(p);
+            await agregarProductoWrapper(p);
         }
         mostrarNotificacionExito('Producto guardado correctamente', '¡Producto Guardado!');
         cerrarModalProducto();
@@ -1352,6 +1793,7 @@ async function guardarCategoria() {
         };
         
         if (categoriaEditandoId) {
+            datos.id = categoriaEditandoId;
             await window.api.editarClasificacion(datos);
         } else {
             await window.api.agregarClasificacion(datos);
@@ -1373,13 +1815,13 @@ async function cargarPedidos() {
     const contenedor = document.getElementById('lista-pedidos');
     if (!contenedor) return;
 
-    contenedor.innerHTML = '<tr><td colspan="6" style="text-align:center;">Cargando pedidos...</td></tr>';
+    contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center;">Cargando pedidos...</td></tr>';
 
     try {
-        const pedidos = await window.api.obtenerPedidos();
+        const pedidos = await obtenerPedidosWrapper(filtroActual);
         
         if (pedidos.length === 0) {
-            contenedor.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 20px;">No hay ventas registradas todavía.</td></tr>';
+            contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 20px;">No hay ventas registradas todavía.</td></tr>';
             return;
         }
 
@@ -1405,8 +1847,9 @@ async function cargarPedidos() {
     const fila = document.createElement('tr');
     fila.innerHTML = `
         <td><strong>#${p.id}</strong></td>
+        <td style="font-size:13px;color:var(--text-muted);">${p.cajero || '—'}</td>
         <td>${p.telefono || 'General'}</td>
-        <td>${fechaTxt}</td> 
+        <td>${fechaTxt}</td>
         <td style="text-transform: capitalize;">${p.metodo_pago}</td>
         <td><strong>$${parseFloat(p.total).toFixed(2)}</strong></td>
         <td>${renderizarEstadoPedido(p.id, p.estado)}</td>
@@ -1425,7 +1868,7 @@ async function cargarPedidos() {
 
     } catch (error) {
         console.error("Error al cargar pedidos:", error);
-        contenedor.innerHTML = '<tr><td colspan="6" style="text-align:center; color:red;">Error al cargar los datos.</td></tr>';
+        contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center; color:red;">Error al cargar los datos.</td></tr>';
     }
 }
 
@@ -1485,7 +1928,7 @@ async function verDetallePedido(id, cliente, total, metodo) {
     lista.innerHTML = 'Cargando detalles...';
 
     try {
-        const productos = await window.api.obtenerDetallePedido(id);
+        const productos = await obtenerDetallePedidoWrapper(id);
         lista.innerHTML = productos.map(item => `
             <div class="item-detalle">
                 <div class="info-prod">
@@ -1586,7 +2029,7 @@ async function cargarClientes() {
     try {
         // Obtener estadísticas y clientes
         const stats = await window.api.obtenerEstadisticasClientes();
-        const clientes = await window.api.obtenerClientesConCompras();
+        const clientes = await obtenerClientesWrapper();
         
         // Actualizar estadísticas
         document.getElementById('total-clientes-count').innerText = stats.totalClientes;
@@ -1863,20 +2306,24 @@ async function guardarCliente() {
         return;
     }
 
+    const btnGuardar = document.querySelector('#modal-cliente .btn-confirm-payment');
+    if (btnGuardar) btnGuardar.disabled = true;
+
     try {
-        await window.api.crearCliente({
+        await crearClienteWrapper({
             telefono: telefono,
             nombre: nombre,
             direccion: direccion,
             notas: ''
         });
-        
+
         mostrarNotificacionExito('Cliente guardado correctamente', '¡Cliente Guardado!');
         cerrarModalCliente();
         cargarClientes();
     } catch (error) {
         console.error("Error al guardar cliente:", error);
         alert("Error al guardar el cliente");
+        if (btnGuardar) btnGuardar.disabled = false;
     }
 }
 
@@ -1957,7 +2404,7 @@ function confirmarEliminarCliente(id, nombre) {
 }
 
 function verDetalleCliente(id) {
-    window.api.obtenerClientesConCompras().then(clientes => {
+    obtenerClientesWrapper().then(clientes => {
         const cliente = clientes.find(c => c.id === id);
         if (!cliente) {
             alert("Cliente no encontrado");
@@ -1998,6 +2445,164 @@ function cerrarModalVerCliente() {
     document.getElementById('modal-ver-cliente').classList.add('hidden');
 }
 
+/* ============================================
+   CUENTA ZENIT — Registro y sesión
+   ============================================ */
+
+function mostrarLoginZenit() {
+    document.getElementById('zenit-form-registro').style.display = 'none';
+    document.getElementById('zenit-form-login').style.display = '';
+}
+
+function mostrarRegistroZenit() {
+    document.getElementById('zenit-form-login').style.display = 'none';
+    document.getElementById('zenit-form-registro').style.display = '';
+}
+
+async function cargarCuentaZenitAjustes() {
+    const ajustes = await window.api.obtenerAjustes();
+    const token = ajustes.api_token;
+    const nombre = ajustes.zenit_user_name;
+    const email = ajustes.zenit_user_email;
+
+    const sinCuenta = document.getElementById('zenit-sin-cuenta');
+    const conCuenta = document.getElementById('zenit-con-cuenta');
+    if (!sinCuenta) return;
+
+    if (token && nombre) {
+        sinCuenta.style.display = 'none';
+        conCuenta.style.display = '';
+        document.getElementById('zenit-nombre-mostrar').textContent = nombre;
+        document.getElementById('zenit-email-mostrar').textContent = email || '';
+    } else {
+        sinCuenta.style.display = '';
+        conCuenta.style.display = 'none';
+    }
+}
+
+async function registrarCuentaZenit() {
+    const nombre = document.getElementById('zenit-nombre').value.trim();
+    const email = document.getElementById('zenit-email').value.trim();
+    const password = document.getElementById('zenit-password').value;
+    const errorDiv = document.getElementById('zenit-error-registro');
+
+    errorDiv.style.display = 'none';
+
+    if (!nombre || !email || !password) {
+        errorDiv.textContent = 'Completa todos los campos.';
+        errorDiv.style.display = '';
+        return;
+    }
+    if (password.length < 6) {
+        errorDiv.textContent = 'La contraseña debe tener al menos 6 caracteres.';
+        errorDiv.style.display = '';
+        return;
+    }
+
+    const btn = document.querySelector('#zenit-form-registro .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Creando cuenta...'; }
+
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const backendUrl = ajustes.api_url || 'https://zenit-pos-backend.onrender.com/api';
+        if (!apiClient) window.apiClient = new APIClient(backendUrl);
+        apiClient.setBaseURL(backendUrl);
+
+        const response = await apiClient.register(nombre, email, password);
+
+        await window.api.guardarAjuste('api_token', response.token);
+        await window.api.guardarAjuste('api_url', backendUrl);
+        await window.api.guardarAjuste('zenit_user_name', response.user.name);
+        await window.api.guardarAjuste('zenit_user_email', email);
+
+        apiClient.setToken(response.token);
+        tokenActual = response.token;
+        modoConectado = true;
+
+        await syncLocalToCloud();
+        await cargarCuentaZenitAjustes();
+        mostrarNotificacionExito('Cuenta creada y datos sincronizados', '¡Bienvenido a Zenit!');
+    } catch (error) {
+        errorDiv.textContent = error.message || 'Error al crear la cuenta. Intenta de nuevo.';
+        errorDiv.style.display = '';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Crear cuenta'; }
+    }
+}
+
+async function iniciarSesionZenitAjustes() {
+    const email = document.getElementById('zenit-email-login').value.trim();
+    const password = document.getElementById('zenit-password-login').value;
+    const errorDiv = document.getElementById('zenit-error-login');
+
+    errorDiv.style.display = 'none';
+
+    if (!email || !password) {
+        errorDiv.textContent = 'Ingresa tu email y contraseña.';
+        errorDiv.style.display = '';
+        return;
+    }
+
+    const btn = document.querySelector('#zenit-form-login .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Conectando...'; }
+
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const backendUrl = ajustes.api_url || 'https://zenit-pos-backend.onrender.com/api';
+        if (!apiClient) window.apiClient = new APIClient(backendUrl);
+        apiClient.setBaseURL(backendUrl);
+
+        const response = await apiClient.login(email, password);
+
+        await window.api.guardarAjuste('api_token', response.token);
+        await window.api.guardarAjuste('api_url', backendUrl);
+        await window.api.guardarAjuste('zenit_user_name', response.user.name);
+        await window.api.guardarAjuste('zenit_user_email', email);
+
+        apiClient.setToken(response.token);
+        tokenActual = response.token;
+        modoConectado = true;
+
+        await syncLocalToCloud();
+        await cargarCuentaZenitAjustes();
+        mostrarNotificacionExito('Sesión iniciada y datos sincronizados', '¡Bienvenido!');
+    } catch (error) {
+        errorDiv.textContent = error.message || 'Email o contraseña incorrectos.';
+        errorDiv.style.display = '';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Iniciar sesión'; }
+    }
+}
+
+async function cerrarSesionZenit() {
+    if (!confirm('¿Cerrar sesión? El sistema seguirá funcionando en modo local.')) return;
+    await window.api.guardarAjuste('api_token', '');
+    await window.api.guardarAjuste('zenit_user_name', '');
+    await window.api.guardarAjuste('zenit_user_email', '');
+    modoConectado = false;
+    tokenActual = null;
+    if (apiClient) apiClient.setToken(null);
+    await cargarCuentaZenitAjustes();
+    mostrarNotificacionExito('Sesión cerrada. Modo local activado.', 'Sesión cerrada');
+}
+
+function mostrarCambiarPasswordApp() {
+    const form = document.getElementById('form-cambiar-password');
+    if (form) form.style.display = form.style.display === 'none' ? '' : 'none';
+}
+
+async function guardarNuevaPasswordApp() {
+    const nueva = document.getElementById('nueva-password-app').value;
+    const confirmar = document.getElementById('confirm-password-app').value;
+    if (nueva.length < 4) { alert('La contraseña debe tener al menos 4 caracteres'); return; }
+    if (nueva !== confirmar) { alert('Las contraseñas no coinciden'); return; }
+    await window.api.establecerPasswordApp(nueva);
+    document.getElementById('form-cambiar-password').style.display = 'none';
+    document.getElementById('nueva-password-app').value = '';
+    document.getElementById('confirm-password-app').value = '';
+    mostrarNotificacionExito('Contraseña del sistema actualizada', '¡Listo!');
+}
+
 async function cargarAjustesInstalados() {
     try {
         console.log("Sincronizando ajustes...");
@@ -2035,6 +2640,11 @@ async function cargarAjustesInstalados() {
         if(document.getElementById('adj-mostrar-stock'))
             document.getElementById('adj-mostrar-stock').checked = (ajustes.mostrar_stock_venta === 'true');
 
+        // Venta sin turno (default activo — solo se desactiva si el usuario lo apagó explícitamente)
+        ventaSinTurno = (ajustes.venta_sin_turno !== 'false');
+        if(document.getElementById('adj-venta-sin-turno'))
+            document.getElementById('adj-venta-sin-turno').checked = ventaSinTurno;
+
         // Modo oscuro
         if(ajustes.dark_mode === 'true') {
             const checkDark = document.getElementById('adj-darkmode');
@@ -2062,7 +2672,17 @@ async function cargarAjustesInstalados() {
         
         // Agregar event listeners para guardar automáticamente
         agregarListenersGuardadoAjustes();
-        
+
+        // Permisos por rol (solo dueño)
+        cargarPermisosAjustes();
+
+        // Switch pedir contraseña al iniciar
+        const switchPwd = document.getElementById('adj-pedir-password');
+        if (switchPwd) switchPwd.checked = (ajustes.pedir_password_inicio !== 'false');
+
+        // Cuenta Zenit
+        await cargarCuentaZenitAjustes();
+
         console.log("Ajustes cargados con éxito.");
     } catch (error) {
         console.error("Error cargando ajustes:", error);
@@ -2132,6 +2752,15 @@ function agregarListenersGuardadoAjustes() {
             await window.api.guardarAjuste('impresora', impresora.value);
         });
     }
+
+    // Venta sin turno
+    const ventaSinTurnoEl = document.getElementById('adj-venta-sin-turno');
+    if (ventaSinTurnoEl) {
+        ventaSinTurnoEl.addEventListener('change', async () => {
+            ventaSinTurno = ventaSinTurnoEl.checked;
+            await window.api.guardarAjuste('venta_sin_turno', ventaSinTurnoEl.checked ? 'true' : 'false');
+        });
+    }
 }
 
 function toggleDarkMode(isChecked) {
@@ -2165,8 +2794,8 @@ function toggleDarkMode(isChecked) {
 async function imprimirTicket(pedidoId) {
     try {
         // 1. Obtener datos del pedido
-        const detalles = await window.api.obtenerDetallePedido(pedidoId);
-        const pedidos = await window.api.obtenerPedidos({ limit: 1000 });
+        const detalles = await obtenerDetallePedidoWrapper(pedidoId);
+        const pedidos = await obtenerPedidosWrapper({ limit: 1000 });
         const pedido = pedidos.find(p => p.id === pedidoId);
         
         if (!pedido || !detalles) {
@@ -2408,19 +3037,10 @@ async function imprimirTicket(pedidoId) {
             </html>
         `;
 
-        // 6. Abrir ventana de impresión
-        const ventanaImpresion = window.open('', '_blank', 'width=300,height=600');
-        ventanaImpresion.document.write(ticketHTML);
-        ventanaImpresion.document.close();
-        
-        // Esperar a que cargue y luego imprimir
-        ventanaImpresion.onload = function() {
-            setTimeout(() => {
-                ventanaImpresion.print();
-                // Cerrar ventana después de imprimir (opcional)
-                // ventanaImpresion.close();
-            }, 250);
-        };
+        // 6. Enviar a imprimir directamente (sin ventana emergente)
+        const ajusteImpresora = await window.api.obtenerAjustes().catch(() => ({}));
+        const nombreImpresora = ajusteImpresora.impresora || '';
+        await window.api.imprimirTicket(ticketHTML, nombreImpresora);
 
     } catch (error) {
         console.error('Error al imprimir ticket:', error);
@@ -2494,6 +3114,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (versionSpan) {
             versionSpan.innerText = `v${version}`;
         }
+        const sidebarVersion = document.getElementById('sidebar-version');
+        if (sidebarVersion) {
+            sidebarVersion.innerText = `v${version}`;
+        }
     } catch (error) {
         console.log('No se pudo obtener la versión');
     }
@@ -2526,7 +3150,7 @@ async function cargarInventario() {
     try {
         insumosCache = await window.api.obtenerInsumos();
         preparacionesCache = await window.api.obtenerPreparaciones();
-        const agrupados = await window.api.obtenerProductosAgrupados();
+        const agrupados = await obtenerProductosAgrupadosWrapper();
         productosRecetaCache = [];
         agrupados.forEach(cat => {
             cat.productos.forEach(p => {
@@ -2759,8 +3383,8 @@ async function guardarPreparacion() {
     const items = [];
     document.querySelectorAll('#prep-items-lista .receta-linea').forEach(linea => {
         const sel = linea.querySelector('select');
-        const inp = linea.querySelector('input');
-        if (sel.value && inp.value) {
+        const inp = linea.querySelector('input[type="number"]');
+        if (sel && sel.value && inp && inp.value) {
             items.push({ insumo_id: parseInt(sel.value), cantidad: parseFloat(inp.value) });
         }
     });
@@ -2956,13 +3580,15 @@ function actualizarUnidadReceta(selectIngrediente, unidadGuardada = null) {
 
 async function guardarReceta() {
     const items = [];
-    document.querySelectorAll('#receta-items-lista .receta-linea').forEach(linea => {
+   document.querySelectorAll('#receta-items-lista .receta-linea').forEach(linea => {
         const sel = linea.querySelector('.sel-ingrediente');
-        const inp = linea.querySelector('input');
+        const inp = linea.querySelector('input[type="number"]');
         const selUnidad = linea.querySelector('.sel-unidad-receta');
         if (sel && sel.value && inp && inp.value) {
             const [tipo, idStr] = sel.value.split('_');
-            const unidad_receta = selUnidad && selUnidad.value ? selUnidad.value : null;
+            const unidad_receta = (selUnidad && selUnidad.value && selUnidad.value !== '—') 
+                ? selUnidad.value 
+                : null;
             items.push({ tipo, referencia_id: parseInt(idStr), cantidad: parseFloat(inp.value), unidad_receta });
         }
     });
@@ -3106,7 +3732,7 @@ async function cargarOfertas() {
         combosCache = await window.api.obtenerCombos();
         // También recargar productos para el selector de combos
         if (!productosGlobales.length) {
-            const agrupados = await window.api.obtenerProductosAgrupados();
+            const agrupados = await obtenerProductosAgrupadosWrapper();
             productosGlobales = [];
             agrupados.forEach(cat => cat.productos.forEach(p => productosGlobales.push({...p, categoria: cat.nombre})));
         }
@@ -3340,5 +3966,890 @@ async function confirmarEliminarCombo(id, nombre) {
         combosCache = await window.api.obtenerCombos();
         renderizarTablaCombos();
         mostrarNotificacionExito('Combo eliminado', '¡Eliminado!');
+    }
+}
+
+// ============================================
+// BACKUPS
+// ============================================
+async function crearRespaldoAhora() {
+    const btn = event.currentTarget;
+    const textoOriginal = btn.innerText;
+    btn.disabled = true;
+    btn.innerText = 'Creando respaldo...';
+    try {
+        const resultado = await window.api.crearBackupManual();
+        if (resultado.ok) {
+            const nombre = resultado.ultimo || 'backup creado';
+            document.getElementById('last-backup').innerText = nombre.replace('backup-', '').replace('.db', '').replace(/T/, ' ').replace(/-/g, ':').substring(0, 19);
+            mostrarNotificacionExito(`Respaldo guardado (${resultado.total} en total)`, '¡Respaldo Creado!');
+        } else {
+            alert('Error al crear el respaldo: ' + resultado.error);
+        }
+    } catch(e) {
+        alert('No se pudo crear el respaldo');
+    } finally {
+        btn.disabled = false;
+        btn.innerText = textoOriginal;
+    }
+}
+
+async function abrirCarpetaBackups() {
+    await window.api.abrirCarpetaBackups();
+}
+
+/* ============================================
+   GESTIÓN DE MODO DE CONEXIÓN
+   ============================================ */
+
+// Definir funciones globalmente
+(function() {
+    window.abrirModalConfiguracionConexion = function() {
+        console.log('🔵 Abriendo modal de configuración...');
+        
+        // Actualizar UI con estado actual
+        const selectorModo = document.getElementById('selector-modo-conexion');
+        const modoDisplay = document.getElementById('modo-actual-display');
+        const configBackend = document.getElementById('config-backend');
+        const infoConexion = document.getElementById('info-conexion-actual');
+        
+        if (modoConectado) {
+            selectorModo.value = 'conectado';
+            modoDisplay.innerHTML = '🌐 MODO CONECTADO';
+            modoDisplay.style.color = '#10b981';
+            configBackend.style.display = 'block';
+            
+            if (tokenActual) {
+                infoConexion.style.display = 'block';
+                document.getElementById('usuario-conectado').innerText = `Usuario autenticado correctamente`;
+            }
+        } else {
+            selectorModo.value = 'local';
+            modoDisplay.innerHTML = '🔌 MODO LOCAL';
+            modoDisplay.style.color = '#2563eb';
+            configBackend.style.display = 'none';
+        }
+        
+        // Mostrar modal
+        const modal = document.getElementById('modal-configuracion-conexion');
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+        
+        console.log('✅ Modal abierto');
+    };
+
+    window.cerrarModalConfiguracionConexion = function() {
+        console.log('🔴 Cerrando modal de configuración...');
+        const modal = document.getElementById('modal-configuracion-conexion');
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+    };
+
+    window.cambiarModoConexion = function(modo) {
+        console.log('🔄 Cambiando modo a:', modo);
+        const configBackend = document.getElementById('config-backend');
+        const modoDisplay = document.getElementById('modo-actual-display');
+        
+        if (modo === 'conectado') {
+            configBackend.style.display = 'block';
+            modoDisplay.innerHTML = '🌐 MODO CONECTADO';
+            modoDisplay.style.color = '#10b981';
+        } else {
+            configBackend.style.display = 'none';
+            modoDisplay.innerHTML = '🔌 MODO LOCAL';
+            modoDisplay.style.color = '#2563eb';
+            
+            // Cambiar a modo local inmediatamente
+            if (typeof window.activarModoLocal === 'function') {
+                window.activarModoLocal();
+            }
+        }
+    };
+})();
+
+// ============================================
+// SINCRONIZACIÓN LOCAL → NUBE
+// ============================================
+async function syncLocalToCloud() {
+    const resultadoDiv = document.getElementById('resultado-conexion');
+    const msg = (texto) => { if (resultadoDiv) resultadoDiv.innerHTML = texto; };
+
+    try {
+        // 1. CATEGORÍAS — emparejar por nombre
+        msg('⏳ Sincronizando categorías...');
+        const localCats = await window.api.obtenerClasificacionesRaw();
+        const cloudCats = await apiClient.getCategories();
+        const catIdMap = {}; // local_id → cloud_id
+
+        for (const cat of localCats) {
+            const match = cloudCats.find(c =>
+                c.name.toLowerCase().trim() === cat.nombre.toLowerCase().trim()
+            );
+            if (match) {
+                catIdMap[cat.id] = match.id;
+            } else {
+                try {
+                    const created = await apiClient.createCategory({ name: cat.nombre, emoji: cat.emoji });
+                    catIdMap[cat.id] = created.id;
+                } catch(e) { console.warn('Sync cat skip:', cat.nombre, e.message); }
+            }
+        }
+
+        // 2. PRODUCTOS — emparejar por nombre
+        msg('⏳ Sincronizando productos...');
+        const localCatsConProds = await window.api.obtenerProductosAgrupados();
+        const localProds = localCatsConProds.flatMap(cat => cat.productos || []);
+        const cloudProds = await apiClient.getProducts();
+        const prodIdMap = {}; // local_id → cloud_id
+
+        for (const prod of localProds) {
+            if (!prod.nombre || !prod.precio) continue;
+            const match = cloudProds.find(p =>
+                p.name.toLowerCase().trim() === prod.nombre.toLowerCase().trim()
+            );
+            if (match) {
+                prodIdMap[prod.id] = match.id;
+            } else {
+                try {
+                    const created = await apiClient.createProduct({
+                        name: prod.nombre,
+                        description: prod.descripcion || '',
+                        price: prod.precio,
+                        stock: prod.stock || 0,
+                        category_id: prod.clasificacion_id ? (catIdMap[prod.clasificacion_id] || null) : null,
+                        emoji: prod.emoji || '📦'
+                    });
+                    prodIdMap[prod.id] = created.id;
+                } catch(e) { console.warn('Sync prod skip:', prod.nombre, e.message); }
+            }
+        }
+
+        // 3. CLIENTES — emparejar por teléfono
+        msg('⏳ Sincronizando clientes...');
+        const localClientes = await window.api.obtenerClientes();
+        const cloudClientes = await apiClient.getCustomers();
+
+        for (const cust of localClientes) {
+            if (!cust.telefono || !cust.nombre) continue;
+            const match = cloudClientes.find(c => c.phone === cust.telefono);
+            if (!match) {
+                try {
+                    await apiClient.createCustomer({
+                        phone: cust.telefono,
+                        name: cust.nombre,
+                        address: cust.direccion || '',
+                        notes: cust.notas || ''
+                    });
+                } catch(e) { console.warn('Sync cliente skip:', cust.telefono, e.message); }
+            }
+        }
+
+        console.log(`✅ Sync completado: ${Object.keys(catIdMap).length} categorías, ${Object.keys(prodIdMap).length} productos, ${localClientes.length} clientes procesados`);
+
+    } catch (error) {
+        console.error('Error durante sincronización:', error);
+        msg('⚠️ Sincronización parcial. Algunos datos podrían no haberse subido.');
+        await new Promise(r => setTimeout(r, 1500));
+    }
+}
+
+window.testearConexionBackend = async function() {
+    const url = document.getElementById('backend-url').value.trim();
+    const username = document.getElementById('backend-username').value.trim();
+    const password = document.getElementById('backend-password').value.trim();
+    const resultadoDiv = document.getElementById('resultado-conexion');
+    const infoConexion = document.getElementById('info-conexion-actual');
+    
+    if (!url || !username || !password) {
+        window.mostrarResultadoConexion('error', '❌ Por favor completa todos los campos');
+        return;
+    }
+    
+    resultadoDiv.style.display = 'block';
+    resultadoDiv.style.background = '#fef3c7';
+    resultadoDiv.style.color = '#92400e';
+    resultadoDiv.innerHTML = '⏳ Probando conexión...';
+    
+    try {
+        apiClient.setBaseURL(url);
+        const response = await apiClient.login(username, password);
+        
+        if (response.token) {
+            tokenActual = response.token;
+            apiClient.setToken(response.token);
+            modoConectado = true;
+            
+            await window.api.guardarAjuste('modo_conectado', 'true');
+            await window.api.guardarAjuste('api_url', url);
+            await window.api.guardarAjuste('api_token', response.token);
+
+            await syncLocalToCloud();
+
+            window.mostrarResultadoConexion('success', `✅ Conexión exitosa. Bienvenido ${response.user.name}`);
+            
+            infoConexion.style.display = 'block';
+            document.getElementById('usuario-conectado').innerText = 
+                `Usuario: ${response.user.name} (${response.user.role})`;
+            
+            document.getElementById('modo-actual-display').innerHTML = '🌐 MODO CONECTADO';
+            document.getElementById('modo-actual-display').style.color = '#10b981';
+            
+            console.log('✅ Modo conectado activado');
+            
+            setTimeout(() => {
+                location.reload();
+            }, 2000);
+            
+        } else {
+            throw new Error('No se recibió token de autenticación');
+        }
+    } catch (error) {
+        console.error('Error al conectar con backend:', error);
+        window.mostrarResultadoConexion('error', `❌ Error: ${error.message}`);
+        window.activarModoLocal();
+    }
+};
+
+window.mostrarResultadoConexion = function(tipo, mensaje) {
+    const resultadoDiv = document.getElementById('resultado-conexion');
+    resultadoDiv.style.display = 'block';
+    
+    if (tipo === 'success') {
+        resultadoDiv.style.background = '#d1fae5';
+        resultadoDiv.style.color = '#065f46';
+        resultadoDiv.style.borderLeft = '4px solid #10b981';
+    } else {
+        resultadoDiv.style.background = '#fee2e2';
+        resultadoDiv.style.color = '#991b1b';
+        resultadoDiv.style.borderLeft = '4px solid #ef4444';
+    }
+    
+    resultadoDiv.innerHTML = mensaje;
+};
+
+window.activarModoLocal = async function() {
+    modoConectado = false;
+    tokenActual = null;
+    
+    await window.api.guardarAjuste('modo_conectado', 'false');
+    await window.api.guardarAjuste('api_token', '');
+    
+    console.log('🔌 Modo local activado');
+    
+    document.getElementById('modo-actual-display').innerHTML = '🔌 MODO LOCAL';
+    document.getElementById('modo-actual-display').style.color = '#2563eb';
+};
+
+// ============================================
+// PERFIL — SELECCIÓN AL INICIO
+// ============================================
+
+async function inicializarPerfil() {
+    return new Promise(async (resolve) => {
+        const screen = document.getElementById('perfil-screen');
+        if (!screen) return resolve();
+
+        // Leer permisos guardados para saber qué perfiles están activos
+        let permisos = { cajero: { ...PERMISOS_DEFAULT.cajero }, encargado: { ...PERMISOS_DEFAULT.encargado } };
+        try {
+            const ajustes = await window.api.obtenerAjustes();
+            const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+            if (guardados.cajero)    permisos.cajero    = { ...permisos.cajero,    ...guardados.cajero };
+            if (guardados.encargado) permisos.encargado = { ...permisos.encargado, ...guardados.encargado };
+        } catch(e) { /* usa defaults */ }
+
+        const cajeroActivo    = permisos.cajero.enabled    === true;
+        const encargadoActivo = permisos.encargado.enabled === true;
+
+        // Si ningún perfil adicional está activo, saltar pantalla y entrar como Administrador
+        if (!cajeroActivo && !encargadoActivo) {
+            rolActivo = 'dueno';
+            return resolve();
+        }
+
+        // Mostrar solo los botones de perfiles activos
+        const btnCajero    = document.getElementById('perfil-btn-cajero');
+        const btnEncargado = document.getElementById('perfil-btn-encargado');
+        if (btnCajero)    btnCajero.style.display    = cajeroActivo    ? '' : 'none';
+        if (btnEncargado) btnEncargado.style.display = encargadoActivo ? '' : 'none';
+
+        screen.style.display = 'flex';
+        window._resolverPerfil = resolve;
+    });
+}
+
+let _perfilPendiente = null; // rol esperando verificación de PIN
+
+async function seleccionarPerfil(rol) {
+    // Si el perfil tiene PIN configurado, pedir verificación primero
+    if (rol !== 'dueno') {
+        let permisos = {};
+        try {
+            const ajustes = await window.api.obtenerAjustes();
+            permisos = JSON.parse(ajustes.permisos_roles || '{}');
+        } catch(e) {}
+
+        if (permisos[rol]?.pin_set && permisos[rol]?.pin) {
+            _perfilPendiente = rol;
+            const labels = { cajero: '🧑‍💼 Cajero', encargado: '👔 Encargado' };
+            document.getElementById('pin-perfil-label').textContent = labels[rol] || rol;
+            document.getElementById('pin-perfil-input').value = '';
+            document.getElementById('pin-perfil-error').style.display = 'none';
+            // Ocultar pantalla de perfiles para que el modal se vea claramente
+            const screen = document.getElementById('perfil-screen');
+            if (screen) screen.style.display = 'none';
+            document.getElementById('modal-pin-perfil').classList.remove('hidden');
+            setTimeout(() => document.getElementById('pin-perfil-input')?.focus(), 100);
+            return;
+        }
+    }
+    completarSeleccionPerfil(rol);
+}
+
+async function confirmarPinPerfil() {
+    const pinIngresado = document.getElementById('pin-perfil-input')?.value;
+    if (!pinIngresado) return;
+
+    let permisos = {};
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        permisos = JSON.parse(ajustes.permisos_roles || '{}');
+    } catch(e) {}
+
+    const pinHash = await hashPin(pinIngresado);
+    if (permisos[_perfilPendiente]?.pin === pinHash) {
+        document.getElementById('modal-pin-perfil').classList.add('hidden');
+        completarSeleccionPerfil(_perfilPendiente);
+        _perfilPendiente = null;
+    } else {
+        document.getElementById('pin-perfil-error').style.display = '';
+        document.getElementById('pin-perfil-input').value = '';
+        document.getElementById('pin-perfil-input').focus();
+    }
+}
+
+function cancelarSeleccionPerfil() {
+    document.getElementById('modal-pin-perfil').classList.add('hidden');
+    // Volver a mostrar la pantalla de perfiles si todavía estamos esperando selección
+    if (window._resolverPerfil) {
+        const screen = document.getElementById('perfil-screen');
+        if (screen) screen.style.display = 'flex';
+    }
+    _perfilPendiente = null;
+}
+
+function completarSeleccionPerfil(rol) {
+    rolActivo = rol;
+    nombreActivo = document.getElementById('perfil-nombre-input')?.value?.trim() || '';
+    const screen = document.getElementById('perfil-screen');
+    if (screen) screen.style.display = 'none';
+    // Actualizar botón en header con nombre del perfil activo
+    const labels = { cajero: '🧑‍💼 Cajero', encargado: '👔 Encargado', dueno: '🔑 Admin' };
+    const textoBtn = document.getElementById('texto-perfil-activo');
+    if (textoBtn) textoBtn.textContent = labels[rol] || rol;
+    const btnCambiar = document.getElementById('btn-cambiar-perfil');
+    if (btnCambiar) btnCambiar.style.display = 'flex';
+    // Si no es admin, mostrar el app directamente y ocultar la pantalla de login
+    if (rol !== 'dueno') {
+        const appDiv = document.querySelector('.app');
+        if (appDiv) appDiv.style.display = '';
+        const loginScreen = document.getElementById('login-screen');
+        if (loginScreen) loginScreen.style.display = 'none';
+    }
+    if (window._resolverPerfil) {
+        window._resolverPerfil();
+        window._resolverPerfil = null;
+    }
+}
+
+async function hashPin(pin) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(pin);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function actualizarVisibilidadBtnCambiarPerfil() {
+    const cajeroEnabled    = document.getElementById('puesto-enabled-cajero')?.checked;
+    const encargadoEnabled = document.getElementById('puesto-enabled-encargado')?.checked;
+    const btnCambiar = document.getElementById('btn-cambiar-perfil');
+    if (btnCambiar && (cajeroEnabled || encargadoEnabled)) {
+        btnCambiar.style.display = 'flex';
+    }
+}
+
+function volverAPantallaPerfiles() {
+    rolActivo = 'dueno';
+    nombreActivo = '';
+    const input = document.getElementById('perfil-nombre-input');
+    if (input) input.value = '';
+    const btnCambiar = document.getElementById('btn-cambiar-perfil');
+    if (btnCambiar) btnCambiar.style.display = 'none';
+    inicializarPerfil().then(async () => {
+        // Si el usuario eligió Admin, verificar contraseña antes de dejar entrar
+        if (rolActivo === 'dueno') {
+            await inicializarLogin();
+        }
+        await aplicarPermisos();
+        actualizarIndicadorTurnoSidebar();
+        navegarAPrimeraVistaDisponible();
+    });
+}
+
+// ============================================
+// TURNOS — CORTE DE CAJA
+// ============================================
+
+const fmt = (v) => '$' + parseFloat(v || 0).toFixed(2);
+
+async function inicializarTurno() {
+    turnoActivo = await window.api.obtenerTurnoActivo();
+    // Si hay un turno activo, restaurar nombre del cajero
+    if (turnoActivo) {
+        nombreActivo = turnoActivo.cajero_nombre || '';
+    }
+    // rolActivo ya fue establecido por inicializarPerfil(), no sobreescribir
+    aplicarPermisos();
+    actualizarIndicadorTurnoSidebar();
+}
+
+async function aplicarPermisos() {
+    if (rolActivo === 'dueno') {
+        // El dueño ve todo — restaurar todos los botones
+        document.querySelectorAll('.menu-item').forEach(btn => btn.classList.remove('hidden'));
+        return;
+    }
+    let permisos = PERMISOS_DEFAULT[rolActivo] || {};
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        if (guardados[rolActivo]) permisos = guardados[rolActivo];
+    } catch(e) { /* usa defaults */ }
+
+    const mapa = {
+        ver_dashboard:   'dashboard',
+        ver_nueva_venta: 'nueva-venta',
+        ver_pedidos:     'pedidos',
+        ver_turno:       'turno',
+        ver_productos:   'productos',
+        ver_clientes:    'clientes',
+        ver_ofertas:     'ofertas',
+        ver_inventario:  'inventario',
+        ver_ajustes:     'ajustes'
+    };
+
+    // Restaurar todos primero
+    document.querySelectorAll('.menu-item').forEach(btn => btn.classList.remove('hidden'));
+
+    // Ocultar según permisos
+    Object.entries(mapa).forEach(([permiso, vista]) => {
+        const btn = document.querySelector(`[data-view="${vista}"]`);
+        if (btn) btn.classList.toggle('hidden', permisos[permiso] === false);
+    });
+}
+
+function navegarAPrimeraVistaDisponible() {
+    const primerBtn = document.querySelector('.menu-item:not(.hidden)');
+    if (primerBtn) {
+        const vista = primerBtn.getAttribute('data-view');
+        if (vista) cambiarVista(vista);
+    }
+}
+
+function actualizarIndicadorTurnoSidebar() {
+    const btnTurno = document.getElementById('menu-turno');
+    if (!btnTurno) return;
+    if (turnoActivo) {
+        btnTurno.classList.add('menu-turno-activo');
+    } else {
+        btnTurno.classList.remove('menu-turno-activo');
+    }
+}
+
+async function cargarVistaTurno() {
+    const panelSin    = document.getElementById('turno-sin-turno');
+    const panelActivo = document.getElementById('turno-activo');
+
+    if (turnoActivo) {
+        panelSin.classList.add('hidden');
+        panelActivo.classList.remove('hidden');
+
+        // Poblar datos del turno
+        document.getElementById('turno-act-nombre').textContent   = turnoActivo.cajero_nombre;
+        document.getElementById('turno-act-rol').textContent      = turnoActivo.rol.charAt(0).toUpperCase() + turnoActivo.rol.slice(1);
+        document.getElementById('turno-act-apertura').textContent = new Date(turnoActivo.apertura).toLocaleString('es-MX');
+        document.getElementById('turno-act-fondo').textContent    = fmt(turnoActivo.fondo_inicial);
+
+        // Totales en tiempo real
+        try {
+            const totales = await window.api.calcularTotalesTurno(turnoActivo.apertura);
+            document.getElementById('turno-total-ventas').textContent        = fmt(totales.total_ventas || 0);
+            document.getElementById('turno-total-pedidos').textContent       = totales.total_pedidos || 0;
+            document.getElementById('turno-total-efectivo').textContent      = fmt(totales.total_efectivo || 0);
+            document.getElementById('turno-total-tarjeta').textContent       = fmt(totales.total_tarjeta || 0);
+            document.getElementById('turno-total-transferencia').textContent = fmt(totales.total_transferencia || 0);
+        } catch(e) { console.error('Error calculando totales turno:', e); }
+    } else {
+        panelSin.classList.remove('hidden');
+        panelActivo.classList.add('hidden');
+        // Pre-llenar el rol con el perfil activo
+        const selectRol = document.getElementById('turno-rol');
+        if (selectRol && rolActivo) selectRol.value = rolActivo;
+    }
+
+    // Cargar historial
+    await cargarHistorialTurnos();
+}
+
+async function cargarHistorialTurnos() {
+    const tbody = document.getElementById('turno-historial-body');
+    if (!tbody) return;
+    try {
+        const turnos = await window.api.obtenerTurnos();
+        if (!turnos.length) {
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);">Sin turnos registrados</td></tr>';
+            return;
+        }
+        tbody.innerHTML = turnos.map(t => `
+            <tr>
+                <td>#${t.id}</td>
+                <td>${t.cajero_nombre}</td>
+                <td>${t.rol.charAt(0).toUpperCase() + t.rol.slice(1)}</td>
+                <td>${new Date(t.apertura).toLocaleString('es-MX')}</td>
+                <td>${t.cierre ? new Date(t.cierre).toLocaleString('es-MX') : '—'}</td>
+                <td>${fmt(t.total_ventas)}</td>
+                <td>${fmt(t.total_efectivo)}</td>
+                <td class="${t.diferencia < 0 ? 'text-danger' : t.diferencia > 0 ? 'text-success' : ''}">${fmt(t.diferencia)}</td>
+                <td><span class="badge-${t.estado}">${t.estado === 'abierto' ? 'Abierto' : 'Cerrado'}</span></td>
+            </tr>
+        `).join('');
+    } catch(e) {
+        console.error('Error cargando historial turnos:', e);
+    }
+}
+
+async function abrirTurno() {
+    const nombre = document.getElementById('turno-nombre')?.value?.trim();
+    const rol    = document.getElementById('turno-rol')?.value || 'cajero';
+    const fondo  = parseFloat(document.getElementById('turno-fondo')?.value) || 0;
+
+    if (!nombre) {
+        mostrarNotificacionExito('Ingresa el nombre del cajero', '⚠️ Error');
+        return;
+    }
+
+    try {
+        nombreActivo = nombre;
+        const id = await window.api.abrirTurno(nombre, rol, fondo);
+        turnoActivo = await window.api.obtenerTurnoActivo();
+        rolActivo = turnoActivo?.rol || 'dueno';
+        aplicarPermisos();
+        actualizarIndicadorTurnoSidebar();
+        cargarVistaTurno();
+        mostrarNotificacionExito(`Turno abierto — ${nombre}`, '¡Turno Abierto!');
+    } catch(e) {
+        mostrarNotificacionExito('Error al abrir turno', '⚠️ Error');
+        console.error(e);
+    }
+}
+
+async function abrirModalCierre() {
+    if (!turnoActivo) return;
+    try {
+        const totales = await window.api.calcularTotalesTurno(turnoActivo.apertura);
+        const fondoInicial      = turnoActivo.fondo_inicial || 0;
+        const efectivoVentas    = totales.total_efectivo || 0;
+        const esperado          = fondoInicial + efectivoVentas;
+
+        document.getElementById('cierre-fondo').textContent           = fmt(fondoInicial);
+        document.getElementById('cierre-efectivo-ventas').textContent = fmt(efectivoVentas);
+        document.getElementById('cierre-esperado').textContent        = fmt(esperado);
+        document.getElementById('cierre-efectivo-contado').value      = '';
+        document.getElementById('cierre-diferencia').textContent      = '$0.00';
+        document.getElementById('cierre-notas').value                 = '';
+
+        document.getElementById('modal-cierre-turno').classList.remove('hidden');
+    } catch(e) {
+        mostrarNotificacionExito('Error al cargar datos de cierre', '⚠️ Error');
+    }
+}
+
+function actualizarDiferencia() {
+    const contado  = parseFloat(document.getElementById('cierre-efectivo-contado')?.value) || 0;
+    const esperado = parseFloat(document.getElementById('cierre-esperado')?.textContent?.replace(/[^0-9.-]/g, '')) || 0;
+    const dif      = contado - esperado;
+    const el       = document.getElementById('cierre-diferencia');
+    el.textContent = fmt(dif);
+    el.style.color = dif < 0 ? '#ef4444' : dif > 0 ? '#22c55e' : 'inherit';
+}
+
+async function confirmarCierreTurno() {
+    if (!turnoActivo) return;
+    const contado = parseFloat(document.getElementById('cierre-efectivo-contado')?.value);
+    if (isNaN(contado) || contado < 0) {
+        mostrarNotificacionExito('Ingresa el efectivo contado', '⚠️ Error');
+        return;
+    }
+    const notas = document.getElementById('cierre-notas')?.value || '';
+
+    try {
+        await window.api.cerrarTurno(turnoActivo.id, contado, notas);
+        document.getElementById('modal-cierre-turno').classList.add('hidden');
+        turnoActivo = null;
+        rolActivo   = 'dueno';
+        aplicarPermisos();
+        actualizarIndicadorTurnoSidebar();
+        cargarVistaTurno();
+        mostrarNotificacionExito('Turno cerrado correctamente', '¡Turno Cerrado!');
+    } catch(e) {
+        mostrarNotificacionExito('Error al cerrar turno', '⚠️ Error');
+        console.error(e);
+    }
+}
+
+// ============================================
+// PERMISOS POR ROL (en Ajustes)
+// ============================================
+
+async function cargarPermisosAjustes() {
+    const cardPermisos = document.getElementById('card-permisos-rol');
+    if (!cardPermisos) return;
+
+    // Solo visible para administrador
+    if (rolActivo !== 'dueno') {
+        cardPermisos.classList.add('hidden');
+        return;
+    }
+    cardPermisos.classList.remove('hidden');
+
+    let permisos = {
+        cajero:    { ...PERMISOS_DEFAULT.cajero },
+        encargado: { ...PERMISOS_DEFAULT.encargado }
+    };
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        if (guardados.cajero)    permisos.cajero    = { ...permisos.cajero,    ...guardados.cajero };
+        if (guardados.encargado) permisos.encargado = { ...permisos.encargado, ...guardados.encargado };
+    } catch(e) { /* usa defaults */ }
+
+    const secciones = [
+        { clave: 'ver_dashboard',   label: 'Dashboard' },
+        { clave: 'ver_nueva_venta', label: 'Nueva Venta' },
+        { clave: 'ver_pedidos',     label: 'Pedidos' },
+        { clave: 'ver_turno',       label: 'Turno / Caja' },
+        { clave: 'ver_productos',   label: 'Productos' },
+        { clave: 'ver_clientes',    label: 'Clientes' },
+        { clave: 'ver_ofertas',     label: 'Ofertas' },
+        { clave: 'ver_inventario',  label: 'Inventario' },
+        { clave: 'ver_ajustes',     label: 'Ajustes' },
+    ];
+
+    const roles = [
+        { key: 'cajero',    label: 'Cajero',    icon: '🧑‍💼' },
+        { key: 'encargado', label: 'Encargado', icon: '👔'   }
+    ];
+
+    const container = document.getElementById('puestos-container');
+    container.innerHTML = roles.map(r => {
+        const activo = permisos[r.key].enabled === true;
+        const funcs = secciones.map(s => `
+            <div class="puesto-funcion-item">
+                <span>${s.label}</span>
+                <label class="switch switch-sm">
+                    <input type="checkbox" data-rol="${r.key}" data-permiso="${s.clave}"
+                        ${permisos[r.key][s.clave] !== false ? 'checked' : ''}
+                        onchange="guardarPermisosRol()">
+                    <span class="slider"></span>
+                </label>
+            </div>`).join('');
+
+        const tienePin = permisos[r.key].pin_set === true;
+
+        return `
+        <div class="puesto-row" id="puesto-row-${r.key}">
+            <div class="puesto-header">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:22px;">${r.icon}</span>
+                    <div>
+                        <strong>${r.label}</strong>
+                        <div id="puesto-estado-${r.key}" style="font-size:12px;color:var(--text-muted);">${activo ? 'Activo' : 'Desactivado'}</div>
+                    </div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="puesto-enabled-${r.key}" data-rol="${r.key}" data-permiso="enabled"
+                        ${activo ? 'checked' : ''}
+                        onchange="togglePuestoEnabled('${r.key}', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="puesto-funciones" id="puesto-funciones-${r.key}" style="${activo ? '' : 'display:none;'}">
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Secciones visibles para este puesto:</p>
+                ${funcs}
+                <div class="puesto-pin-section">
+                    <strong style="font-size:13px;">PIN de acceso</strong>
+                    <p style="font-size:12px;color:var(--text-muted);margin:3px 0 10px;">
+                        ${tienePin ? '✅ PIN configurado.' : 'Sin PIN — cualquiera puede seleccionar este perfil.'}
+                    </p>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input type="password" id="puesto-pin-${r.key}" placeholder="${tienePin ? 'Nuevo PIN para reemplazar' : '4-8 dígitos'}"
+                               inputmode="numeric" maxlength="8"
+                               style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;">
+                        <button class="btn-primary" style="white-space:nowrap;" onclick="guardarPinPerfil('${r.key}')">
+                            ${tienePin ? 'Cambiar' : 'Guardar PIN'}
+                        </button>
+                    </div>
+                    ${tienePin ? `
+                    <button class="btn-secondary" onclick="quitarPinPerfil('${r.key}')"
+                            style="margin-top:8px;width:100%;color:#ef4444;border-color:#fecaca;">
+                        🗑 Quitar PIN de ${r.label}
+                    </button>` : ''}
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+
+    // Administrador siempre al final
+    container.innerHTML += `
+        <div class="puesto-row puesto-row-admin">
+            <div class="puesto-header">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-size:22px;">🔑</span>
+                    <div>
+                        <strong>Administrador</strong>
+                        <div style="font-size:12px;color:var(--text-muted);">Siempre activo — acceso completo</div>
+                    </div>
+                </div>
+                <label class="switch" style="opacity:0.5;pointer-events:none;">
+                    <input type="checkbox" checked disabled>
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>`;
+}
+
+function togglePuestoEnabled(rol, activo) {
+    const funciones = document.getElementById(`puesto-funciones-${rol}`);
+    const subtitulo = document.getElementById(`puesto-estado-${rol}`);
+    if (funciones) funciones.style.display = activo ? '' : 'none';
+    if (subtitulo) subtitulo.textContent = activo ? 'Activo' : 'Desactivado';
+    guardarPermisosRol();
+    actualizarVisibilidadBtnCambiarPerfil();
+}
+
+async function guardarPermisosRol() {
+    // Cargar permisos existentes primero (para no perder PINs guardados)
+    let permisos = {
+        cajero:    { ...PERMISOS_DEFAULT.cajero },
+        encargado: { ...PERMISOS_DEFAULT.encargado }
+    };
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        // Preservar PIN y pin_set de los datos guardados
+        if (guardados.cajero)    permisos.cajero    = { ...permisos.cajero,    ...guardados.cajero };
+        if (guardados.encargado) permisos.encargado = { ...permisos.encargado, ...guardados.encargado };
+    } catch(e) {}
+
+    // Leer estado actual de los checkboxes
+    document.querySelectorAll('#puestos-container input[data-rol]').forEach(cb => {
+        const rol     = cb.dataset.rol;
+        const permiso = cb.dataset.permiso;
+        if (permisos[rol]) permisos[rol][permiso] = cb.checked;
+    });
+
+    try {
+        await window.api.guardarAjuste('permisos_roles', JSON.stringify(permisos));
+        if (turnoActivo) aplicarPermisos();
+    } catch(e) {
+        mostrarNotificacionExito('Error guardando configuración', '⚠️ Error');
+    }
+}
+
+async function guardarPinPerfil(rol) {
+    const input = document.getElementById(`puesto-pin-${rol}`);
+    const pin = input?.value?.trim();
+
+    if (!pin || pin.length < 4) {
+        mostrarNotificacionExito('El PIN debe tener al menos 4 dígitos', '⚠️ Error');
+        return;
+    }
+    if (!/^\d+$/.test(pin)) {
+        mostrarNotificacionExito('El PIN solo puede contener números', '⚠️ Error');
+        return;
+    }
+
+    let permisos = { cajero: { ...PERMISOS_DEFAULT.cajero }, encargado: { ...PERMISOS_DEFAULT.encargado } };
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        if (guardados.cajero)    permisos.cajero    = { ...permisos.cajero,    ...guardados.cajero };
+        if (guardados.encargado) permisos.encargado = { ...permisos.encargado, ...guardados.encargado };
+    } catch(e) {}
+
+    permisos[rol].pin     = await hashPin(pin);
+    permisos[rol].pin_set = true;
+
+    try {
+        await window.api.guardarAjuste('permisos_roles', JSON.stringify(permisos));
+        mostrarNotificacionExito(`PIN de ${rol} configurado`, '¡Listo!');
+        cargarPermisosAjustes(); // re-renderizar para mostrar estado actualizado
+    } catch(e) {
+        mostrarNotificacionExito('Error guardando PIN', '⚠️ Error');
+    }
+}
+
+async function quitarPinPerfil(rol) {
+    let permisos = { cajero: { ...PERMISOS_DEFAULT.cajero }, encargado: { ...PERMISOS_DEFAULT.encargado } };
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        if (guardados.cajero)    permisos.cajero    = { ...permisos.cajero,    ...guardados.cajero };
+        if (guardados.encargado) permisos.encargado = { ...permisos.encargado, ...guardados.encargado };
+    } catch(e) {}
+
+    delete permisos[rol].pin;
+    permisos[rol].pin_set = false;
+
+    try {
+        await window.api.guardarAjuste('permisos_roles', JSON.stringify(permisos));
+        mostrarNotificacionExito(`PIN de ${rol} eliminado`, '¡Listo!');
+        cargarPermisosAjustes();
+    } catch(e) {
+        mostrarNotificacionExito('Error guardando cambios', '⚠️ Error');
+    }
+}
+
+// ============================================
+// MODAL TURNO DESDE NUEVA VENTA
+// ============================================
+
+function cerrarModalTurnoVenta() {
+    document.getElementById('modal-turno-venta').classList.add('hidden');
+    // Si no hay turno abierto, redirigir a la pantalla de Turno en lugar de dejar al usuario en Nueva Venta sin turno
+    if (!turnoActivo) {
+        cambiarVista('turno');
+    }
+}
+
+async function abrirTurnoDesdeVenta() {
+    const nombre = document.getElementById('tv-nombre')?.value?.trim();
+    const fondo  = parseFloat(document.getElementById('tv-fondo')?.value) || 0;
+
+    if (!nombre) {
+        mostrarNotificacionExito('Ingresa tu nombre para abrir el turno', '⚠️ Error');
+        return;
+    }
+
+    try {
+        nombreActivo = nombre;
+        await window.api.abrirTurno(nombre, rolActivo || 'cajero', fondo);
+        turnoActivo = await window.api.obtenerTurnoActivo();
+        actualizarIndicadorTurnoSidebar();
+        document.getElementById('modal-turno-venta').classList.add('hidden');
+        mostrarNotificacionExito(`Turno abierto — ${nombre}`, '¡Turno Abierto!');
+    } catch(e) {
+        mostrarNotificacionExito('Error al abrir turno', '⚠️ Error');
+        console.error(e);
     }
 }
