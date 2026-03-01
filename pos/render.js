@@ -2519,6 +2519,10 @@ async function registrarCuentaZenit() {
         tokenActual = response.token;
         modoConectado = true;
 
+        await window.api.guardarAjuste('pedir_password_inicio', 'false');
+        const switchPwd = document.getElementById('adj-pedir-password');
+        if (switchPwd) switchPwd.checked = false;
+
         await syncLocalToCloud();
         await cargarCuentaZenitAjustes();
         mostrarNotificacionExito('Cuenta creada y datos sincronizados', '¡Bienvenido a Zenit!');
@@ -2562,6 +2566,10 @@ async function iniciarSesionZenitAjustes() {
         apiClient.setToken(response.token);
         tokenActual = response.token;
         modoConectado = true;
+
+        await window.api.guardarAjuste('pedir_password_inicio', 'false');
+        const switchPwd = document.getElementById('adj-pedir-password');
+        if (switchPwd) switchPwd.checked = false;
 
         await syncLocalToCloud();
         await cargarCuentaZenitAjustes();
