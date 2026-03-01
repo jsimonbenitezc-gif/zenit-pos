@@ -2571,9 +2571,8 @@ async function iniciarSesionZenitAjustes() {
         const switchPwd = document.getElementById('adj-pedir-password');
         if (switchPwd) switchPwd.checked = false;
 
-        await syncLocalToCloud();
         await cargarCuentaZenitAjustes();
-        mostrarNotificacionExito('Sesión iniciada y datos sincronizados', '¡Bienvenido!');
+        mostrarNotificacionExito('Sesión iniciada', '¡Bienvenido!');
     } catch (error) {
         errorDiv.textContent = error.message || 'Email o contraseña incorrectos.';
         errorDiv.style.display = '';
