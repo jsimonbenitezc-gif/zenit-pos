@@ -530,6 +530,41 @@ ipcMain.handle('limpiar-datos-locales', () => {
     });
 });
 
+// SYNC — Guardar datos del backend en SQLite local
+ipcMain.handle('sync-clasificaciones', (_, datos) => {
+    return new Promise((res, rej) => db.syncClasificaciones(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('sync-productos', (_, datos) => {
+    return new Promise((res, rej) => db.syncProductos(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('sync-clientes', (_, datos) => {
+    return new Promise((res, rej) => db.syncClientes(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('sync-insumos', (_, datos) => {
+    return new Promise((res, rej) => db.syncInsumos(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('sync-preparaciones', (_, datos) => {
+    return new Promise((res, rej) => db.syncPreparaciones(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('sync-recetas', (_, datos) => {
+    return new Promise((res, rej) => db.syncRecetasProducto(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('sync-descuentos', (_, datos) => {
+    return new Promise((res, rej) => db.syncDescuentos(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('sync-combos', (_, datos) => {
+    return new Promise((res, rej) => db.syncCombos(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('obtener-pedidos-pendientes', () => {
+    return new Promise((res, rej) => db.obtenerPedidosPendientes((err, rows) => err ? rej(err) : res(rows)));
+});
+ipcMain.handle('obtener-items-pedido', (_, id) => {
+    return new Promise((res, rej) => db.obtenerItemsPedido(id, (err, rows) => err ? rej(err) : res(rows)));
+});
+ipcMain.handle('marcar-pedido-sincronizado', (_, id) => {
+    return new Promise((res, rej) => db.marcarPedidoSincronizado(id, (err) => err ? rej(err) : res(true)));
+});
+
 // TURNOS — Corte de caja
 ipcMain.handle('abrir-turno', (event, nombre, rol, fondoInicial) => {
     return new Promise((resolve, reject) => {

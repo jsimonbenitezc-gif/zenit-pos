@@ -397,9 +397,10 @@ function crearPedido(datos, items, callback) {
             notas_generales,
             info_cliente_temp,
             cajero,
+            pendiente_sync,
             fecha_pedido
         )
-        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
     `;
 
     db.run(sqlPedido, [
@@ -412,7 +413,8 @@ function crearPedido(datos, items, callback) {
         datos.link_maps,
         datos.notas_generales,
         datos.info_cliente_temp || null,
-        datos.cajero || null
+        datos.cajero || null,
+        datos.pendiente_sync || 0
     ], function(err) {
         if (err) return callback(err);
         
@@ -1111,6 +1113,137 @@ function cerrarTurno(id, efectivoContado, notas, cb) {
     });
 }
 
+// ============================================
+// SYNC — Funciones para sincronización con backend
+// ============================================
+
+function syncClasificaciones(datos, cb) {
+    db.serialize(() => {
+        db.run('DELETE FROM clasificaciones');
+        if (!datos || datos.length === 0) return cb(null);
+        const stmt = db.prepare('INSERT INTO clasificaciones (id, nombre, emoji, imagen, activa) VALUES (?, ?, ?, ?, ?)');
+        datos.forEach(d => stmt.run(
+            d.id, d.name, d.emoji || '📦', d.image || null,
+            d.active ? 1 : 0
+        ));
+        stmt.finalize(cb);
+    });
+}
+
+function syncProductos(datos, cb) {
+    db.serialize(() => {
+        db.run('DELETE FROM productos');
+        if (!datos || datos.length === 0) return cb(null);
+        const stmt = db.prepare('INSERT INTO productos (id, nombre, descripcion, precio, stock, clasificacion_id, emoji, imagen, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        datos.forEach(d => stmt.run(
+            d.id, d.name, d.description || null, d.price,
+            d.stock || 0, d.category_id || null, d.emoji || null,
+            d.image || null, d.active ? 1 : 0
+        ));
+        stmt.finalize(cb);
+    });
+}
+
+function syncClientes(datos, cb) {
+    db.serialize(() => {
+        db.run('DELETE FROM clientes');
+        if (!datos || datos.length === 0) return cb(null);
+        const stmt = db.prepare('INSERT OR IGNORE INTO clientes (id, nombre, telefono, direccion, notas) VALUES (?, ?, ?, ?, ?)');
+        datos.forEach(d => stmt.run(
+            d.id, d.name || null, d.phone || null,
+            d.address || null, d.notes || null
+        ));
+        stmt.finalize(cb);
+    });
+}
+
+function syncInsumos(datos, cb) {
+    db.serialize(() => {
+        db.run('DELETE FROM insumos');
+        if (!datos || datos.length === 0) return cb(null);
+        const stmt = db.prepare('INSERT INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        datos.forEach(d => stmt.run(
+            d.id, d.name, d.unit, d.stock || 0, d.min_stock || 0,
+            d.active ? 1 : 0, d.type || 'ingrediente',
+            d.content_amount || null, d.content_unit || null
+        ));
+        stmt.finalize(cb);
+    });
+}
+
+function syncPreparaciones(datos, cb) {
+    db.serialize(() => {
+        db.run('DELETE FROM preparacion_items');
+        db.run('DELETE FROM preparaciones');
+        if (!datos || datos.length === 0) return cb(null);
+        const stmtPrep = db.prepare('INSERT INTO preparaciones (id, nombre, activo) VALUES (?, ?, ?)');
+        datos.forEach(d => stmtPrep.run(d.id, d.name, d.active ? 1 : 0));
+        stmtPrep.finalize(() => {
+            const stmtItems = db.prepare('INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad) VALUES (?, ?, ?)');
+            datos.forEach(d => {
+                if (d.items && d.items.length > 0) {
+                    d.items.forEach(item => stmtItems.run(d.id, item.ingredient_id, item.quantity));
+                }
+            });
+            stmtItems.finalize(cb);
+        });
+    });
+}
+
+function syncRecetasProducto(datos, cb) {
+    db.serialize(() => {
+        db.run('DELETE FROM receta_items');
+        if (!datos || datos.length === 0) return cb(null);
+        const stmt = db.prepare('INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad) VALUES (?, ?, ?, ?)');
+        datos.forEach(d => stmt.run(d.product_id, d.item_type, d.item_id, d.quantity));
+        stmt.finalize(cb);
+    });
+}
+
+function syncDescuentos(datos, cb) {
+    db.serialize(() => {
+        db.run('DELETE FROM promociones');
+        if (!datos || datos.length === 0) return cb(null);
+        const stmt = db.prepare('INSERT INTO promociones (id, nombre, tipo, valor, activa) VALUES (?, ?, ?, ?, ?)');
+        datos.forEach(d => {
+            const tipo = d.type === 'percentage' ? 'porcentaje' : 'monto_fijo';
+            stmt.run(d.id, d.name, tipo, d.value, d.active ? 1 : 0);
+        });
+        stmt.finalize(cb);
+    });
+}
+
+function syncCombos(datos, cb) {
+    db.serialize(() => {
+        db.run('DELETE FROM combo_items');
+        db.run('DELETE FROM combos');
+        if (!datos || datos.length === 0) return cb(null);
+        const stmtCombo = db.prepare('INSERT INTO combos (id, nombre, descripcion, precio_especial, activo) VALUES (?, ?, ?, ?, ?)');
+        datos.forEach(d => stmtCombo.run(d.id, d.name, d.description || null, d.price, d.active ? 1 : 0));
+        stmtCombo.finalize(() => {
+            const stmtItems = db.prepare('INSERT INTO combo_items (combo_id, producto_id, cantidad) VALUES (?, ?, ?)');
+            datos.forEach(d => {
+                if (d.items && d.items.length > 0) {
+                    d.items.forEach(item => stmtItems.run(d.id, item.product_id, item.quantity || 1));
+                }
+            });
+            stmtItems.finalize(cb);
+        });
+    });
+}
+
+function obtenerPedidosPendientes(cb) {
+    db.all('SELECT * FROM pedidos WHERE pendiente_sync = 1 ORDER BY fecha_pedido ASC', [], cb);
+}
+
+function obtenerItemsPedido(pedidoId, cb) {
+    db.all('SELECT * FROM pedido_items WHERE pedido_id = ?', [pedidoId], cb);
+}
+
+function marcarPedidoSincronizado(pedidoId, cb) {
+    db.run('UPDATE pedidos SET pendiente_sync = 0 WHERE id = ?', [pedidoId], cb);
+}
+
 module.exports = {
     db, 
     obtenerProductosAgrupados, 
@@ -1175,6 +1308,17 @@ module.exports = {
     calcularTotalesTurno,
     cerrarTurno,
     limpiarDatosLocales,
+    syncClasificaciones,
+    syncProductos,
+    syncClientes,
+    syncInsumos,
+    syncPreparaciones,
+    syncRecetasProducto,
+    syncDescuentos,
+    syncCombos,
+    obtenerPedidosPendientes,
+    obtenerItemsPedido,
+    marcarPedidoSincronizado,
 }
 
 function limpiarDatosLocales(cb) {

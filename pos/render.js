@@ -181,7 +181,8 @@ async function crearPedidoWrapper(datosPedido, items) {
             return resultado.id;
         } catch (error) {
             console.error('Error al crear pedido en backend:', error);
-            return await window.api.crearPedidoDirecto(datosPedido, items);
+            // Guardar localmente y marcar para subir cuando vuelva la conexión
+            return await window.api.crearPedidoDirecto({ ...datosPedido, pendiente_sync: 1 }, items);
         }
     } else {
         return await window.api.crearPedidoDirecto(datosPedido, items);
@@ -490,6 +491,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Cargar configuración de modo
     await cargarConfiguracionModo();
+
+    // Sincronizar desde backend si hay sesión activa
+    if (modoConectado) {
+        subirPedidosPendientes().catch(e => console.warn('subirPendientes:', e));
+        sincronizarDesdeBackend().catch(e => console.warn('syncDesdeBackend:', e));
+    }
 
     const logo = document.getElementById('brand-logo');
     if (logo && window.api?.obtenerRutaLogo) {
@@ -2601,6 +2608,9 @@ async function iniciarSesionZenitAjustes() {
         const switchPwd = document.getElementById('adj-pedir-password');
         if (switchPwd) switchPwd.checked = false;
 
+        // Sincronizar todos los datos del backend
+        sincronizarDesdeBackend().catch(e => console.warn('syncDesdeBackend:', e));
+
         await cargarCuentaZenitAjustes();
         mostrarNotificacionExito('Sesión iniciada', '¡Bienvenido!');
     } catch (error) {
@@ -4186,6 +4196,101 @@ async function syncLocalToCloud() {
         console.error('Error durante sincronización:', error);
         msg('⚠️ Sincronización parcial. Algunos datos podrían no haberse subido.');
         await new Promise(r => setTimeout(r, 1500));
+    }
+}
+
+// ============================================
+// SINCRONIZACIÓN BACKEND → LOCAL
+// ============================================
+
+async function sincronizarDesdeBackend() {
+    if (!modoConectado || !apiClient || !tokenActual) return;
+    console.log('🔄 Sincronizando datos del backend...');
+    try {
+        // 1. Categorías
+        const cats = await apiClient.getCategories();
+        await window.api.syncClasificaciones(cats);
+
+        // 2. Productos (lista plana)
+        const prods = await apiClient.getProducts();
+        await window.api.syncProductos(prods);
+
+        // 3. Clientes
+        const clientes = await apiClient.getCustomers();
+        await window.api.syncClientes(clientes);
+
+        // 4. Insumos
+        const insumos = await apiClient.request('/inventory/ingredients');
+        await window.api.syncInsumos(insumos);
+
+        // 5. Preparaciones (con sus items)
+        const preps = await apiClient.request('/inventory/preparations');
+        await window.api.syncPreparaciones(preps);
+
+        // 6. Recetas de productos
+        const recetas = await apiClient.request('/inventory/all-recipes');
+        await window.api.syncRecetas(recetas);
+
+        // 7. Descuentos
+        const descuentos = await apiClient.request('/offers/discounts');
+        await window.api.syncDescuentos(descuentos);
+
+        // 8. Combos (con sus items)
+        const combos = await apiClient.request('/offers/combos');
+        await window.api.syncCombos(combos);
+
+        // 9. Ajustes del negocio (PINs y permisos)
+        try {
+            const ajustesNegocio = await apiClient.request('/settings');
+            if (ajustesNegocio.permisos_roles) {
+                await window.api.guardarAjuste('permisos_roles', JSON.stringify(ajustesNegocio.permisos_roles));
+            }
+        } catch (e) {
+            console.warn('No se pudieron sincronizar ajustes de negocio:', e.message);
+        }
+
+        console.log('✅ Sincronización desde backend completada');
+    } catch (error) {
+        console.error('⚠️ Error en sincronización desde backend:', error);
+    }
+}
+
+async function subirPedidosPendientes() {
+    if (!modoConectado || !apiClient || !tokenActual) return;
+    try {
+        const pendientes = await window.api.obtenerPedidosPendientes();
+        if (!pendientes || pendientes.length === 0) return;
+        console.log(`📤 Subiendo ${pendientes.length} pedido(s) pendiente(s)...`);
+        for (const pedido of pendientes) {
+            try {
+                const items = await window.api.obtenerItemsPedido(pedido.id);
+                const datosAPI = {
+                    customer_id: pedido.cliente_id || null,
+                    customer_temp_info: pedido.info_cliente_temp || null,
+                    total: pedido.total,
+                    payment_method: pedido.metodo_pago,
+                    order_type: pedido.tipo_pedido || 'comer',
+                    reference: pedido.referencia || null,
+                    delivery_address: pedido.direccion_domicilio || null,
+                    maps_link: pedido.link_maps || null,
+                    notes: pedido.notas_generales || null
+                };
+                const itemsAPI = items.map(i => ({
+                    product_id: i.producto_id,
+                    quantity: i.cantidad,
+                    unit_price: i.precio_unitario,
+                    subtotal: i.subtotal,
+                    notes: i.nota_item || ''
+                }));
+                await apiClient.createOrder(datosAPI, itemsAPI);
+                await window.api.marcarPedidoSincronizado(pedido.id);
+            } catch (e) {
+                console.warn(`No se pudo subir pedido ${pedido.id}:`, e.message);
+            }
+        }
+        console.log('✅ Pedidos pendientes sincronizados');
+    } catch (error) {
+        console.error('Error al subir pedidos pendientes:', error);
     }
 }
 

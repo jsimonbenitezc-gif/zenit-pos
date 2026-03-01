@@ -99,6 +99,19 @@ contextBridge.exposeInMainWorld('api', {
 
     limpiarDatosLocales: () => ipcRenderer.invoke('limpiar-datos-locales'),
 
+    // SYNC
+    syncClasificaciones: (datos) => ipcRenderer.invoke('sync-clasificaciones', datos),
+    syncProductos: (datos) => ipcRenderer.invoke('sync-productos', datos),
+    syncClientes: (datos) => ipcRenderer.invoke('sync-clientes', datos),
+    syncInsumos: (datos) => ipcRenderer.invoke('sync-insumos', datos),
+    syncPreparaciones: (datos) => ipcRenderer.invoke('sync-preparaciones', datos),
+    syncRecetas: (datos) => ipcRenderer.invoke('sync-recetas', datos),
+    syncDescuentos: (datos) => ipcRenderer.invoke('sync-descuentos', datos),
+    syncCombos: (datos) => ipcRenderer.invoke('sync-combos', datos),
+    obtenerPedidosPendientes: () => ipcRenderer.invoke('obtener-pedidos-pendientes'),
+    obtenerItemsPedido: (id) => ipcRenderer.invoke('obtener-items-pedido', id),
+    marcarPedidoSincronizado: (id) => ipcRenderer.invoke('marcar-pedido-sincronizado', id),
+
     // LOGIN
     tienePasswordApp: () => ipcRenderer.invoke('tiene-password-app'),
     verificarPasswordApp: (password) => ipcRenderer.invoke('verificar-password-app', password),
