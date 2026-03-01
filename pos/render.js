@@ -379,6 +379,12 @@ async function inicializarLogin() {
 
         const ajustesPwd = await window.api.obtenerAjustes();
 
+        const saltar = () => {
+            loginScreen.style.display = 'none';
+            appDiv.style.display = '';
+            resolve();
+        };
+
         // Si hay token guardado, validarlo contra el backend
         if (ajustesPwd.api_token) {
             try {
@@ -393,14 +399,14 @@ async function inicializarLogin() {
                 await window.api.guardarAjuste('api_token', '');
                 await window.api.guardarAjuste('modo_conectado', 'false');
                 await window.api.guardarAjuste('pedir_password_inicio', 'false');
-                resolve();
+                saltar();
                 return;
             }
         }
 
         // La contraseña local solo aplica si: hay sesión Zenit activa + switch encendido + contraseña configurada
         if (!ajustesPwd.api_token || ajustesPwd.pedir_password_inicio !== 'true' || !tiene) {
-            resolve();
+            saltar();
             return;
         }
 
