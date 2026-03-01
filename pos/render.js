@@ -367,111 +367,21 @@ function cerrarModalActualizacion() {
    LOGIN — Contraseña de acceso al app
    ============================================ */
 async function inicializarLogin() {
-    return new Promise(async (resolve) => {
-        const loginScreen = document.getElementById('login-screen');
-        const appDiv = document.querySelector('.app');
-        const btnLogin = document.getElementById('login-btn');
-        const inputPassword = document.getElementById('login-password');
-        const inputConfirm = document.getElementById('login-password-confirm');
-        const labelSubtitle = document.getElementById('login-subtitle');
-        const labelError = document.getElementById('login-error');
-
-        // Ocultar inmediatamente para evitar el flash mientras se cargan los ajustes
-        loginScreen.style.display = 'none';
-        appDiv.style.display = '';
-
-        const tiene = await window.api.tienePasswordApp();
-
-        const ajustesPwd = await window.api.obtenerAjustes();
-
-        const saltar = () => {
-            loginScreen.style.display = 'none';
-            appDiv.style.display = '';
-            resolve();
-        };
-
-        // Si hay token guardado, validarlo contra el backend
-        if (ajustesPwd.api_token) {
-            try {
-                const backendUrl = ajustesPwd.api_url || 'https://zenit-pos-backend.onrender.com/api';
-                if (!apiClient) window.apiClient = new APIClient(backendUrl);
-                apiClient.setBaseURL(backendUrl);
-                apiClient.setToken(ajustesPwd.api_token);
-                await apiClient.request('/auth/me');
-                // Token válido — continuar con la lógica normal
-            } catch (e) {
-                // Token inválido o expirado — limpiar y entrar directo
-                await window.api.guardarAjuste('api_token', '');
-                await window.api.guardarAjuste('modo_conectado', 'false');
-                await window.api.guardarAjuste('pedir_password_inicio', 'false');
-                saltar();
-                return;
-            }
-        }
-
-        // La contraseña local solo aplica si: hay sesión Zenit activa + switch encendido
-        if (!ajustesPwd.api_token || ajustesPwd.pedir_password_inicio !== 'true') {
-            saltar();
-            return;
-        }
-
-        if (!tiene) {
-            labelSubtitle.textContent = 'Crea una contraseña para el Administrador';
-            inputConfirm.style.display = 'block';
-            btnLogin.textContent = 'Crear contraseña';
-        } else {
-            labelSubtitle.textContent = 'Contraseña del Administrador';
-        }
-
-        loginScreen.style.display = 'flex';
-        appDiv.style.display = 'none';
-        inputPassword.value = '';
-        inputPassword.focus();
-
-        const controller = new AbortController();
-        const { signal } = controller;
-
-        const terminarLogin = () => {
-            controller.abort(); // elimina todos los listeners de este login
-            loginScreen.style.display = 'none';
-            appDiv.style.display = '';
-            resolve();
-        };
-
-        const intentarLogin = async () => {
-            const password = inputPassword.value;
-            labelError.textContent = '';
-
-            if (!tiene) {
-                const confirm = inputConfirm.value;
-                if (password.length < 4) {
-                    labelError.textContent = 'La contraseña debe tener al menos 4 caracteres';
-                    return;
-                }
-                if (password !== confirm) {
-                    labelError.textContent = 'Las contraseñas no coinciden';
-                    inputConfirm.value = '';
-                    inputConfirm.focus();
-                    return;
-                }
-                await window.api.establecerPasswordApp(password);
-                terminarLogin();
-            } else {
-                const valido = await window.api.verificarPasswordApp(password);
-                if (valido) {
-                    terminarLogin();
-                } else {
-                    labelError.textContent = 'Contraseña incorrecta. Intenta de nuevo.';
-                    inputPassword.value = '';
-                    inputPassword.focus();
-                }
-            }
-        };
-
-        btnLogin.addEventListener('click', intentarLogin, { signal });
-        inputPassword.addEventListener('keydown', (e) => { if (e.key === 'Enter') intentarLogin(); }, { signal });
-        inputConfirm.addEventListener('keydown', (e) => { if (e.key === 'Enter') intentarLogin(); }, { signal });
-    });
+    // Solo valida el token guardado. Si es inválido, limpia la sesión.
+    // No hay contraseña local — la seguridad es la cuenta Zenit.
+    const ajustesPwd = await window.api.obtenerAjustes();
+    if (!ajustesPwd.api_token) return;
+    try {
+        const backendUrl = ajustesPwd.api_url || 'https://zenit-pos-backend.onrender.com/api';
+        if (!apiClient) window.apiClient = new APIClient(backendUrl);
+        apiClient.setBaseURL(backendUrl);
+        apiClient.setToken(ajustesPwd.api_token);
+        await apiClient.request('/auth/me');
+    } catch (e) {
+        // Token inválido o expirado — limpiar sesión
+        await window.api.guardarAjuste('api_token', '');
+        await window.api.guardarAjuste('modo_conectado', 'false');
+    }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -4223,17 +4133,16 @@ async function sincronizarDesdeBackend() {
         const clientes = await apiClient.getCustomers();
         await window.api.syncClientes(clientes);
 
-        // 4. Insumos
-        const insumos = await apiClient.request('/inventory/ingredients');
-        await window.api.syncInsumos(insumos);
-
-        // 5. Preparaciones (con sus items)
-        const preps = await apiClient.request('/inventory/preparations');
-        await window.api.syncPreparaciones(preps);
-
-        // 6. Recetas de productos
-        const recetas = await apiClient.request('/inventory/all-recipes');
-        await window.api.syncRecetas(recetas);
+        // 4-6. Inventario (insumos, preparaciones, recetas) — solo sincronizar si el
+        // backend tiene datos; si está vacío, conservar los datos locales para no perderlos
+        const insumosBackend = await apiClient.request('/inventory/ingredients');
+        if (insumosBackend && insumosBackend.length > 0) {
+            await window.api.syncInsumos(insumosBackend);
+            const preps = await apiClient.request('/inventory/preparations');
+            await window.api.syncPreparaciones(preps);
+            const recetas = await apiClient.request('/inventory/all-recipes');
+            await window.api.syncRecetas(recetas);
+        }
 
         // 7. Descuentos
         const descuentos = await apiClient.request('/offers/discounts');

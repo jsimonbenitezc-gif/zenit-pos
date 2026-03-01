@@ -44,16 +44,26 @@ body { background: #eef1f5; height: 100vh; overflow: hidden; }
     color: #fff; 
 }
 
-.sidebar-footer { 
-    margin-top: auto; 
-    color: #6b7280; 
-    font-size: 0.8em; 
-    text-align: center; 
+.sidebar-footer {
+    margin-top: auto;
+    color: #6b7280;
+    font-size: 0.8em;
+    text-align: center;
+    padding-top: 8px;
 }
 
 /* CONTENT */
 .content { flex: 1; display: flex; flex-direction: column; height: 100vh; }
-.header { background: #fff; padding: 20px; border-bottom: 1px solid #e5e7eb; height: 80px; flex-shrink: 0; }
+.header { 
+    background: #fff; 
+    padding: 20px; 
+    border-bottom: 1px solid #e5e7eb; 
+    height: 80px; 
+    flex-shrink: 0;
+    display: flex;              
+    justify-content: space-between;  
+    align-items: center;        
+}
 .main { padding: 24px; overflow-y: auto; flex: 1; position: relative; }
 
 /* VISTAS */
@@ -244,16 +254,18 @@ input[type="number"] {
 }
 
 /* MODALES */
-.modal { 
-    position: fixed; 
-    inset: 0; 
-    background: rgba(0,0,0,0.5); 
-    display: flex; 
-    align-items: center; 
-    justify-content: center; 
-    z-index: 1000; 
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
 }
 .modal.hidden { display: none; }
+/* El modal de PIN necesita estar por encima de la pantalla de perfiles */
+#modal-pin-perfil { z-index: 10000; }
 .modal-content { 
     background: white; 
     padding: 24px; 
@@ -1372,12 +1384,12 @@ body.dark .backup-section {
 }
 
 /* Switch Estilo iPhone */
-.switch { position: relative; display: inline-block; width: 44px; height: 22px; }
+.switch { position: relative; display: inline-block; width: 44px; height: 24px; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
-.slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+.slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 5px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
 input:checked + .slider { background-color: #2563eb; }
-input:checked + .slider:before { transform: translateX(22px); }
+input:checked + .slider:before { transform: translateX(18px); }
 /* ========================================
    MODO OSCURO - COMPLETADO
    ======================================== */
@@ -1686,3 +1698,555 @@ body.dark .inv-tabs { background: #0b1220; border-color: #1e293b; }
 body.dark .inv-tab  { color: #94a3b8; }
 body.dark .inv-tab:hover { background: #1e293b; color: #e5e7eb; }
 body.dark .receta-linea { background: #020617; border-color: #1e293b; }
+
+/* ============================================
+   PANTALLA DE LOGIN
+   ============================================ */
+.login-screen {
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(135deg, #111827 0%, #1f2937 100%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.login-card {
+    background: #ffffff;
+    border-radius: 20px;
+    padding: 48px 40px;
+    width: 360px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.4);
+}
+
+.login-logo {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    margin-bottom: 4px;
+}
+
+.login-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: #111827;
+    margin: 0;
+    letter-spacing: -0.5px;
+}
+
+.login-title span {
+    color: #2563eb;
+}
+
+.login-subtitle {
+    font-size: 14px;
+    color: #6b7280;
+    margin: 0;
+    text-align: center;
+}
+
+.login-input {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 10px;
+    font-size: 15px;
+    color: #111827;
+    outline: none;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+
+.login-input:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.login-error {
+    font-size: 13px;
+    color: #ef4444;
+    margin: 0;
+    min-height: 18px;
+    text-align: center;
+}
+
+.login-btn {
+    width: 100%;
+    padding: 13px;
+    background: #2563eb;
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+    margin-top: 4px;
+}
+
+.login-btn:hover {
+    background: #1d4ed8;
+}
+
+.login-btn:active {
+    transform: scale(0.98);
+}
+
+/* ============================================
+   MODAL DE CONFIRMACIÓN DE IMPRESIÓN
+   ============================================ */
+.print-confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 8000;
+}
+
+.print-confirm-overlay.hidden {
+    display: none;
+}
+
+.print-confirm-card {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 32px 36px;
+    width: 340px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+    animation: popIn 0.2s ease;
+}
+
+@keyframes popIn {
+    from { transform: scale(0.92); opacity: 0; }
+    to   { transform: scale(1);    opacity: 1; }
+}
+
+.print-confirm-icon {
+    width: 56px;
+    height: 56px;
+    background: #eff6ff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 4px;
+}
+
+.print-confirm-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #111827;
+    margin: 0;
+}
+
+.print-confirm-sub {
+    font-size: 13px;
+    color: #6b7280;
+    margin: 0;
+    text-align: center;
+}
+
+.print-confirm-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 8px;
+    width: 100%;
+}
+
+.print-confirm-actions .btn-secondary,
+.print-confirm-actions .btn-primary {
+    flex: 1;
+    padding: 10px 0;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: background 0.2s;
+}
+
+.print-confirm-actions .btn-secondary {
+    background: #f3f4f6;
+    color: #374151;
+}
+
+.print-confirm-actions .btn-secondary:hover {
+    background: #e5e7eb;
+}
+
+.print-confirm-actions .btn-primary {
+    background: #2563eb;
+    color: #ffffff;
+}
+
+.print-confirm-actions .btn-primary:hover {
+    background: #1d4ed8;
+}
+
+/* ============================================
+   TURNO — CORTE DE CAJA
+   ============================================ */
+
+/* Formulario de apertura */
+.turno-form-card {
+    background: var(--card-bg);
+    border-radius: 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    padding: 40px;
+    max-width: 480px;
+    margin: 40px auto;
+    text-align: center;
+}
+
+.turno-form-icon {
+    color: var(--primary);
+    margin-bottom: 16px;
+}
+
+.turno-form-card h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.turno-form-sub {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-bottom: 24px;
+}
+
+.turno-form-fields {
+    text-align: left;
+    margin-bottom: 24px;
+}
+
+.turno-btn-abrir {
+    width: 100%;
+    padding: 12px;
+    font-size: 1rem;
+}
+
+/* Panel turno activo */
+.turno-info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+.turno-info-card,
+.turno-stats-card {
+    background: var(--card-bg);
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+    padding: 20px;
+}
+
+.turno-info-card h3,
+.turno-stats-card h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 12px;
+}
+
+.turno-dato-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+}
+
+.turno-dato-row:last-child { border-bottom: none; }
+
+.turno-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.turno-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px 8px;
+}
+
+.turno-stat-val {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.turno-stat-lbl {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    text-align: center;
+}
+
+/* Modal cierre de turno */
+.turno-cierre-resumen {
+    background: var(--bg);
+    border-radius: 10px;
+    padding: 16px;
+}
+
+.turno-cierre-fila {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.turno-cierre-fila:last-child { border-bottom: none; }
+
+.turno-cierre-esperado {
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.turno-cierre-diferencia {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: var(--bg);
+    font-size: 15px;
+    font-weight: 600;
+}
+
+/* Badges estado turno */
+.badge-abierto {
+    background: #d1fae5;
+    color: #065f46;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.badge-cerrado {
+    background: #f3f4f6;
+    color: #6b7280;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* Permisos por rol */
+.permisos-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.permisos-grid table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.permisos-grid th,
+.permisos-grid td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+}
+
+.permisos-grid th:first-child,
+.permisos-grid td:first-child {
+    text-align: left;
+    font-weight: 500;
+}
+
+.permisos-grid th {
+    background: var(--bg);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+/* Indicador visual turno activo en sidebar */
+.menu-turno-activo {
+    position: relative;
+}
+
+.menu-turno-activo::after {
+    content: '';
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 8px;
+    height: 8px;
+    background: #22c55e;
+    border-radius: 50%;
+    border: 2px solid var(--sidebar-bg, #1e2330);
+}
+
+.btn-danger {
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-danger:hover {
+    background: #dc2626;
+}
+
+.text-danger { color: #ef4444; font-weight: 600; }
+.text-success { color: #22c55e; font-weight: 600; }
+
+/* ============================================
+   PANTALLA DE SELECCIÓN DE PERFIL
+   ============================================ */
+.perfil-screen {
+    position: fixed;
+    inset: 0;
+    background: var(--bg, #f3f4f6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.perfil-card {
+    background: var(--card-bg, #fff);
+    border-radius: 20px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+    padding: 48px 40px;
+    text-align: center;
+    max-width: 520px;
+    width: 90%;
+}
+
+.perfil-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin: 16px 0 28px;
+    color: var(--text, #111827);
+}
+
+.perfiles-grid {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+}
+
+.perfil-btn {
+    flex: 1;
+    background: var(--bg, #f9fafb);
+    border: 2px solid var(--border, #e5e7eb);
+    border-radius: 14px;
+    padding: 20px 12px;
+    cursor: pointer;
+    transition: all 0.18s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.perfil-btn:hover {
+    border-color: var(--primary, #2563eb);
+    background: #eff6ff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(37,99,235,0.15);
+}
+
+.perfil-icon {
+    font-size: 2.2rem;
+}
+
+.perfil-nombre {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text, #111827);
+}
+
+.perfil-desc {
+    font-size: 12px;
+    color: var(--text-muted, #6b7280);
+}
+
+.perfil-btn-dueno {
+    border-color: #f59e0b;
+}
+
+.perfil-btn-dueno:hover {
+    border-color: #d97706;
+    background: #fffbeb;
+    box-shadow: 0 4px 16px rgba(245,158,11,0.18);
+}
+
+/* ============================================
+   ADMINISTRAR PUESTOS
+   ============================================ */
+.puesto-row {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+.puesto-row-admin {
+    opacity: 0.65;
+}
+.puesto-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    background: var(--bg-light, #f9fafb);
+}
+.puesto-funciones {
+    padding: 12px 16px 14px;
+    border-top: 1px solid var(--border);
+    background: #fff;
+}
+.puesto-funcion-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 0;
+    font-size: 14px;
+    border-bottom: 1px solid #f3f4f6;
+}
+.puesto-funcion-item:last-child { border-bottom: none; }
+
+.puesto-pin-section {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
+}
+
+.switch-sm .slider { border-radius: 10px; }
+.switch-sm { width: 34px; height: 20px; }
+.switch-sm .slider:before { width: 14px; height: 14px; left: 3px; bottom: 3px; }
+.switch-sm input:checked + .slider:before { transform: translateX(14px); }

@@ -989,35 +989,6 @@
                 </div>
             </div>
 
-            <hr style="margin:20px 0;border:none;border-top:1px solid #e5e7eb;">
-
-            <!-- Switch: pedir contraseña al iniciar -->
-            <div class="setting-item">
-                <div>
-                    <span>Pedir contraseña al iniciar</span>
-                    <p style="margin:2px 0 0;font-size:0.8em;color:#9ca3af;">Protege el acceso al sistema con contraseña</p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="adj-pedir-password" checked onchange="guardarAjusteDirecto('pedir_password_inicio', this.checked ? 'true' : 'false')">
-                    <span class="slider"></span>
-                </label>
-            </div>
-
-            <!-- Cambiar contraseña local -->
-            <div style="margin-top:16px;">
-                <button class="btn-secondary" style="width:100%" onclick="mostrarCambiarPasswordApp()">Cambiar contraseña del sistema</button>
-                <div id="form-cambiar-password" style="display:none;margin-top:12px;">
-                    <div class="input-group">
-                        <label>Nueva contraseña</label>
-                        <input type="password" id="nueva-password-app" placeholder="Mínimo 4 caracteres">
-                    </div>
-                    <div class="input-group">
-                        <label>Confirmar contraseña</label>
-                        <input type="password" id="confirm-password-app" placeholder="">
-                    </div>
-                    <button class="btn-primary" style="width:100%" onclick="guardarNuevaPasswordApp()">Guardar contraseña</button>
-                </div>
-            </div>
         </div>
 
         <div class="ajustes-card" id="card-permisos-rol">
