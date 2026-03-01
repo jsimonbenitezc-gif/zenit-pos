@@ -380,57 +380,6 @@ async function inicializarLogin() {
         // Si el switch está desactivado, saltar el login
         const ajustesPwd = await window.api.obtenerAjustes();
 
-        // Si hubo cuenta Zenit pero no hay token → bloquear y pedir login Zenit
-        if (ajustesPwd.zenit_ever_connected === 'true' && !ajustesPwd.api_token) {
-            const loginCard = loginScreen.querySelector('.login-card');
-            loginCard.innerHTML = `
-                <img src="./assets/logo/montana.png" alt="Zenit" class="login-logo">
-                <h1 class="login-title">Zenit <span>POS</span></h1>
-                <p class="login-subtitle" id="zs-subtitle">Inicia sesión para continuar</p>
-                <input type="email" id="zs-email" class="login-input" placeholder="Correo electrónico" autocomplete="email">
-                <input type="password" id="zs-password" class="login-input" placeholder="Contraseña" autocomplete="current-password">
-                <p class="login-error" id="zs-error"></p>
-                <button class="login-btn" id="zs-btn">Iniciar sesión</button>
-            `;
-            loginScreen.style.display = 'flex';
-            appDiv.style.display = 'none';
-            document.getElementById('zs-email').focus();
-
-            const hacerLoginZenit = async () => {
-                const email = document.getElementById('zs-email').value.trim();
-                const password = document.getElementById('zs-password').value;
-                const errorDiv = document.getElementById('zs-error');
-                errorDiv.textContent = '';
-                if (!email || !password) { errorDiv.textContent = 'Ingresa tu correo y contraseña'; return; }
-                const btn = document.getElementById('zs-btn');
-                btn.disabled = true; btn.textContent = 'Conectando...';
-                try {
-                    const backendUrl = ajustesPwd.api_url || 'https://zenit-pos-backend.onrender.com/api';
-                    if (!apiClient) window.apiClient = new APIClient(backendUrl);
-                    apiClient.setBaseURL(backendUrl);
-                    const response = await apiClient.login(email, password);
-                    await window.api.guardarAjuste('api_token', response.token);
-                    await window.api.guardarAjuste('modo_conectado', 'true');
-                    await window.api.guardarAjuste('zenit_user_name', response.user.name);
-                    await window.api.guardarAjuste('zenit_user_email', email);
-                    apiClient.setToken(response.token);
-                    tokenActual = response.token;
-                    modoConectado = true;
-                    loginScreen.style.display = 'none';
-                    appDiv.style.display = '';
-                    resolve();
-                } catch (error) {
-                    document.getElementById('zs-error').textContent = 'Correo o contraseña incorrectos';
-                    btn.disabled = false; btn.textContent = 'Iniciar sesión';
-                }
-            };
-
-            document.getElementById('zs-btn').addEventListener('click', hacerLoginZenit);
-            document.getElementById('zs-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('zs-password').focus(); });
-            document.getElementById('zs-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') hacerLoginZenit(); });
-            return;
-        }
-
         if (ajustesPwd.pedir_password_inicio === 'false') {
             resolve();
             return;
@@ -2566,7 +2515,7 @@ async function registrarCuentaZenit() {
         await window.api.guardarAjuste('api_url', backendUrl);
         await window.api.guardarAjuste('zenit_user_name', response.user.name);
         await window.api.guardarAjuste('zenit_user_email', email);
-        await window.api.guardarAjuste('zenit_ever_connected', 'true');
+
         await window.api.guardarAjuste('modo_conectado', 'true');
 
         apiClient.setToken(response.token);
@@ -2616,7 +2565,7 @@ async function iniciarSesionZenitAjustes() {
         await window.api.guardarAjuste('api_url', backendUrl);
         await window.api.guardarAjuste('zenit_user_name', response.user.name);
         await window.api.guardarAjuste('zenit_user_email', email);
-        await window.api.guardarAjuste('zenit_ever_connected', 'true');
+
         await window.api.guardarAjuste('modo_conectado', 'true');
 
         apiClient.setToken(response.token);
@@ -2639,7 +2588,6 @@ async function iniciarSesionZenitAjustes() {
 
 async function cerrarSesionZenit() {
     if (!confirm('¿Cerrar sesión?')) return;
-    await window.api.guardarAjuste('zenit_ever_connected', 'true');
     await window.api.guardarAjuste('api_token', '');
     await window.api.guardarAjuste('modo_conectado', 'false');
     await window.api.guardarAjuste('zenit_user_name', '');
