@@ -377,8 +377,26 @@ async function inicializarLogin() {
 
         const tiene = await window.api.tienePasswordApp();
 
-        // Si el switch está desactivado, saltar el login
         const ajustesPwd = await window.api.obtenerAjustes();
+
+        // Si hay token guardado, validarlo contra el backend
+        if (ajustesPwd.api_token) {
+            try {
+                const backendUrl = ajustesPwd.api_url || 'https://zenit-pos-backend.onrender.com/api';
+                if (!apiClient) window.apiClient = new APIClient(backendUrl);
+                apiClient.setBaseURL(backendUrl);
+                apiClient.setToken(ajustesPwd.api_token);
+                await apiClient.request('/auth/me');
+                // Token válido — continuar con la lógica normal
+            } catch (e) {
+                // Token inválido o expirado — limpiar y entrar directo
+                await window.api.guardarAjuste('api_token', '');
+                await window.api.guardarAjuste('modo_conectado', 'false');
+                await window.api.guardarAjuste('pedir_password_inicio', 'false');
+                resolve();
+                return;
+            }
+        }
 
         // La contraseña local solo aplica si: hay sesión Zenit activa + switch encendido + contraseña configurada
         if (!ajustesPwd.api_token || ajustesPwd.pedir_password_inicio !== 'true' || !tiene) {
