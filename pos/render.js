@@ -380,8 +380,8 @@ async function inicializarLogin() {
         // Si el switch está desactivado, saltar el login
         const ajustesPwd = await window.api.obtenerAjustes();
 
-        // La contraseña local solo aplica si hay sesión Zenit activa y el switch está encendido
-        if (!ajustesPwd.api_token || ajustesPwd.pedir_password_inicio !== 'true') {
+        // La contraseña local solo aplica si: hay sesión Zenit activa + switch encendido + contraseña configurada
+        if (!ajustesPwd.api_token || ajustesPwd.pedir_password_inicio !== 'true' || !tiene) {
             resolve();
             return;
         }
@@ -2591,6 +2591,7 @@ async function cerrarSesionZenit() {
     if (!confirm('¿Cerrar sesión?')) return;
     await window.api.guardarAjuste('api_token', '');
     await window.api.guardarAjuste('modo_conectado', 'false');
+    await window.api.guardarAjuste('pedir_password_inicio', 'false');
     await window.api.guardarAjuste('zenit_user_name', '');
     await window.api.guardarAjuste('zenit_user_email', '');
     await window.api.limpiarDatosLocales();
