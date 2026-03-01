@@ -376,6 +376,10 @@ async function inicializarLogin() {
         const labelSubtitle = document.getElementById('login-subtitle');
         const labelError = document.getElementById('login-error');
 
+        // Ocultar inmediatamente para evitar el flash mientras se cargan los ajustes
+        loginScreen.style.display = 'none';
+        appDiv.style.display = '';
+
         const tiene = await window.api.tienePasswordApp();
 
         const ajustesPwd = await window.api.obtenerAjustes();
@@ -405,8 +409,8 @@ async function inicializarLogin() {
             }
         }
 
-        // La contraseña local solo aplica si: hay sesión Zenit activa + switch encendido + contraseña configurada
-        if (!ajustesPwd.api_token || ajustesPwd.pedir_password_inicio !== 'true' || !tiene) {
+        // La contraseña local solo aplica si: hay sesión Zenit activa + switch encendido
+        if (!ajustesPwd.api_token || ajustesPwd.pedir_password_inicio !== 'true') {
             saltar();
             return;
         }
