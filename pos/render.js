@@ -452,22 +452,7 @@ cargarAjustesInstalados();
         }
     });
 
-    // Configurar botón de modo de conexión
-    const btnModoConexion = document.getElementById('btn-modo-conexion');
-    if (btnModoConexion) {
-        btnModoConexion.addEventListener('click', window.abrirModalConfiguracionConexion);
-        console.log('✅ Event listener del botón configurado');
-    }
 
-    // Cerrar modal de configuración al hacer click fuera
-    const modalConfig = document.getElementById('modal-configuracion-conexion');
-    if (modalConfig) {
-        modalConfig.addEventListener('click', function(e) {
-            if (e.target === this) {
-                window.cerrarModalConfiguracionConexion();
-            }
-        });
-    }
 
 });
 
@@ -3224,16 +3209,28 @@ async function guardarInsumo() {
         const contenido_cantidad = parseFloat(document.getElementById('ins-contenido-cantidad').value) || null;
         const contenido_unidad = document.getElementById('ins-contenido-unidad').value || null;
         const datos = { nombre, unidad, stock_actual, stock_minimo, contenido_cantidad, contenido_unidad };
-        if (insumoEditandoId) {
-            await window.api.actualizarInsumo(insumoEditandoId, datos);
+        const datosAPI = { name: nombre, unit: unidad, stock: stock_actual, min_stock: stock_minimo,
+                           content_amount: contenido_cantidad, content_unit: contenido_unidad };
+        if (modoConectado && apiClient && tokenActual) {
+            if (insumoEditandoId) {
+                await apiClient.request(`/inventory/ingredients/${insumoEditandoId}`, { method: 'PUT', body: datosAPI });
+                await window.api.actualizarInsumo(insumoEditandoId, datos);
+            } else {
+                const nuevo = await apiClient.request('/inventory/ingredients', { method: 'POST', body: datosAPI });
+                await window.api.agregarInsumoConId(nuevo.id, datos);
+            }
         } else {
-            await window.api.agregarInsumo(datos);
+            if (insumoEditandoId) {
+                await window.api.actualizarInsumo(insumoEditandoId, datos);
+            } else {
+                await window.api.agregarInsumo(datos);
+            }
         }
         cerrarModalInsumo();
         insumosCache = await window.api.obtenerInsumos();
         renderizarTablaInsumos();
         mostrarNotificacionExito('Insumo guardado', '¡Guardado!');
-    } catch (e) { alert('Error al guardar el insumo'); }
+    } catch (e) { console.error(e); alert('Error al guardar el insumo'); }
 }
 
 function editarInsumo(id) {
@@ -3243,6 +3240,10 @@ function editarInsumo(id) {
 
 async function confirmarEliminarInsumo(id, nombre) {
     if (confirm(`¿Eliminar el insumo "${nombre}"?\n\nSe eliminará de todas las preparaciones y recetas donde aparezca.`)) {
+        if (modoConectado && apiClient && tokenActual) {
+            try { await apiClient.request(`/inventory/ingredients/${id}`, { method: 'DELETE' }); }
+            catch (e) { console.warn('No se pudo eliminar insumo en backend:', e.message); }
+        }
         await window.api.eliminarInsumo(id);
         insumosCache = await window.api.obtenerInsumos();
         renderizarTablaInsumos();
@@ -3350,14 +3351,29 @@ async function guardarPreparacion() {
     });
     try {
         const datos = { nombre, descripcion: document.getElementById('prep-descripcion').value.trim() };
-        if (preparacionEditandoId) {
-            await window.api.actualizarPreparacion(preparacionEditandoId, datos);
-            await window.api.guardarItemsPreparacion(preparacionEditandoId, items);
+        if (modoConectado && apiClient && tokenActual) {
+            const itemsAPI = items.map(i => ({ ingredient_id: i.insumo_id, quantity: i.cantidad }));
+            if (preparacionEditandoId) {
+                await apiClient.request(`/inventory/preparations/${preparacionEditandoId}`, { method: 'PUT', body: { name: nombre } });
+                if (itemsAPI.length > 0) await apiClient.request(`/inventory/preparations/${preparacionEditandoId}/recipe`, { method: 'POST', body: { items: itemsAPI } });
+                await window.api.actualizarPreparacion(preparacionEditandoId, datos);
+                await window.api.guardarItemsPreparacion(preparacionEditandoId, items);
+            } else {
+                const nueva = await apiClient.request('/inventory/preparations', { method: 'POST', body: { name: nombre, unit: 'porcion', yield_quantity: 1 } });
+                if (itemsAPI.length > 0) await apiClient.request(`/inventory/preparations/${nueva.id}/recipe`, { method: 'POST', body: { items: itemsAPI } });
+                await window.api.agregarPreparacionConId(nueva.id, datos);
+                await window.api.guardarItemsPreparacion(nueva.id, items);
+            }
         } else {
-            await window.api.agregarPreparacion(datos);
-            const preps = await window.api.obtenerPreparaciones();
-            const nueva = preps[preps.length - 1];
-            await window.api.guardarItemsPreparacion(nueva.id, items);
+            if (preparacionEditandoId) {
+                await window.api.actualizarPreparacion(preparacionEditandoId, datos);
+                await window.api.guardarItemsPreparacion(preparacionEditandoId, items);
+            } else {
+                await window.api.agregarPreparacion(datos);
+                const preps = await window.api.obtenerPreparaciones();
+                const nueva = preps[preps.length - 1];
+                await window.api.guardarItemsPreparacion(nueva.id, items);
+            }
         }
         cerrarModalPreparacion();
         preparacionesCache = await window.api.obtenerPreparaciones();
@@ -3373,6 +3389,10 @@ async function editarPreparacion(id) {
 
 async function confirmarEliminarPreparacion(id, nombre) {
     if (confirm(`¿Eliminar la preparación "${nombre}"?`)) {
+        if (modoConectado && apiClient && tokenActual) {
+            try { await apiClient.request(`/inventory/preparations/${id}`, { method: 'DELETE' }); }
+            catch (e) { console.warn('No se pudo eliminar preparación en backend:', e.message); }
+        }
         await window.api.eliminarPreparacion(id);
         preparacionesCache = await window.api.obtenerPreparaciones();
         renderizarTablaPreparaciones();
@@ -3546,13 +3566,19 @@ async function guardarReceta() {
         const selUnidad = linea.querySelector('.sel-unidad-receta');
         if (sel && sel.value && inp && inp.value) {
             const [tipo, idStr] = sel.value.split('_');
-            const unidad_receta = (selUnidad && selUnidad.value && selUnidad.value !== '—') 
-                ? selUnidad.value 
+            const unidad_receta = (selUnidad && selUnidad.value && selUnidad.value !== '—')
+                ? selUnidad.value
                 : null;
             items.push({ tipo, referencia_id: parseInt(idStr), cantidad: parseFloat(inp.value), unidad_receta });
         }
     });
     try {
+        if (modoConectado && apiClient && tokenActual) {
+            try {
+                const itemsAPI = items.map(i => ({ item_type: i.tipo, item_id: i.referencia_id, quantity: i.cantidad }));
+                await apiClient.request(`/inventory/products/${productoRecetaActual}/recipe`, { method: 'POST', body: { items: itemsAPI } });
+            } catch (e) { console.warn('No se pudo guardar receta en backend:', e.message); }
+        }
         await window.api.guardarRecetaProducto(productoRecetaActual, items);
         cerrarModalReceta();
         renderizarTablaRecetas();

@@ -530,6 +530,13 @@ ipcMain.handle('limpiar-datos-locales', () => {
     });
 });
 
+ipcMain.handle('agregar-insumo-con-id', (_, id, datos) => {
+    return new Promise((res, rej) => db.agregarInsumoConId(id, datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('agregar-preparacion-con-id', (_, id, datos) => {
+    return new Promise((res, rej) => db.agregarPreparacionConId(id, datos, (err) => err ? rej(err) : res(true)));
+});
+
 // SYNC — Guardar datos del backend en SQLite local
 ipcMain.handle('sync-clasificaciones', (_, datos) => {
     return new Promise((res, rej) => db.syncClasificaciones(datos, (err) => err ? rej(err) : res(true)));

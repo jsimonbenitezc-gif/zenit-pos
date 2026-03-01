@@ -99,6 +99,9 @@ contextBridge.exposeInMainWorld('api', {
 
     limpiarDatosLocales: () => ipcRenderer.invoke('limpiar-datos-locales'),
 
+    agregarInsumoConId: (id, datos) => ipcRenderer.invoke('agregar-insumo-con-id', id, datos),
+    agregarPreparacionConId: (id, datos) => ipcRenderer.invoke('agregar-preparacion-con-id', id, datos),
+
     // SYNC
     syncClasificaciones: (datos) => ipcRenderer.invoke('sync-clasificaciones', datos),
     syncProductos: (datos) => ipcRenderer.invoke('sync-productos', datos),

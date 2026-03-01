@@ -1232,6 +1232,23 @@ function syncCombos(datos, cb) {
     });
 }
 
+function agregarInsumoConId(id, datos, cb) {
+    db.run(
+        `INSERT OR REPLACE INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+        [id, datos.nombre, datos.unidad, datos.stock_actual || 0, datos.stock_minimo || 0,
+         datos.tipo || 'ingrediente', datos.contenido_cantidad || null, datos.contenido_unidad || null],
+        cb
+    );
+}
+
+function agregarPreparacionConId(id, datos, cb) {
+    db.run(
+        `INSERT OR REPLACE INTO preparaciones (id, nombre, descripcion, activo) VALUES (?, ?, ?, 1)`,
+        [id, datos.nombre, datos.descripcion || null],
+        cb
+    );
+}
+
 function obtenerPedidosPendientes(cb) {
     db.all('SELECT * FROM pedidos WHERE pendiente_sync = 1 ORDER BY fecha_pedido ASC', [], cb);
 }
@@ -1308,6 +1325,8 @@ module.exports = {
     calcularTotalesTurno,
     cerrarTurno,
     limpiarDatosLocales,
+    agregarInsumoConId,
+    agregarPreparacionConId,
     syncClasificaciones,
     syncProductos,
     syncClientes,
