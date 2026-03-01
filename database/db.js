@@ -70,18 +70,20 @@ function inicializarTablas() {
 
     // 5. PEDIDOS (Cabecera de la venta)
     db.run(`CREATE TABLE IF NOT EXISTS pedidos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        cliente_id INTEGER, 
-        total REAL NOT NULL, 
-        estado TEXT DEFAULT 'pendiente', 
-        metodo_pago TEXT, 
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cliente_id INTEGER,
+        total REAL NOT NULL,
+        estado TEXT DEFAULT 'pendiente',
+        metodo_pago TEXT,
         tipo_pedido TEXT DEFAULT 'comer',
         referencia TEXT,
         direccion_domicilio TEXT,
         link_maps TEXT,
         notas_generales TEXT,
         info_cliente_temp TEXT,
-        fecha_pedido DATETIME DEFAULT CURRENT_TIMESTAMP, 
+        cajero TEXT,
+        pendiente_sync INTEGER DEFAULT 0,
+        fecha_pedido DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (cliente_id) REFERENCES clientes(id)
     )`);
 
@@ -125,7 +127,10 @@ function inicializarTablas() {
         unidad TEXT NOT NULL DEFAULT 'kg',
         stock_actual REAL DEFAULT 0,
         stock_minimo REAL DEFAULT 0,
-        activo INTEGER DEFAULT 1
+        activo INTEGER DEFAULT 1,
+        tipo TEXT DEFAULT 'ingrediente',
+        contenido_cantidad REAL,
+        contenido_unidad TEXT
     )`);
 
     // 10. PREPARACIONES (Mezclas o concentrados hechos en cocina)
@@ -196,6 +201,7 @@ function inicializarTablas() {
 // Migración: agregar campo para info de cliente temporal
     db.run("ALTER TABLE pedidos ADD COLUMN info_cliente_temp TEXT", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN cajero TEXT", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN pendiente_sync INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN tipo TEXT DEFAULT 'ingrediente'", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_cantidad REAL", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_unidad TEXT", () => {});
