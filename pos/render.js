@@ -380,7 +380,7 @@ async function inicializarLogin() {
         // Si el switch está desactivado, saltar el login
         const ajustesPwd = await window.api.obtenerAjustes();
 
-        if (ajustesPwd.pedir_password_inicio === 'false') {
+        if (ajustesPwd.pedir_password_inicio !== 'true') {
             resolve();
             return;
         }
@@ -2592,6 +2592,7 @@ async function cerrarSesionZenit() {
     await window.api.guardarAjuste('modo_conectado', 'false');
     await window.api.guardarAjuste('zenit_user_name', '');
     await window.api.guardarAjuste('zenit_user_email', '');
+    await window.api.limpiarDatosLocales();
     location.reload();
 }
 

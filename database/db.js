@@ -195,6 +195,7 @@ function inicializarTablas() {
 
 // Migración: agregar campo para info de cliente temporal
     db.run("ALTER TABLE pedidos ADD COLUMN info_cliente_temp TEXT", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN cajero TEXT", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN tipo TEXT DEFAULT 'ingrediente'", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_cantidad REAL", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_unidad TEXT", () => {});
@@ -213,6 +214,25 @@ function inicializarTablas() {
     columnasNuevas.forEach(sql => {
         db.run(sql, (err) => { /* Ignoramos error si la columna ya existe */ });
     });
+
+    // TURNOS — Corte de caja
+    db.run(`CREATE TABLE IF NOT EXISTS turnos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cajero_nombre TEXT NOT NULL,
+        rol TEXT DEFAULT 'cajero',
+        fondo_inicial REAL DEFAULT 0,
+        apertura DATETIME DEFAULT CURRENT_TIMESTAMP,
+        cierre DATETIME,
+        total_efectivo REAL DEFAULT 0,
+        total_tarjeta REAL DEFAULT 0,
+        total_transferencia REAL DEFAULT 0,
+        total_pedidos INTEGER DEFAULT 0,
+        total_ventas REAL DEFAULT 0,
+        efectivo_contado REAL DEFAULT 0,
+        diferencia REAL DEFAULT 0,
+        estado TEXT DEFAULT 'abierto',
+        notas TEXT
+    )`);
 }
 
 function crearDatosEjemplo() {
@@ -370,21 +390,23 @@ function crearPedido(datos, items, callback) {
             link_maps,
             notas_generales,
             info_cliente_temp,
+            cajero,
             fecha_pedido
         )
-        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
     `;
 
     db.run(sqlPedido, [
-        datos.cliente_id, 
-        datos.total, 
+        datos.cliente_id,
+        datos.total,
         datos.metodo_pago,
         datos.tipo_pedido,
         datos.referencia,
         datos.direccion_domicilio,
-        datos.link_maps, 
+        datos.link_maps,
         datos.notas_generales,
-        datos.info_cliente_temp || null
+        datos.info_cliente_temp || null,
+        datos.cajero || null
     ], function(err) {
         if (err) return callback(err);
         
@@ -404,17 +426,18 @@ function crearPedido(datos, items, callback) {
 
 function obtenerPedidos(filtro, callback) {
     const sql = `
-        SELECT 
-            p.id, 
-            CASE 
+        SELECT
+            p.id,
+            p.cajero,
+            CASE
                 WHEN c.nombre IS NOT NULL THEN c.nombre || ' - ' || c.telefono
                 WHEN p.info_cliente_temp IS NOT NULL THEN p.info_cliente_temp
                 ELSE 'General'
             END as telefono,
-            p.total, 
-            p.metodo_pago, 
-            p.estado, 
-            p.fecha_pedido as fecha 
+            p.total,
+            p.metodo_pago,
+            p.estado,
+            p.fecha_pedido as fecha
         FROM pedidos p
         LEFT JOIN clientes c ON p.cliente_id = c.id
         ORDER BY p.id DESC
@@ -808,8 +831,8 @@ function guardarRecetaProducto(productoId, items, cb) {
     db.run("DELETE FROM receta_items WHERE producto_id = ?", [productoId], (err) => {
         if (err) return cb(err);
         if (!items || items.length === 0) return cb(null);
-        const stmt = db.prepare("INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad) VALUES (?, ?, ?, ?)");
-        items.forEach(item => stmt.run(productoId, item.tipo, item.referencia_id, item.cantidad));
+        const stmt = db.prepare("INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad, unidad_receta) VALUES (?, ?, ?, ?, ?)");
+        items.forEach(item => stmt.run(productoId, item.tipo, item.referencia_id, item.cantidad, item.unidad_receta || null));
         stmt.finalize(cb);
     });
 }
@@ -969,6 +992,119 @@ function guardarItemsCombo(comboId, items, cb) {
     });
 }
 
+// ============================================
+// SISTEMA DE AJUSTES
+// ============================================
+
+function guardarAjuste(clave, valor, callback) {
+    db.run(
+        'INSERT OR REPLACE INTO ajustes (clave, valor) VALUES (?, ?)',
+        [clave, valor],
+        callback
+    );
+}
+
+function obtenerAjustes(callback) {
+    db.all('SELECT clave, valor FROM ajustes', (err, rows) => {
+        if (err) return callback(err);
+        const ajustes = {};
+        rows.forEach(row => {
+            ajustes[row.clave] = row.valor;
+        });
+        callback(null, ajustes);
+    });
+}
+
+// LOGIN — Contraseña de acceso al app
+function tienePasswordApp(cb) {
+    db.get('SELECT valor FROM ajustes WHERE clave = ?', ['app_password'], (err, row) => {
+        cb(err, !!row);
+    });
+}
+
+function verificarPasswordApp(password, cb) {
+    const crypto = require('crypto');
+    db.get('SELECT valor FROM ajustes WHERE clave = ?', ['app_password'], (err, row) => {
+        if (err || !row) return cb(err, false);
+        const parts = row.valor.split(':');
+        const salt = parts[0];
+        const hash = parts[1];
+        const hashInput = crypto.createHash('sha256').update(salt + password).digest('hex');
+        cb(null, hash === hashInput);
+    });
+}
+
+function establecerPasswordApp(password, cb) {
+    const crypto = require('crypto');
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.createHash('sha256').update(salt + password).digest('hex');
+    const valor = salt + ':' + hash;
+    db.run('INSERT OR REPLACE INTO ajustes (clave, valor) VALUES (?, ?)', ['app_password', valor], cb);
+}
+
+// ============================================
+// TURNOS — CORTE DE CAJA
+// ============================================
+
+function abrirTurno(cajeroNombre, rol, fondoInicial, cb) {
+    db.run(
+        "INSERT INTO turnos (cajero_nombre, rol, fondo_inicial, apertura) VALUES (?, ?, ?, datetime('now','localtime'))",
+        [cajeroNombre, rol, fondoInicial],
+        function(err) { cb(err, this?.lastID); }
+    );
+}
+
+function obtenerTurnoActivo(cb) {
+    db.get("SELECT * FROM turnos WHERE estado = 'abierto' ORDER BY apertura DESC LIMIT 1", cb);
+}
+
+function obtenerTurnos(cb) {
+    db.all('SELECT * FROM turnos ORDER BY apertura DESC LIMIT 50', cb);
+}
+
+function calcularTotalesTurno(fechaApertura, cb) {
+    db.all(`
+        SELECT
+            COUNT(*) as total_pedidos,
+            COALESCE(SUM(total), 0) as total_ventas,
+            COALESCE(SUM(CASE WHEN metodo_pago = 'efectivo' THEN total ELSE 0 END), 0) as total_efectivo,
+            COALESCE(SUM(CASE WHEN metodo_pago IN ('debito','credito','tarjeta') THEN total ELSE 0 END), 0) as total_tarjeta,
+            COALESCE(SUM(CASE WHEN metodo_pago = 'transferencia' THEN total ELSE 0 END), 0) as total_transferencia
+        FROM pedidos
+        WHERE fecha_pedido >= ? AND estado != 'cancelado'
+    `, [fechaApertura], cb);
+}
+
+function cerrarTurno(id, efectivoContado, notas, cb) {
+    db.get("SELECT * FROM turnos WHERE id = ?", [id], (err, turno) => {
+        if (err || !turno) return cb(err || new Error('Turno no encontrado'));
+        calcularTotalesTurno(turno.apertura, (err2, rows) => {
+            if (err2) return cb(err2);
+            const totales = rows[0];
+            const efectivoEsperado = turno.fondo_inicial + totales.total_efectivo;
+            const diferencia = efectivoContado - efectivoEsperado;
+            db.run(
+                `UPDATE turnos SET
+                    cierre = CURRENT_TIMESTAMP,
+                    efectivo_contado = ?,
+                    diferencia = ?,
+                    total_pedidos = ?,
+                    total_ventas = ?,
+                    total_efectivo = ?,
+                    total_tarjeta = ?,
+                    total_transferencia = ?,
+                    notas = ?,
+                    estado = 'cerrado'
+                WHERE id = ?`,
+                [efectivoContado, diferencia, totales.total_pedidos, totales.total_ventas,
+                 totales.total_efectivo, totales.total_tarjeta, totales.total_transferencia,
+                 notas, id],
+                cb
+            );
+        });
+    });
+}
+
 module.exports = {
     db, 
     obtenerProductosAgrupados, 
@@ -1024,4 +1160,35 @@ module.exports = {
     obtenerItemsCombo,
     guardarItemsCombo,     
     obtenerProductos: (cb) => db.all('SELECT * FROM productos WHERE activo = 1', cb),
+    tienePasswordApp,
+    verificarPasswordApp,
+    establecerPasswordApp,
+    abrirTurno,
+    obtenerTurnoActivo,
+    obtenerTurnos,
+    calcularTotalesTurno,
+    cerrarTurno,
+    limpiarDatosLocales,
+}
+
+function limpiarDatosLocales(cb) {
+    const tablas = [
+        'pedido_items', 'mermas', 'receta_items', 'combo_items',
+        'preparacion_items', 'entradas_insumos', 'pedidos', 'clientes',
+        'combos', 'preparaciones', 'insumos', 'promociones',
+        'productos', 'clasificaciones'
+    ];
+    db.serialize(() => {
+        db.run('PRAGMA foreign_keys = OFF');
+        let pendientes = tablas.length;
+        tablas.forEach(tabla => {
+            db.run(`DELETE FROM ${tabla}`, () => {
+                pendientes--;
+                if (pendientes === 0) {
+                    db.run('PRAGMA foreign_keys = ON');
+                    if (cb) cb(null);
+                }
+            });
+        });
+    });
 }

@@ -6,7 +6,7 @@ const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const db = require('../database/db');
-const { crearBackup } = require('./backup'); 
+const { crearBackup, listarBackups } = require('./backup'); 
 
 let mainWindow;
 
@@ -435,4 +435,132 @@ ipcMain.handle('obtener-items-combo', async (_, id) => {
 });
 ipcMain.handle('guardar-items-combo', async (_, id, items) => {
     return new Promise((res, rej) => db.guardarItemsCombo(id, items, (err) => err ? rej(err) : res(true)));
+});
+
+ipcMain.handle('crear-backup-manual', async () => {
+    try {
+        crearBackup();
+        const backups = listarBackups();
+        return { ok: true, total: backups.length, ultimo: backups[0] || null };
+    } catch(e) {
+        return { ok: false, error: e.message };
+    }
+});
+
+ipcMain.handle('listar-backups', async () => {
+    try {
+        return listarBackups();
+    } catch(e) {
+        return [];
+    }
+});
+
+ipcMain.handle('obtener-ruta-backups', async () => {
+    const { app } = require('electron');
+    const path = require('path');
+    return path.join(app.getPath('userData'), 'backups');
+});
+
+ipcMain.handle('abrir-carpeta-backups', async () => {
+    const { shell } = require('electron');
+    const path = require('path');
+    const { app } = require('electron');
+    const ruta = path.join(app.getPath('userData'), 'backups');
+    shell.openPath(ruta);
+});
+
+// IMPRESIÓN DIRECTA — Sin ventana emergente
+ipcMain.handle('imprimir-ticket', async (event, htmlContent, nombreImpresora) => {
+    return new Promise((resolve) => {
+        const tempPath = path.join(app.getPath('temp'), 'zenit-ticket-' + Date.now() + '.html');
+        fs.writeFileSync(tempPath, htmlContent, 'utf8');
+
+        const printWindow = new BrowserWindow({
+            show: false,
+            webPreferences: { nodeIntegration: false, contextIsolation: true }
+        });
+
+        printWindow.loadFile(tempPath);
+
+        printWindow.webContents.on('did-finish-load', () => {
+            setTimeout(() => {
+                printWindow.webContents.print({
+                    silent: !!nombreImpresora,
+                    printBackground: true,
+                    deviceName: nombreImpresora || '',
+                    margins: { marginType: 'printableArea' }
+                }, (success, reason) => {
+                    printWindow.destroy();
+                    try { fs.unlinkSync(tempPath); } catch (e) {}
+                    resolve({ success, reason: reason || '' });
+                });
+            }, 500);
+        });
+
+        printWindow.webContents.on('did-fail-load', () => {
+            printWindow.destroy();
+            try { fs.unlinkSync(tempPath); } catch (e) {}
+            resolve({ success: false, reason: 'load-failed' });
+        });
+    });
+});
+
+// LOGIN — Contraseña de acceso al app
+ipcMain.handle('tiene-password-app', () => {
+    return new Promise((resolve) => {
+        db.tienePasswordApp((err, tiene) => resolve(tiene));
+    });
+});
+
+ipcMain.handle('verificar-password-app', (event, password) => {
+    return new Promise((resolve) => {
+        db.verificarPasswordApp(password, (err, valido) => resolve(valido));
+    });
+});
+
+ipcMain.handle('establecer-password-app', (event, password) => {
+    return new Promise((resolve) => {
+        db.establecerPasswordApp(password, (err) => resolve(!err));
+    });
+});
+
+ipcMain.handle('limpiar-datos-locales', () => {
+    return new Promise((resolve) => {
+        db.limpiarDatosLocales((err) => resolve(!err));
+    });
+});
+
+// TURNOS — Corte de caja
+ipcMain.handle('abrir-turno', (event, nombre, rol, fondoInicial) => {
+    return new Promise((resolve, reject) => {
+        db.abrirTurno(nombre, rol, fondoInicial, (err, id) => {
+            if (err) reject(err); else resolve(id);
+        });
+    });
+});
+
+ipcMain.handle('obtener-turno-activo', () => {
+    return new Promise((resolve) => {
+        db.obtenerTurnoActivo((err, turno) => resolve(turno || null));
+    });
+});
+
+ipcMain.handle('obtener-turnos', () => {
+    return new Promise((resolve) => {
+        db.obtenerTurnos((err, turnos) => resolve(turnos || []));
+    });
+});
+
+ipcMain.handle('calcular-totales-turno', (event, fechaApertura) => {
+    return new Promise((resolve) => {
+        db.calcularTotalesTurno(fechaApertura, (err, rows) => resolve(rows?.[0] || {}));
+    });
+});
+
+ipcMain.handle('cerrar-turno', (event, id, efectivoContado, notas) => {
+    return new Promise((resolve, reject) => {
+        db.cerrarTurno(id, efectivoContado, notas, (err) => {
+            if (err) reject(err); else resolve(true);
+        });
+    });
 });

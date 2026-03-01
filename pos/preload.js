@@ -88,4 +88,26 @@ contextBridge.exposeInMainWorld('api', {
     obtenerItemsCombo: (id) => ipcRenderer.invoke('obtener-items-combo', id),
     guardarItemsCombo: (id, items) => ipcRenderer.invoke('guardar-items-combo', id, items),
 
+// BACKUPS
+    crearBackupManual: () => ipcRenderer.invoke('crear-backup-manual'),
+    listarBackups: () => ipcRenderer.invoke('listar-backups'),
+    obtenerRutaBackups: () => ipcRenderer.invoke('obtener-ruta-backups'),
+    abrirCarpetaBackups: () => ipcRenderer.invoke('abrir-carpeta-backups'),
+
+    // IMPRESIÓN
+    imprimirTicket: (html, impresora) => ipcRenderer.invoke('imprimir-ticket', html, impresora),
+
+    limpiarDatosLocales: () => ipcRenderer.invoke('limpiar-datos-locales'),
+
+    // LOGIN
+    tienePasswordApp: () => ipcRenderer.invoke('tiene-password-app'),
+    verificarPasswordApp: (password) => ipcRenderer.invoke('verificar-password-app', password),
+    establecerPasswordApp: (password) => ipcRenderer.invoke('establecer-password-app', password),
+
+    // TURNOS
+    abrirTurno: (nombre, rol, fondo) => ipcRenderer.invoke('abrir-turno', nombre, rol, fondo),
+    obtenerTurnoActivo: () => ipcRenderer.invoke('obtener-turno-activo'),
+    obtenerTurnos: () => ipcRenderer.invoke('obtener-turnos'),
+    calcularTotalesTurno: (fecha) => ipcRenderer.invoke('calcular-totales-turno', fecha),
+    cerrarTurno: (id, efectivo, notas) => ipcRenderer.invoke('cerrar-turno', id, efectivo, notas),
 });
