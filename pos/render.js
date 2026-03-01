@@ -380,7 +380,8 @@ async function inicializarLogin() {
         // Si el switch está desactivado, saltar el login
         const ajustesPwd = await window.api.obtenerAjustes();
 
-        if (ajustesPwd.pedir_password_inicio !== 'true') {
+        // La contraseña local solo aplica si hay sesión Zenit activa y el switch está encendido
+        if (!ajustesPwd.api_token || ajustesPwd.pedir_password_inicio !== 'true') {
             resolve();
             return;
         }
