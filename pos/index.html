@@ -1276,52 +1276,6 @@
             </div>
         </div>
 
-        <!-- CARD: Empleados -->
-        <div class="ajustes-card" id="card-empleados">
-            <h3>Empleados</h3>
-            <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;" id="empleados-desc-conectado">
-                Crea accesos para tu equipo. Cada empleado tendrá su usuario y contraseña para iniciar sesión en Zenit.
-            </p>
-            <p style="font-size:0.85em;color:#9ca3af;margin-bottom:12px;display:none;" id="empleados-desc-local">
-                Conecta tu cuenta Zenit para gestionar empleados.
-            </p>
-
-            <div id="lista-empleados-container" style="margin-bottom:16px;">
-                <div id="lista-empleados-body"></div>
-            </div>
-
-            <div id="form-nuevo-empleado" style="display:none;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:16px;">
-                <p style="font-weight:600;margin:0 0 12px;font-size:0.9em;">Nuevo empleado</p>
-                <div class="input-group" style="margin-bottom:10px;">
-                    <label>Nombre</label>
-                    <input type="text" id="nv-emp-nombre" placeholder="Ej: Juan García" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:100%;box-sizing:border-box;">
-                </div>
-                <div class="input-group" style="margin-bottom:10px;">
-                    <label>Usuario (para iniciar sesión)</label>
-                    <input type="text" id="nv-emp-usuario" placeholder="Ej: juan.garcia" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:100%;box-sizing:border-box;">
-                </div>
-                <div class="input-group" style="margin-bottom:10px;">
-                    <label>Contraseña</label>
-                    <input type="password" id="nv-emp-password" placeholder="Mínimo 6 caracteres" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:100%;box-sizing:border-box;">
-                </div>
-                <div class="input-group" style="margin-bottom:14px;">
-                    <label>Rol</label>
-                    <select id="nv-emp-rol" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:100%;">
-                        <option value="cashier">Cajero</option>
-                        <option value="waiter">Mesero</option>
-                        <option value="delivery">Repartidor</option>
-                    </select>
-                </div>
-                <div style="display:flex;gap:8px;">
-                    <button class="btn-primary" style="flex:1;" onclick="guardarNuevoEmpleado()">Crear empleado</button>
-                    <button class="btn-secondary" onclick="cancelarFormEmpleado()">Cancelar</button>
-                </div>
-            </div>
-
-            <button class="btn-primary" id="btn-nuevo-empleado" onclick="mostrarFormNuevoEmpleado()" style="width:100%;">
-                + Agregar empleado
-            </button>
-        </div>
     </div>
 </section>
 

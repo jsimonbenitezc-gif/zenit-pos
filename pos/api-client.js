@@ -277,6 +277,15 @@ class APIClient {
         return await this.request('/alerts', { method: 'GET' });
     }
 
+    // AJUSTES (nube)
+    async getSettings() {
+        return await this.request('/settings', { method: 'GET' });
+    }
+
+    async saveSettings(data) {
+        return await this.request('/settings', { method: 'PUT', body: data });
+    }
+
     // MESAS
     async getTables() {
         return await this.request('/tables', { method: 'GET' });

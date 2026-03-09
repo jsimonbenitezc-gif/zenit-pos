@@ -3318,110 +3318,6 @@ async function cargarCuentaZenitAjustes() {
         conCuenta.style.display = 'none';
     }
     actualizarCardMiPlan();
-    // Cargar empleados si el usuario está conectado y es dueño
-    if (modoConectado && token) {
-        cargarEmpleados();
-        document.getElementById('card-empleados')?.style.setProperty('display', '');
-        document.getElementById('empleados-desc-conectado')?.style.setProperty('display', '');
-        document.getElementById('empleados-desc-local')?.style.setProperty('display', 'none');
-        document.getElementById('btn-nuevo-empleado')?.style.setProperty('display', '');
-    } else {
-        document.getElementById('lista-empleados-body').innerHTML = '';
-        document.getElementById('empleados-desc-conectado')?.style.setProperty('display', 'none');
-        document.getElementById('empleados-desc-local')?.style.setProperty('display', '');
-        document.getElementById('btn-nuevo-empleado')?.style.setProperty('display', 'none');
-    }
-}
-
-/* ============================================
-   GESTIÓN DE EMPLEADOS
-   ============================================ */
-
-const _ROL_LABEL = { cashier: 'Cajero', waiter: 'Mesero', delivery: 'Repartidor' };
-
-async function cargarEmpleados() {
-    const container = document.getElementById('lista-empleados-body');
-    if (!container || !modoConectado || !apiClient) return;
-    try {
-        const empleados = await apiClient.request('/staff');
-        if (!empleados || empleados.length === 0) {
-            container.innerHTML = '<p style="font-size:0.85em;color:#9ca3af;margin:0 0 12px;">Aún no tienes empleados registrados.</p>';
-            return;
-        }
-        container.innerHTML = empleados.map(e => `
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f3f4f6;">
-                <div>
-                    <p style="margin:0;font-weight:600;font-size:0.9em;">${e.name}</p>
-                    <p style="margin:0;font-size:0.78em;color:#6b7280;">@${e.username} · ${_ROL_LABEL[e.role] || e.role}</p>
-                </div>
-                <button onclick="eliminarEmpleado(${e.id}, '${e.name.replace(/'/g, "\\'")}')"
-                    style="background:none;border:1px solid #fca5a5;color:#ef4444;padding:5px 10px;border-radius:6px;font-size:0.78em;cursor:pointer;">
-                    Eliminar
-                </button>
-            </div>
-        `).join('');
-    } catch (e) {
-        container.innerHTML = '<p style="font-size:0.85em;color:#9ca3af;">No se pudo cargar la lista de empleados.</p>';
-    }
-}
-
-function mostrarFormNuevoEmpleado() {
-    document.getElementById('form-nuevo-empleado').style.display = '';
-    document.getElementById('btn-nuevo-empleado').style.display = 'none';
-    document.getElementById('nv-emp-nombre').value = '';
-    document.getElementById('nv-emp-usuario').value = '';
-    document.getElementById('nv-emp-password').value = '';
-    document.getElementById('nv-emp-rol').value = 'cashier';
-    document.getElementById('nv-emp-nombre').focus();
-}
-
-function cancelarFormEmpleado() {
-    document.getElementById('form-nuevo-empleado').style.display = 'none';
-    document.getElementById('btn-nuevo-empleado').style.display = '';
-}
-
-async function guardarNuevoEmpleado() {
-    const name     = document.getElementById('nv-emp-nombre').value.trim();
-    const username = document.getElementById('nv-emp-usuario').value.trim();
-    const password = document.getElementById('nv-emp-password').value;
-    const role     = document.getElementById('nv-emp-rol').value;
-
-    if (!name || !username || !password) {
-        alert('Completa nombre, usuario y contraseña.');
-        return;
-    }
-    if (password.length < 6) {
-        alert('La contraseña debe tener al menos 6 caracteres.');
-        return;
-    }
-
-    const btn = document.querySelector('#form-nuevo-empleado .btn-primary');
-    if (btn) { btn.disabled = true; btn.textContent = 'Creando...'; }
-
-    try {
-        const data = await apiClient.request('/staff', {
-            method: 'POST',
-            body: { name, username, password, role }
-        });
-        cancelarFormEmpleado();
-        await cargarEmpleados();
-        mostrarNotificacionExito('Empleado creado', `${name} puede iniciar sesión con usuario "${username}".`);
-    } catch (e) {
-        alert(e.message || 'No se pudo crear el empleado. Verifica que el usuario no esté en uso.');
-    } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Crear empleado'; }
-    }
-}
-
-async function eliminarEmpleado(id, nombre) {
-    if (!confirm(`¿Eliminar a ${nombre}? Ya no podrá iniciar sesión.`)) return;
-    try {
-        await apiClient.request(`/staff/${id}`, { method: 'DELETE' });
-        await cargarEmpleados();
-        mostrarNotificacionExito('Empleado eliminado', `${nombre} ya no tiene acceso.`);
-    } catch (e) {
-        alert(e.message || 'No se pudo eliminar el empleado.');
-    }
 }
 
 async function registrarCuentaZenit() {
@@ -6342,8 +6238,19 @@ async function cargarPermisosAjustes() {
         encargado: { ...PERMISOS_DEFAULT.encargado }
     };
     try {
-        const ajustes = await window.api.obtenerAjustes();
-        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        let guardados = {};
+        if (modoConectado && apiClient && tokenActual) {
+            // Usar config de la nube como fuente principal
+            const cloudSettings = await apiClient.getSettings();
+            guardados = cloudSettings.permisos_roles || {};
+            // Mantener copia local sincronizada
+            if (Object.keys(guardados).length > 0) {
+                window.api.guardarAjuste('permisos_roles', JSON.stringify(guardados)).catch(() => {});
+            }
+        } else {
+            const ajustes = await window.api.obtenerAjustes();
+            guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        }
         if (guardados.cajero)    permisos.cajero    = { ...permisos.cajero,    ...guardados.cajero };
         if (guardados.encargado) permisos.encargado = { ...permisos.encargado, ...guardados.encargado };
     } catch(e) { /* usa defaults */ }
@@ -6479,6 +6386,9 @@ async function guardarPermisosRol() {
 
     try {
         await window.api.guardarAjuste('permisos_roles', JSON.stringify(permisos));
+        if (modoConectado && apiClient && tokenActual) {
+            apiClient.saveSettings({ permisos_roles: permisos }).catch(() => {});
+        }
         if (turnoActivo) aplicarPermisos();
     } catch(e) {
         mostrarNotificacionExito('Error guardando configuración', '⚠️ Error');
@@ -6511,8 +6421,11 @@ async function guardarPinPerfil(rol) {
 
     try {
         await window.api.guardarAjuste('permisos_roles', JSON.stringify(permisos));
+        if (modoConectado && apiClient && tokenActual) {
+            apiClient.saveSettings({ permisos_roles: permisos }).catch(() => {});
+        }
         mostrarNotificacionExito(`PIN de ${rol} configurado`, '¡Listo!');
-        cargarPermisosAjustes(); // re-renderizar para mostrar estado actualizado
+        cargarPermisosAjustes();
     } catch(e) {
         mostrarNotificacionExito('Error guardando PIN', '⚠️ Error');
     }
@@ -6532,6 +6445,9 @@ async function quitarPinPerfil(rol) {
 
     try {
         await window.api.guardarAjuste('permisos_roles', JSON.stringify(permisos));
+        if (modoConectado && apiClient && tokenActual) {
+            apiClient.saveSettings({ permisos_roles: permisos }).catch(() => {});
+        }
         mostrarNotificacionExito(`PIN de ${rol} eliminado`, '¡Listo!');
         cargarPermisosAjustes();
     } catch(e) {
