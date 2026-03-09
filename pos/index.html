@@ -138,6 +138,13 @@
    Nueva Venta
 </button>
 
+            <button class="menu-item" data-view="mesas" id="menu-mesas">
+   <span class="menu-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M5 12v4"/><path d="M19 12v4"/><path d="M3 20h18"/><path d="M8 8V6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/></svg>
+   </span>
+   Mesas
+</button>
+
             <button class="menu-item" data-view="clientes">
    <span class="menu-icon">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-users-icon lucide-users"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><path d="M16 3.128a4 4 0 0 1 0 7.744"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
@@ -192,6 +199,8 @@
 
         <main class="main" id="main-container">
             <section id="view-dashboard" class="view active">
+                <!-- Tabs de sucursales (solo aparece si hay más de una) -->
+                <div id="branch-tabs-container" style="display:none;margin-bottom:16px;gap:8px;flex-wrap:wrap;"></div>
                 <!-- KPIs Principales -->
                 <div class="dashboard-kpis">
                     <div class="kpi-card">
@@ -367,11 +376,45 @@
 
            <section id="view-pedidos" class="view">
     <div class="table-card">
-        <div class="table-header">
-            <h2>Historial de Ventas</h2>
-            <div class="table-filters">
-                <span class="badge-info">Últimos 50 pedidos</span>
+        <div class="table-header" style="flex-direction:column; align-items:stretch; gap:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h2>Historial de Ventas</h2>
+                <button class="btn-secondary small" onclick="exportarCSV()" style="display:flex;align-items:center;gap:6px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                    Exportar CSV
+                </button>
             </div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                    <label style="font-size:0.78em;color:#6b7280;font-weight:500;">Desde</label>
+                    <input type="date" id="filtro-fecha-desde" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                    <label style="font-size:0.78em;color:#6b7280;font-weight:500;">Hasta</label>
+                    <input type="date" id="filtro-fecha-hasta" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                </div>
+                <select id="filtro-metodo" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;height:32px;">
+                    <option value="">Todos los métodos</option>
+                    <option value="efectivo">Efectivo</option>
+                    <option value="tarjeta">Tarjeta</option>
+                    <option value="transferencia">Transferencia</option>
+                </select>
+                <select id="filtro-estado" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;height:32px;">
+                    <option value="">Todos los estados</option>
+                    <option value="registrado">Registrado</option>
+                    <option value="completado">Completado</option>
+                    <option value="entregado">Entregado</option>
+                    <option value="cancelado">Cancelado</option>
+                </select>
+                <button class="btn-primary small" onclick="aplicarFiltrosPedidos()">Filtrar</button>
+                <button class="btn-secondary small" onclick="limpiarFiltrosPedidos()">Limpiar</button>
+                <div style="display:flex;gap:6px;margin-left:auto;">
+                    <button class="btn-secondary small" onclick="filtroRapido('hoy')" style="font-size:0.82em;">Hoy</button>
+                    <button class="btn-secondary small" onclick="filtroRapido('semana')" style="font-size:0.82em;">Esta semana</button>
+                    <button class="btn-secondary small" onclick="filtroRapido('mes')" style="font-size:0.82em;">Este mes</button>
+                </div>
+            </div>
+            <div id="resumen-pedidos" style="display:none;padding:8px 12px;background:#f8fafc;border-radius:8px;border:1px solid #e5e7eb;font-size:0.88em;color:#374151;gap:10px;flex-wrap:wrap;align-items:center;"></div>
         </div>
         <div class="table-wrapper">
             <table class="zenit-table">
@@ -394,6 +437,64 @@
     </div>
 </section>
 
+            <!-- ===== VISTA MESAS ===== -->
+            <section id="view-mesas" class="view">
+                <div class="view-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 8px;">
+                    <h1 style="margin:0;font-size:1.4em;">Mesas</h1>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn-secondary" onclick="abrirModalConfigurarMesas()" id="btn-configurar-mesas">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
+                            Configurar
+                        </button>
+                    </div>
+                </div>
+
+                <div style="display:flex;height:calc(100% - 64px);overflow:hidden;">
+                    <!-- Panel izquierdo: grid de mesas -->
+                    <div id="mesas-contenedor" style="flex:1;overflow-y:auto;padding:8px 16px;">
+                        <div id="mesas-zonas-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;"></div>
+                        <div id="mesas-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;"></div>
+                    </div>
+
+                    <!-- Panel derecho: detalle de mesa seleccionada -->
+                    <div id="mesa-panel" class="hidden" style="width:340px;min-width:300px;border-left:1px solid #e5e7eb;display:flex;flex-direction:column;background:#fff;">
+                        <div style="padding:12px 16px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;">
+                            <h2 id="mesa-panel-titulo" style="margin:0;font-size:1.1em;"></h2>
+                            <button onclick="cerrarPanelMesa()" style="background:none;border:none;cursor:pointer;font-size:1.2em;color:#6b7280;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                            </button>
+                        </div>
+                        <div id="mesa-panel-info" style="padding:8px 16px;font-size:0.85em;color:#6b7280;border-bottom:1px solid #f3f4f6;"></div>
+                        <div id="mesa-panel-items" style="flex:1;overflow-y:auto;padding:8px 0;"></div>
+                        <div style="padding:8px 16px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;">
+                            <textarea id="mesa-notas-input" placeholder="Notas de la mesa..." rows="2"
+                                style="width:100%;resize:none;border:1px solid #d1d5db;border-radius:6px;padding:6px 8px;font-size:0.85em;box-sizing:border-box;"
+                                oninput="guardarNotasMesaDebounced(this.value)"></textarea>
+                        </div>
+                        <div style="padding:8px 16px;display:flex;gap:6px;flex-direction:column;">
+                            <div style="display:flex;gap:6px;">
+                                <button class="btn-secondary" style="flex:1;font-size:0.82em;" onclick="imprimirCuentaMesa()">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>
+                                    Imprimir cuenta
+                                </button>
+                                <button class="btn-secondary" style="flex:1;font-size:0.82em;" onclick="abrirModalTransferirMesa()">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                                    Transferir
+                                </button>
+                            </div>
+                            <button class="btn-primary" onclick="abrirModalCobrarMesa()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px;"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
+                                Cobrar y cerrar mesa
+                            </button>
+                            <button class="btn-secondary" style="font-size:0.82em;" onclick="abrirModalAgregarProductosMesa()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                                Agregar productos
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- ===== VISTA TURNO ===== -->
             <section id="view-turno" class="view">
 
@@ -415,7 +516,7 @@
                                 <select id="turno-rol">
                                     <option value="cajero">Cajero</option>
                                     <option value="encargado">Encargado</option>
-                                    <option value="dueno">Dueño</option>
+                                    <option value="dueno">Administrador</option>
                                 </select>
                             </div>
                             <div class="input-group">
@@ -450,10 +551,12 @@
                             </div>
                         </div>
                     </div>
-                    <div style="margin-top:16px; text-align:right;">
-                        <button class="btn-danger" onclick="abrirModalCierre()">
-                            Cerrar Turno
+                    <div style="margin-top:16px; text-align:right; display:flex; gap:8px; justify-content:flex-end;">
+                        <button class="btn-secondary" onclick="verReporteTurnoActivo()" style="display:flex;align-items:center;gap:6px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                            Ver Reporte
                         </button>
+                        <button class="btn-danger" onclick="abrirModalCierre()">Cerrar Turno</button>
                     </div>
                 </div>
 
@@ -473,6 +576,7 @@
                                     <th>Efectivo</th>
                                     <th>Diferencia</th>
                                     <th>Estado</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody id="turno-historial-body"></tbody>
@@ -836,6 +940,20 @@
             </div>
             <div class="setting-item">
                 <div>
+                    <span>Requerir PIN para aplicar descuentos</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">El cajero debe ingresar un PIN antes de aplicar cualquier descuento</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="aj-requiere-pin-descuento">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div id="grupo-pin-descuento" class="input-group" style="display:none;margin-top:4px;">
+                <label>PIN de descuentos (4-6 dígitos)</label>
+                <input type="password" id="aj-pin-descuento" maxlength="6" placeholder="Ej: 1234">
+            </div>
+            <div class="setting-item">
+                <div>
                     <span>Venta sin Turno</span>
                     <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Permite registrar ventas sin necesidad de abrir un turno de caja. Útil para negocios pequeños.</p>
                 </div>
@@ -843,6 +961,24 @@
                     <input type="checkbox" id="adj-venta-sin-turno" checked>
                     <span class="slider"></span>
                 </label>
+            </div>
+            <div class="setting-item">
+                <div>
+                    <span>Pedir Contraseña al Iniciar</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Solicita tu contraseña de seguridad cada vez que abres la aplicación.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-pedir-password" onchange="guardarAjusteDirecto('pedir_password_inicio', this.checked ? 'true' : 'false')">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div style="padding: 4px 0 8px;">
+                <button class="btn-secondary small" onclick="mostrarCambiarPasswordApp()" style="font-size:0.85em;">Cambiar contraseña de inicio</button>
+                <div id="form-cambiar-password" style="display:none; margin-top:10px;">
+                    <input type="password" id="nueva-password-app" placeholder="Nueva contraseña (mín. 4 caracteres)" style="width:100%; margin-bottom:6px; padding:8px; border:1px solid #d1d5db; border-radius:6px;">
+                    <input type="password" id="confirm-password-app" placeholder="Confirmar contraseña" style="width:100%; margin-bottom:8px; padding:8px; border:1px solid #d1d5db; border-radius:6px;">
+                    <button class="btn-primary small" onclick="guardarNuevaPasswordApp()">Guardar contraseña</button>
+                </div>
             </div>
             <div class="input-group" style="margin-top:16px;">
                 <label>Impresora Predeterminada</label>
@@ -929,7 +1065,137 @@
             </div>
         </div>
 
+        <!-- Sistema de Puntos -->
+        <div class="ajustes-card" id="card-puntos" style="position:relative;">
+            <h3>Sistema de Puntos ⭐</h3>
+            <div class="setting-item">
+                <div>
+                    <span>Activar sistema de puntos</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Los clientes acumulan puntos por cada compra</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="aj-puntos-activos">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="input-group" style="margin-top:12px;">
+                <label>Puntos por cada $1 gastado</label>
+                <input type="number" id="aj-puntos-por-peso" min="0" step="0.01" value="0.1"
+                       placeholder="Ej: 0.1 = 1 punto por $10">
+                <p style="font-size:0.78em;color:#9ca3af;margin-top:4px;">Ejemplo: 0.1 significa 10 puntos por cada $100</p>
+            </div>
+            <div class="input-group" style="margin-top:12px;">
+                <label>Puntos extra por pedido completado</label>
+                <input type="number" id="aj-puntos-bono" min="0" step="1" value="0"
+                       placeholder="Ej: 5 = 5 puntos de regalo por compra">
+            </div>
+            <div class="input-group" style="margin-top:12px;">
+                <label>Valor de cada punto en pesos ($)</label>
+                <input type="number" id="aj-puntos-valor" min="0" step="0.01" value="0.10"
+                       placeholder="Ej: 0.10 = cada punto vale $0.10">
+                <p style="font-size:0.78em;color:#9ca3af;margin-top:4px;">
+                    Ejemplo: 100 puntos × $0.10 = $10.00 de descuento al canjear
+                </p>
+            </div>
+        </div>
+
+        <!-- CARD: Sucursal -->
+        <div class="ajustes-card" id="card-sucursal">
+            <h3>📍 Sucursal</h3>
+            <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">Asigna este dispositivo a una sucursal. Sus ventas se registrarán bajo esa sucursal. Requiere conexión activa.</p>
+            <div class="input-group">
+                <label>Sucursal de este dispositivo</label>
+                <select id="aj-sucursal-id">
+                    <option value="">— Sin sucursal asignada —</option>
+                </select>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+                <button class="btn-primary" onclick="guardarYRecargarSucursal()" style="flex:1;">Guardar y recargar</button>
+                <button class="btn-secondary small" onclick="abrirGestorSucursales()">⚙️ Administrar</button>
+            </div>
+        </div>
+
+        <!-- CARD: KDS Cocina -->
+        <div class="ajustes-card" id="card-kds">
+            <h3>Pantalla de Cocina (KDS)</h3>
+            <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">
+                Abre la URL en un navegador para ver las comandas en tiempo real. Desde otro dispositivo en la misma red Wi-Fi, escanea el código QR.
+            </p>
+            <div id="kds-urls" style="display:none;">
+                <!-- URL local -->
+                <div style="margin-bottom:14px;">
+                    <span style="font-size:0.78em;color:#9ca3af;display:block;margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Este equipo</span>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <code id="kds-url-local" style="font-size:0.88em;background:#f3f4f6;padding:6px 10px;border-radius:8px;flex:1;word-break:break-all;border:1px solid #e5e7eb;"></code>
+                        <button onclick="abrirKDSLocal()" style="display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0;background:#2563eb;color:#fff;border:none;padding:7px 12px;border-radius:8px;font-size:0.82em;font-weight:600;cursor:pointer;">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            Abrir
+                        </button>
+                        <button onclick="copiarUrl('kds-url-local')" style="display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0;background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;padding:7px 12px;border-radius:8px;font-size:0.82em;font-weight:600;cursor:pointer;">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                            Copiar
+                        </button>
+                    </div>
+                </div>
+                <!-- URL LAN + QR -->
+                <div>
+                    <span style="font-size:0.78em;color:#9ca3af;display:block;margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Otros dispositivos (misma red Wi-Fi)</span>
+                    <div style="display:flex;align-items:flex-start;gap:12px;">
+                        <div style="flex:1;">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                <code id="kds-url-lan" style="font-size:0.88em;background:#f3f4f6;padding:6px 10px;border-radius:8px;flex:1;word-break:break-all;border:1px solid #e5e7eb;"></code>
+                                <button onclick="copiarUrl('kds-url-lan')" style="display:flex;align-items:center;gap:5px;white-space:nowrap;flex-shrink:0;background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;padding:7px 12px;border-radius:8px;font-size:0.82em;font-weight:600;cursor:pointer;">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                    Copiar
+                                </button>
+                            </div>
+                            <p style="font-size:0.78em;color:#9ca3af;margin:0;">Escanea el QR con la cámara del teléfono →</p>
+                        </div>
+                        <div id="kds-qr-container" style="flex-shrink:0;width:104px;height:104px;background:#f3f4f6;border-radius:10px;border:1px solid #e5e7eb;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                            <img id="kds-qr-img" src="" alt="QR" style="width:100px;height:100px;display:none;" onerror="this.style.display='none';document.getElementById('kds-qr-fallback').style.display='flex'">
+                            <div id="kds-qr-fallback" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:8px;color:#9ca3af;font-size:0.7em;">Sin red para QR</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <p id="kds-no-disponible" style="font-size:0.85em;color:#9ca3af;">Iniciando servidor de cocina...</p>
+        </div>
+
         <!-- Administrar Puestos/Roles (solo visible para Administrador) -->
+        <!-- CARD: Mi Plan -->
+        <div class="ajustes-card" id="card-mi-plan">
+            <h3>Mi Plan</h3>
+            <div style="margin-bottom:14px;">
+                <p id="plan-estado-texto" style="margin:0 0 4px;font-size:1em;">Cargando...</p>
+                <p id="plan-dias-restantes" style="margin:0;font-size:0.82em;color:#6b7280;"></p>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+                <button id="btn-iniciar-trial" onclick="iniciarPruebaPremium()"
+                    style="display:none;background:#10b981;color:#fff;border:none;padding:10px 16px;border-radius:8px;font-size:0.9em;font-weight:600;cursor:pointer;">
+                    Iniciar prueba gratuita (30 días)
+                </button>
+                <button id="btn-upgrade-premium" onclick="abrirCheckoutStripe()"
+                    style="display:none;background:#2563eb;color:#fff;border:none;padding:10px 16px;border-radius:8px;font-size:0.9em;font-weight:600;cursor:pointer;">
+                    Actualizar a Premium — $499 MXN/mes
+                </button>
+                <button id="btn-portal-stripe" onclick="abrirPortalStripe()"
+                    style="display:none;background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;padding:10px 16px;border-radius:8px;font-size:0.9em;font-weight:600;cursor:pointer;">
+                    Gestionar suscripción
+                </button>
+                <button id="btn-refrescar-plan" onclick="refrescarPlanManual()"
+                    style="background:none;border:none;color:#9ca3af;font-size:0.8em;cursor:pointer;text-decoration:underline;padding:4px 0;text-align:left;">
+                    Ya pagué / Refrescar estado
+                </button>
+            </div>
+            <div id="plan-polling-msg" style="display:none;margin-top:10px;font-size:0.82em;color:#f59e0b;"></div>
+            <div style="margin-top:14px;padding-top:14px;border-top:1px solid #f3f4f6;">
+                <p style="margin:0;font-size:0.78em;color:#9ca3af;line-height:1.5;">
+                    Premium incluye: Inventario, KDS, Ofertas, Sucursales y Programa de Fidelidad.<br>
+                    Pago seguro con Stripe. Cancela cuando quieras.
+                </p>
+            </div>
+        </div>
+
         <!-- CARD: Tu Cuenta Zenit -->
         <div class="ajustes-card" id="card-cuenta-zenit">
             <h3>Tu Cuenta Zenit</h3>
@@ -986,6 +1252,16 @@
                 <div style="border:1px solid #fca5a5;border-radius:8px;padding:8px;background:#fff5f5;margin-top:4px;">
                     <button class="btn-secondary" style="width:100%;color:#dc2626;border-color:#fca5a5;" onclick="cerrarSesionZenit()">Cerrar sesión</button>
                 </div>
+                <div class="setting-item" style="margin-top:12px;border-top:1px solid #f3f4f6;padding-top:12px;">
+                    <div>
+                        <span style="font-size:0.9em;">Modo Solo Online</span>
+                        <p style="margin:2px 0 0;font-size:0.8em;color:#9ca3af;">No descarga datos localmente. Permite ver todas las sucursales con un clic. Requiere conexión constante.</p>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="aj-modo-solo-online">
+                        <span class="slider"></span>
+                    </label>
+                </div>
             </div>
 
         </div>
@@ -998,6 +1274,53 @@
             <div id="puestos-container">
                 <!-- Generado por JS -->
             </div>
+        </div>
+
+        <!-- CARD: Empleados -->
+        <div class="ajustes-card" id="card-empleados">
+            <h3>Empleados</h3>
+            <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;" id="empleados-desc-conectado">
+                Crea accesos para tu equipo. Cada empleado tendrá su usuario y contraseña para iniciar sesión en Zenit.
+            </p>
+            <p style="font-size:0.85em;color:#9ca3af;margin-bottom:12px;display:none;" id="empleados-desc-local">
+                Conecta tu cuenta Zenit para gestionar empleados.
+            </p>
+
+            <div id="lista-empleados-container" style="margin-bottom:16px;">
+                <div id="lista-empleados-body"></div>
+            </div>
+
+            <div id="form-nuevo-empleado" style="display:none;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:16px;">
+                <p style="font-weight:600;margin:0 0 12px;font-size:0.9em;">Nuevo empleado</p>
+                <div class="input-group" style="margin-bottom:10px;">
+                    <label>Nombre</label>
+                    <input type="text" id="nv-emp-nombre" placeholder="Ej: Juan García" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:100%;box-sizing:border-box;">
+                </div>
+                <div class="input-group" style="margin-bottom:10px;">
+                    <label>Usuario (para iniciar sesión)</label>
+                    <input type="text" id="nv-emp-usuario" placeholder="Ej: juan.garcia" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:100%;box-sizing:border-box;">
+                </div>
+                <div class="input-group" style="margin-bottom:10px;">
+                    <label>Contraseña</label>
+                    <input type="password" id="nv-emp-password" placeholder="Mínimo 6 caracteres" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:100%;box-sizing:border-box;">
+                </div>
+                <div class="input-group" style="margin-bottom:14px;">
+                    <label>Rol</label>
+                    <select id="nv-emp-rol" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:100%;">
+                        <option value="cashier">Cajero</option>
+                        <option value="waiter">Mesero</option>
+                        <option value="delivery">Repartidor</option>
+                    </select>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn-primary" style="flex:1;" onclick="guardarNuevoEmpleado()">Crear empleado</button>
+                    <button class="btn-secondary" onclick="cancelarFormEmpleado()">Cancelar</button>
+                </div>
+            </div>
+
+            <button class="btn-primary" id="btn-nuevo-empleado" onclick="mostrarFormNuevoEmpleado()" style="width:100%;">
+                + Agregar empleado
+            </button>
         </div>
     </div>
 </section>
@@ -1076,6 +1399,7 @@
                                 <th>Teléfono</th>
                                 <th>Dirección</th>
                                 <th>Total Compras</th>
+                                <th>Puntos</th>
                                 <th>Registro</th>
                                 <th>Acciones</th>
                             </tr>
@@ -1092,7 +1416,7 @@
             </div>
         </div>
 
-        <!-- Columna derecha: Top 3 del mes -->
+        <!-- Columna derecha -->
         <div style="width: 320px;">
             <div class="top-clientes-card">
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #f3f4f6;">
@@ -1113,6 +1437,37 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Programa de Fidelidad -->
+    <div class="ajustes-card" id="card-fidelidad" style="margin-top:24px;position:relative;">
+        <h3>Programa de Fidelidad ⭐</h3>
+        <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">
+            Solo los clientes inscritos acumulan y pueden canjear puntos. Los demás no participan.
+        </p>
+        <div class="input-group">
+            <label>Inscribir cliente al programa</label>
+            <input id="buscar-inscribir-fidelidad" type="text"
+                   placeholder="Buscar por nombre o teléfono..."
+                   oninput="buscarClienteParaFidelidad(this.value)"
+                   style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;width:100%;box-sizing:border-box;">
+            <div id="resultados-inscribir-fidelidad" style="margin-top:6px;"></div>
+        </div>
+        <div class="table-wrapper" style="margin-top:16px;">
+            <table class="zenit-table">
+                <thead>
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Teléfono</th>
+                        <th>Puntos</th>
+                        <th>Acción</th>
+                    </tr>
+                </thead>
+                <tbody id="lista-fidelidad-body">
+                    <tr><td colspan="4" style="color:#9ca3af;text-align:center;padding:16px;">Cargando...</td></tr>
+                </tbody>
+            </table>
         </div>
     </div>
 </section>
@@ -1360,6 +1715,22 @@
                     </svg>
                     <span id="display-nombre-pago">-</span>
                 </p>
+                <div id="panel-puntos-venta" style="display:none;background:linear-gradient(135deg,#f5f3ff,#ede9fe);border:1px solid #ddd6fe;border-radius:10px;padding:12px;margin-top:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                        <div style="font-size:0.9em;color:#6d28d9;font-weight:700;">
+                            ⭐ <span id="puntos-balance-venta">0</span> puntos
+                        </div>
+                        <div style="font-size:0.82em;color:#7c3aed;font-weight:600;background:#ede9fe;padding:2px 8px;border-radius:20px;">
+                            -$<span id="puntos-valor-display">0.00</span>
+                        </div>
+                    </div>
+                    <div id="puntos-a-ganar-venta" style="font-size:0.76em;color:#8b5cf6;margin-bottom:10px;"></div>
+                    <button id="btn-usar-puntos" onclick="toggleUsarPuntosVenta()"
+                            style="width:100%;padding:9px 14px;border-radius:8px;border:2px solid #7c3aed;background:white;color:#7c3aed;font-weight:600;font-size:0.84em;cursor:pointer;display:flex;align-items:center;justify-content:space-between;transition:all 0.2s;box-sizing:border-box;">
+                        <span>Aplicar descuento de puntos</span>
+                        <span style="font-size:1.15em;line-height:1;">○</span>
+                    </button>
+                </div>
                 <p style="margin: 5px 0;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-map-pin" style="display: inline-block; vertical-align: middle; margin-right: 5px;">
                         <path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/>
@@ -1463,6 +1834,10 @@
                         <p style="margin: 0; font-size: 0.8em; color: #6b7280;">Monto Total</p>
                         <p id="ver-cli-monto" style="margin: 5px 0 0 0; font-size: 1.3em; color: #10b981; font-weight: 700;">$0.00</p>
                     </div>
+                    <div>
+                        <p style="margin: 0; font-size: 0.8em; color: #6b7280;">Puntos</p>
+                        <p id="ver-cli-puntos" style="margin: 5px 0 0 0; font-size: 1.3em; color: #7c3aed; font-weight: 700;">0 pts</p>
+                    </div>
                 </div>
             </div>
             <div class="detail-item">
@@ -1503,6 +1878,11 @@
                 <div class="turno-cierre-fila"><span>Fondo inicial</span><strong id="cierre-fondo">$0.00</strong></div>
                 <div class="turno-cierre-fila"><span>Ventas en efectivo</span><strong id="cierre-efectivo-ventas">$0.00</strong></div>
                 <div class="turno-cierre-fila turno-cierre-esperado"><span>Efectivo esperado en caja</span><strong id="cierre-esperado">$0.00</strong></div>
+            </div>
+            <div id="cierre-digitales-section" style="display:none; margin-top:12px; padding:10px 12px; background:#f8fafc; border-radius:8px; border:1px solid #e5e7eb;">
+                <p style="font-size:0.8em; color:#6b7280; margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Pagos digitales (no cuentan en efectivo)</p>
+                <div class="turno-cierre-fila" id="cierre-tarjeta-row" style="display:none;font-size:0.9em;"><span>Tarjeta / Débito</span><span id="cierre-tarjeta">$0.00</span></div>
+                <div class="turno-cierre-fila" id="cierre-transferencia-row" style="display:none;font-size:0.9em;"><span>Transferencia</span><span id="cierre-transferencia">$0.00</span></div>
             </div>
             <div class="input-group" style="margin-top:16px;">
                 <label>Efectivo contado físicamente</label>
@@ -1632,69 +2012,39 @@
     </div>
 </div>
 
-<!-- Modal de Configuración de Conexión -->
-<div id="modal-configuracion-conexion" class="modal hidden">
-    <div class="modal-content" style="max-width: 600px;">
+<!-- Modal: Reporte de Turno -->
+<div id="modal-reporte-turno" class="modal hidden">
+    <div class="modal-content" style="max-width:500px;">
         <div class="modal-header">
-            <h3>⚙️ Configuración de Conexión</h3>
-            <button class="close-modal" onclick="window.cerrarModalConfiguracionConexion()">✕</button>
+            <h2 id="rpt-titulo">Reporte de Turno</h2>
+            <button class="modal-close" onclick="cerrarReporteTurno()">&times;</button>
         </div>
-        <div class="modal-body">
-            <!-- Modo Actual -->
-            <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin-bottom: 24px;">
-                <p style="margin: 0; color: #6b7280; font-size: 0.9em;">Modo Actual:</p>
-                <p id="modo-actual-display" style="margin: 8px 0 0 0; font-size: 1.2em; font-weight: 600; color: #2563eb;">
-                    🔌 MODO LOCAL
-                </p>
-            </div>
-
-            <!-- Selector de Modo -->
-            <div class="form-group">
-                <label>Modo de Operación:</label>
-                <select id="selector-modo-conexion" onchange="window.cambiarModoConexion(this.value)">
-                    <option value="local">🔌 Modo Local (Sin Internet)</option>
-                    <option value="conectado">🌐 Modo Conectado (Con Backend)</option>
-                </select>
-            </div>
-
-            <!-- Configuración de Backend (solo visible en modo conectado) -->
-            <div id="config-backend" style="display: none;">
-                <hr style="margin: 24px 0; border: none; border-top: 1px solid #e5e7eb;">
-                
-                <h4 style="margin-bottom: 16px; color: #374151;">🔐 Autenticación Backend</h4>
-                
-                <div class="form-group">
-                    <label>URL del Backend:</label>
-                    <input type="text" id="backend-url" placeholder="http://localhost:3000/api" value="http://localhost:3000/api">
-                    <small style="color: #6b7280;">Ejemplo: http://localhost:3000/api o https://tu-backend.com/api</small>
-                </div>
-
-                <div class="form-group">
-                    <label>Usuario:</label>
-                    <input type="text" id="backend-username" placeholder="admin">
-                </div>
-
-                <div class="form-group">
-                    <label>Contraseña:</label>
-                    <input type="password" id="backend-password" placeholder="••••••••">
-                </div>
-
-                <button class="btn-primary" onclick="window.testearConexionBackend()" style="width: 100%; margin-top: 16px;">
-                    🔍 Probar Conexión e Iniciar Sesión
-                </button>
-
-                <div id="resultado-conexion" style="margin-top: 16px; display: none; padding: 12px; border-radius: 6px;">
-                </div>
-
-                <!-- Info de conexión actual -->
-                <div id="info-conexion-actual" style="display: none; margin-top: 16px; background: #ecfdf5; padding: 12px; border-radius: 6px; border-left: 4px solid #10b981;">
-                    <p style="margin: 0; color: #065f46; font-weight: 600;">✅ Conectado correctamente</p>
-                    <p id="usuario-conectado" style="margin: 8px 0 0 0; color: #047857; font-size: 0.9em;"></p>
-                </div>
-            </div>
-        </div>
+        <div class="modal-body" id="rpt-cuerpo" style="padding:16px 20px;"></div>
         <div class="modal-footer">
-            <button class="btn-secondary" onclick="window.cerrarModalConfiguracionConexion()">Cerrar</button>
+            <button class="btn-secondary" onclick="cerrarReporteTurno()">Cerrar</button>
+            <button class="btn-primary" onclick="imprimirReporteTurno()" style="display:flex;align-items:center;gap:6px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                Imprimir
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Autenticación al cambiar rol en turno -->
+<div id="modal-auth-turno" class="modal hidden">
+    <div class="modal-content" style="max-width:360px;">
+        <h2 id="auth-turno-titulo" style="margin-bottom:8px;"></h2>
+        <p id="auth-turno-label" style="color:#6b7280;margin-bottom:16px;font-size:0.9em;"></p>
+        <input type="password" id="auth-turno-input"
+               placeholder="PIN / Contraseña"
+               style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:8px;font-size:1em;margin-bottom:8px;box-sizing:border-box;"
+               onkeydown="if(event.key==='Enter') confirmarAuthTurno()">
+        <p id="auth-turno-error" style="display:none;color:#ef4444;font-size:0.85em;margin-bottom:8px;">
+            Incorrecto. Intenta de nuevo.
+        </p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+            <button class="btn-secondary" onclick="cancelarAuthTurno()">Cancelar</button>
+            <button class="btn-primary" onclick="confirmarAuthTurno()">Confirmar</button>
         </div>
     </div>
 </div>
@@ -1903,46 +2253,35 @@
             <button class="btn-close" onclick="cerrarModalDescuento()">×</button>
         </div>
         <div class="modal-body" style="display:flex; flex-direction:column; gap:16px;">
-
-            <!-- Descuentos predefinidos -->
-            <div>
-                <label style="font-weight:600; font-size:0.9em; color:#374151;">Descuentos rápidos</label>
-                <div id="descuentos-rapidos" style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;">
-                    <span style="color:#9ca3af; font-size:0.85em;">Cargando...</span>
-                </div>
-            </div>
-
-            <div style="border-top:1px solid #f3f4f6; padding-top:14px;">
-                <label style="font-weight:600; font-size:0.9em; color:#374151;">O ingresa un valor personalizado</label>
-                <div style="display:flex; gap:10px; margin-top:10px;">
-                    <div style="flex:1;">
-                        <label style="font-size:0.8em; color:#6b7280;">Porcentaje</label>
-                        <div style="display:flex; align-items:center; gap:5px;">
-                            <input type="number" id="desc-pct-custom" placeholder="Ej: 10" min="0" max="100" step="1"
-                                oninput="document.getElementById('desc-monto-custom').value=''; actualizarPreviewDescuento()">
-                            <span style="color:#6b7280; font-weight:700;">%</span>
-                        </div>
-                    </div>
-                    <div style="flex:1;">
-                        <label style="font-size:0.8em; color:#6b7280;">Monto fijo</label>
-                        <div style="display:flex; align-items:center; gap:5px;">
-                            <span style="color:#6b7280; font-weight:700;">$</span>
-                            <input type="number" id="desc-monto-custom" placeholder="Ej: 50" min="0" step="0.01"
-                                oninput="document.getElementById('desc-pct-custom').value=''; actualizarPreviewDescuento()">
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Preview del total -->
-            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px; display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:0.9em; color:#166534;">Total con descuento:</span>
-                <span id="desc-preview-total" style="font-size:1.4em; font-weight:700; color:#15803d;">$0.00</span>
+            <p style="font-size:0.85em;color:#6b7280;margin:0;">
+                Selecciona un descuento de los creados en <strong>Ofertas → Descuentos</strong>.
+            </p>
+            <div id="descuentos-rapidos" style="display:flex; flex-wrap:wrap; gap:8px;">
+                <span style="color:#9ca3af; font-size:0.85em;">Cargando...</span>
             </div>
         </div>
         <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end; margin-top:15px;">
             <button class="btn-secondary" onclick="quitarDescuento()">Quitar descuento</button>
-            <button class="btn-primary" onclick="aplicarDescuentoModal()">Aplicar</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: PIN para autorizar descuento -->
+<div id="modal-pin-descuento" class="modal hidden">
+    <div class="modal-content" style="max-width:300px;">
+        <div class="modal-header">
+            <h3>Autorización requerida</h3>
+        </div>
+        <div class="modal-body" style="text-align:center;">
+            <p style="color:#6b7280;margin-bottom:16px;">Ingresa el PIN para aplicar el descuento</p>
+            <input type="password" id="input-pin-descuento" maxlength="6"
+                   placeholder="••••"
+                   style="text-align:center;font-size:1.4em;letter-spacing:0.3em;width:120px;padding:8px;border:1px solid #d1d5db;border-radius:6px;"
+                   onkeydown="if(event.key==='Enter') confirmarPinDescuento()">
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="cancelarPinDescuento()">Cancelar</button>
+            <button class="btn-primary" onclick="confirmarPinDescuento()">Confirmar</button>
         </div>
     </div>
 </div>
@@ -2016,6 +2355,211 @@
     </div>
 </div>
 
+<!-- ===== MODALES SISTEMA DE MESAS ===== -->
+
+<!-- Modal: Abrir mesa libre -->
+<div id="modal-abrir-mesa" class="modal hidden">
+    <div class="modal-content" style="max-width:380px;">
+        <div class="modal-header">
+            <h2 id="modal-abrir-mesa-titulo">Abrir Mesa</h2>
+            <button class="modal-close" onclick="cerrarModalAbrirMesa()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Número de comensales</label>
+                <input type="number" id="mesa-comensales" min="1" max="50" value="1"
+                    style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:1em;box-sizing:border-box;">
+            </div>
+            <div class="form-group" style="margin-top:10px;">
+                <label>Notas (opcional)</label>
+                <textarea id="mesa-notas-apertura" rows="2" placeholder="Ej: cumpleaños, alergia..."
+                    style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;resize:none;font-size:0.9em;box-sizing:border-box;"></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="cerrarModalAbrirMesa()">Cancelar</button>
+            <button class="btn-primary" onclick="confirmarAbrirMesa()">Abrir Mesa</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Agregar productos a mesa -->
+<div id="modal-agregar-productos-mesa" class="modal hidden">
+    <div class="modal-content" style="max-width:520px;max-height:85vh;display:flex;flex-direction:column;">
+        <div class="modal-header">
+            <h2>Agregar productos</h2>
+            <button class="modal-close" onclick="cerrarModalAgregarProductosMesa()">&times;</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto;padding-bottom:0;">
+            <input type="text" id="mesa-prod-busqueda" placeholder="Buscar producto..."
+                oninput="filtrarProductosMesa(this.value)"
+                style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:0.95em;box-sizing:border-box;margin-bottom:10px;">
+            <div id="mesa-prod-categorias" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
+            <div id="mesa-prod-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;"></div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid #e5e7eb;background:#f9fafb;">
+            <div id="mesa-carrito-resumen" style="font-size:0.9em;color:#374151;margin-bottom:8px;min-height:20px;"></div>
+            <div style="display:flex;gap:8px;">
+                <button class="btn-secondary" style="flex:1;" onclick="cerrarModalAgregarProductosMesa()">Cancelar</button>
+                <button class="btn-primary" style="flex:1;" onclick="confirmarAgregarProductosMesa()">Agregar a la mesa</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Cobrar y cerrar mesa -->
+<div id="modal-cobrar-mesa" class="modal hidden">
+    <div class="modal-content" style="max-width:360px;">
+        <div class="modal-header">
+            <h2>Cobrar mesa</h2>
+            <button class="modal-close" onclick="cerrarModalCobrarMesa()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="text-align:center;margin-bottom:16px;">
+                <div style="font-size:0.9em;color:#6b7280;margin-bottom:4px;">Total a cobrar</div>
+                <div id="cobrar-mesa-total" style="font-size:2em;font-weight:700;color:#111827;">$0.00</div>
+                <div id="cobrar-mesa-puntos-info" style="display:none;font-size:0.82em;color:#7c3aed;margin-top:6px;font-weight:600;"></div>
+            </div>
+            <div class="form-group">
+                <label>Método de pago</label>
+                <select id="cobrar-mesa-metodo" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:1em;box-sizing:border-box;">
+                    <option value="efectivo">Efectivo</option>
+                    <option value="tarjeta">Tarjeta</option>
+                    <option value="transferencia">Transferencia</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="cerrarModalCobrarMesa()">Cancelar</button>
+            <button class="btn-primary" onclick="confirmarCobrarMesa()">Cobrar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Transferir mesa -->
+<div id="modal-transferir-mesa" class="modal hidden">
+    <div class="modal-content" style="max-width:360px;">
+        <div class="modal-header">
+            <h2>Transferir a otra mesa</h2>
+            <button class="modal-close" onclick="cerrarModalTransferirMesa()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="font-size:0.9em;color:#6b7280;margin-top:0;">Selecciona la mesa libre a la que quieres mover este pedido:</p>
+            <div id="transferir-mesas-lista" style="display:flex;flex-direction:column;gap:6px;max-height:250px;overflow-y:auto;"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="cerrarModalTransferirMesa()">Cancelar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Configurar mesas -->
+<div id="modal-configurar-mesas" class="modal hidden">
+    <div class="modal-content" style="max-width:500px;max-height:85vh;display:flex;flex-direction:column;">
+        <div class="modal-header">
+            <h2>Configurar Mesas</h2>
+            <button class="modal-close" onclick="cerrarModalConfigurarMesas()">&times;</button>
+        </div>
+        <div class="modal-body" style="flex:1;overflow-y:auto;">
+            <!-- Formulario nueva mesa -->
+            <div style="background:#f9fafb;border-radius:8px;padding:14px;margin-bottom:16px;">
+                <h3 style="margin:0 0 10px;font-size:0.95em;">Agregar nueva mesa</h3>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <input type="text" id="config-mesa-nombre" placeholder="Nombre (ej: Mesa 1, Barra 2)"
+                        style="flex:2;min-width:120px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                    <input type="text" id="config-mesa-zona" placeholder="Zona (ej: Interior)"
+                        style="flex:1;min-width:90px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                    <input type="number" id="config-mesa-capacidad" placeholder="Cap." min="1" max="50" value="4"
+                        style="width:60px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;text-align:center;">
+                    <button class="btn-primary" onclick="crearMesaConfig()" style="padding:7px 14px;font-size:0.9em;">+ Agregar</button>
+                </div>
+            </div>
+            <!-- Lista de mesas existentes -->
+            <div id="config-mesas-lista"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="cerrarModalConfigurarMesas()">Listo</button>
+        </div>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+
+<!-- Modal: Gestor de Sucursales -->
+<div id="modal-gestor-sucursales" class="modal hidden">
+    <div class="modal-content" style="max-width:700px;">
+        <div class="modal-header">
+            <h3>Administrar Sucursales</h3>
+            <button onclick="this.closest('.modal').classList.add('hidden')">✕</button>
+        </div>
+        <div class="modal-body">
+            <table style="width:100%;border-collapse:collapse;font-size:0.9em;">
+                <thead>
+                    <tr style="border-bottom:2px solid #e5e7eb;">
+                        <th style="text-align:left;padding:6px 8px;">Nombre</th>
+                        <th style="text-align:left;padding:6px 8px;">Dirección</th>
+                        <th style="text-align:left;padding:6px 8px;">Estado</th>
+                        <th style="padding:6px 8px;"></th>
+                    </tr>
+                </thead>
+                <tbody id="lista-sucursales-body"></tbody>
+            </table>
+            <button class="btn-primary" onclick="mostrarFormNuevaSucursal()" style="margin-top:16px;">+ Nueva sucursal</button>
+
+            <!-- Formulario editar sucursal -->
+            <div id="form-editar-sucursal" style="display:none;margin-top:16px;border-top:1px solid #e5e7eb;padding-top:16px;">
+                <p style="font-weight:600;font-size:0.9em;margin-bottom:10px;">Editar sucursal</p>
+                <input type="hidden" id="es-id">
+                <div class="input-group"><label>Nombre</label><input id="es-nombre" type="text" placeholder="Nombre de la sucursal"></div>
+                <div class="input-group"><label>Dirección</label><input id="es-direccion" type="text" placeholder="Opcional"></div>
+                <div style="display:flex;gap:8px;margin-top:12px;">
+                    <button class="btn-secondary" onclick="cerrarFormEditarSucursal()">Cancelar</button>
+                    <button class="btn-primary" onclick="guardarEditarSucursal()">Guardar</button>
+                </div>
+            </div>
+
+            <!-- Formulario nueva sucursal -->
+            <div id="form-nueva-sucursal" style="display:none;margin-top:16px;border-top:1px solid #e5e7eb;padding-top:16px;">
+                <div class="input-group"><label>Nombre</label><input id="ns-nombre" type="text" placeholder="Ej: Sucursal Norte"></div>
+                <div class="input-group"><label>Dirección</label><input id="ns-direccion" type="text" placeholder="Calle y número"></div>
+                <div class="input-group"><label>Teléfono</label><input id="ns-telefono" type="text" placeholder="Opcional"></div>
+                <div style="margin-top:12px;">
+                    <p style="font-size:0.85em;font-weight:600;margin-bottom:8px;">¿Qué datos copiar a esta sucursal?</p>
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;" onclick="this.querySelector('input').click()">
+                        <input type="checkbox" value="offers" checked style="width:15px;height:15px;flex-shrink:0;margin:0;cursor:pointer;">
+                        <span style="font-size:0.85em;">Ofertas (descuentos y combos)</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;" onclick="this.querySelector('input').click()">
+                        <input type="checkbox" value="ingredients" style="width:15px;height:15px;flex-shrink:0;margin:0;cursor:pointer;">
+                        <span style="font-size:0.85em;">Ingredientes (sin stock)</span>
+                    </div>
+                    <p style="font-size:0.78em;color:#9ca3af;margin-top:4px;">Productos, categorías y clientes se comparten automáticamente entre todas las sucursales.</p>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:12px;">
+                    <button class="btn-secondary" onclick="ocultarFormNuevaSucursal()">Cancelar</button>
+                    <button class="btn-primary" onclick="guardarNuevaSucursal()">Crear sucursal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.branch-tab {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #374151;
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.branch-tab.active, .branch-tab:hover {
+    background: #7c3aed;
+    color: white;
+    border-color: #7c3aed;
+}
+</style>
 </body>
 </html>

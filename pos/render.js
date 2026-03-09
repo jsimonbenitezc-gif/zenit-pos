@@ -6362,8 +6362,8 @@ async function cargarPermisosAjustes() {
     ];
 
     const roles = [
-        { key: 'cajero',    label: 'Cajero',    icon: '🧑‍💼' },
-        { key: 'encargado', label: 'Encargado', icon: '👔'   }
+        { key: 'cajero',    label: 'Cajero',    icon: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>' },
+        { key: 'encargado', label: 'Encargado', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" x2="12" y1="12" y2="16"/><line x1="10" x2="14" y1="14" y2="14"/></svg>' }
     ];
 
     const container = document.getElementById('puestos-container');
@@ -6386,7 +6386,7 @@ async function cargarPermisosAjustes() {
         <div class="puesto-row" id="puesto-row-${r.key}">
             <div class="puesto-header">
                 <div style="display:flex;align-items:center;gap:10px;">
-                    <span style="font-size:22px;">${r.icon}</span>
+                    <span style="display:flex;align-items:center;color:#374151;">${r.icon}</span>
                     <div>
                         <strong>${r.label}</strong>
                         <div id="puesto-estado-${r.key}" style="font-size:12px;color:var(--text-muted);">${activo ? 'Activo' : 'Desactivado'}</div>
@@ -6404,8 +6404,10 @@ async function cargarPermisosAjustes() {
                 ${funcs}
                 <div class="puesto-pin-section">
                     <strong style="font-size:13px;">PIN de acceso</strong>
-                    <p style="font-size:12px;color:var(--text-muted);margin:3px 0 10px;">
-                        ${tienePin ? '✅ PIN configurado.' : 'Sin PIN — cualquiera puede seleccionar este perfil.'}
+                    <p style="font-size:12px;color:var(--text-muted);margin:3px 0 10px;display:flex;align-items:center;gap:5px;">
+                        ${tienePin
+                            ? '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span style="color:#16a34a;">PIN configurado.</span>'
+                            : 'Sin PIN — cualquiera puede seleccionar este perfil.'}
                     </p>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <input type="password" id="puesto-pin-${r.key}" placeholder="${tienePin ? 'Nuevo PIN para reemplazar' : '4-8 dígitos'}"
@@ -6417,8 +6419,9 @@ async function cargarPermisosAjustes() {
                     </div>
                     ${tienePin ? `
                     <button class="btn-secondary" onclick="quitarPinPerfil('${r.key}')"
-                            style="margin-top:8px;width:100%;color:#ef4444;border-color:#fecaca;">
-                        🗑 Quitar PIN de ${r.label}
+                            style="margin-top:8px;width:100%;color:#ef4444;border-color:#fecaca;display:flex;align-items:center;justify-content:center;gap:6px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                        Quitar PIN de ${r.label}
                     </button>` : ''}
                 </div>
             </div>
@@ -6430,7 +6433,7 @@ async function cargarPermisosAjustes() {
         <div class="puesto-row puesto-row-admin">
             <div class="puesto-header">
                 <div style="display:flex;align-items:center;gap:10px;">
-                    <span style="font-size:22px;">🔑</span>
+                    <span style="display:flex;align-items:center;color:#374151;"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/><polyline points="16 11 17.5 12.5 21 9"/></svg></span>
                     <div>
                         <strong>Administrador</strong>
                         <div style="font-size:12px;color:var(--text-muted);">Siempre activo — acceso completo</div>
