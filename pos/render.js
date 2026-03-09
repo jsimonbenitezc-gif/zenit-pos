@@ -1,19 +1,41 @@
 // ============================================
 // RENDER.JS - VERSIÓN INTEGRAL (VENTA DESAGRUPADA)
 // ============================================
+
+// --- SEGURIDAD: Escapar HTML para prevenir XSS ---
+function esc(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// --- SEGURIDAD: Validar rutas de imagen para prevenir path traversal ---
+function urlImagenSegura(ruta) {
+    if (!ruta) return null;
+    const normalizada = ruta.replace(/\\/g, '/');
+    // Solo permitir rutas dentro de la carpeta 'imagenes' del app y sin saltos de directorio (..)
+    if (!normalizada.includes('/imagenes/') || normalizada.includes('..')) return null;
+    return 'file://' + ruta;
+}
+
 let clasificaciones = [];
 let productosGlobales = []; 
 let carrito = [];
 let itemNotaEditandoIndex = null; 
 let filtroActual = {}; // Filtros para pedidos
+let paginaPedidos = 1; // Página actual del historial de ventas
 let turnoActivo = null;
 let rolActivo = 'dueno'; // 'cajero' | 'encargado' | 'dueno'
 let ventaSinTurno = true; // si true, permite vender sin haber abierto turno (default: activo)
 
 const PERMISOS_DEFAULT = {
-    cajero:    { enabled: false, ver_dashboard: false, ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_productos: false, ver_clientes: true,  ver_ofertas: false, ver_inventario: false, ver_ajustes: false },
-    encargado: { enabled: false, ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_ajustes: false },
-    dueno:     { enabled: true,  ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_ajustes: true  }
+    cajero:    { enabled: false, ver_dashboard: false, ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_mesas: true,  ver_productos: false, ver_clientes: true,  ver_ofertas: false, ver_inventario: false, ver_ajustes: false },
+    encargado: { enabled: false, ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_mesas: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_ajustes: false },
+    dueno:     { enabled: true,  ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_mesas: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_ajustes: true  }
 };
 
 let nombreActivo = '';
@@ -25,6 +47,12 @@ let nombreActivo = '';
 let modoConectado = false;
 let apiClient = null;
 let tokenActual = null;
+let sucursalIdActual = null;
+let modoSoloOnline = false;
+let sucursalVistaActual = null;
+
+// Plan de suscripción (se carga al arrancar y después del login)
+let planActual = { plan: 'free', isPremium: false, daysLeft: 0, expiresAt: null };
 
 // Inicializar API Client
 if (typeof APIClient !== 'undefined') {
@@ -41,14 +69,34 @@ async function cargarConfiguracionModo() {
             apiClient.setBaseURL(ajustes.api_url);
         }
         
-        if (modoConectado && ajustes.api_token) {
-            apiClient.setToken(ajustes.api_token);
-            tokenActual = ajustes.api_token;
+        if (modoConectado) {
+            // Obtener token usando almacenamiento cifrado
+            const token = await window.api.obtenerTokenSeguro();
+            if (token) {
+                apiClient.setToken(token);
+                tokenActual = token;
+            } else {
+                // Modo conectado activo pero sin sesión → limpiar datos cloud y volver a local
+                modoConectado = false;
+                await window.api.guardarAjuste('modo_conectado', 'false');
+                await window.api.limpiarDatosLocales();
+            }
         }
         
+        sucursalIdActual = parseInt(ajustes.sucursal_id) || null;
+        modoSoloOnline = ajustes.modo_solo_online === 'true';
+
+        // Cargar plan desde ajustes guardados (funciona offline)
+        cargarPlanDesdeAjustes(ajustes);
+
+        // Si está conectado, refrescar plan desde el backend
+        if (modoConectado && tokenActual) {
+            cargarPlanInfo().catch(() => {});
+        }
+
         // Actualizar indicador visual
         actualizarIndicadorModo();
-        
+
         console.log(`🔧 Modo: ${modoConectado ? 'CONECTADO' : 'LOCAL'}`);
     } catch (error) {
         console.error('Error al cargar configuración:', error);
@@ -70,6 +118,450 @@ function actualizarIndicadorModo() {
         iconoModo.innerHTML = '<path d="M2 20h20"/><path d="m9 10 2 2 4-4"/><rect x="3" y="4" width="18" height="12" rx="2"/>';
         textoModo.innerText = 'Modo Local';
     }
+}
+
+/* ============================================
+   SISTEMA DE PLAN / SUSCRIPCIÓN
+   ============================================ */
+
+// Carga plan desde ajustes locales (offline-safe)
+function cargarPlanDesdeAjustes(ajustes) {
+    const plan = ajustes.plan || 'free';
+    const expiresAt = ajustes.plan_expires_at ? new Date(ajustes.plan_expires_at) : null;
+    // 7 días de gracia después de expirar
+    const gracePeriodMs = 7 * 24 * 60 * 60 * 1000;
+    const now = new Date();
+    const isPremium = (plan === 'premium' || plan === 'trial') && expiresAt && (expiresAt.getTime() + gracePeriodMs) > now.getTime();
+    const daysLeft = expiresAt ? Math.max(0, Math.ceil((expiresAt - now) / 86400000)) : 0;
+    planActual = { plan, isPremium, daysLeft, expiresAt };
+    actualizarUIsegunPlan();
+}
+
+// Consulta el plan actual al backend y actualiza el estado
+async function cargarPlanInfo() {
+    if (!modoConectado || !apiClient || !tokenActual) return;
+    try {
+        const info = await apiClient.request('/billing/sync');
+        console.log('📋 billing/sync response:', JSON.stringify(info));
+        planActual = {
+            plan: info.plan,
+            isPremium: info.is_premium,
+            daysLeft: info.days_left,
+            expiresAt: info.plan_expires_at ? new Date(info.plan_expires_at) : null
+        };
+        // Guardar en ajustes para uso offline
+        await window.api.guardarAjuste('plan', info.plan);
+        await window.api.guardarAjuste('plan_expires_at', info.plan_expires_at || '');
+        actualizarUIsegunPlan();
+        actualizarCardMiPlan();
+        // Si el plan se activó, limpiar overlays de bloqueo en vistas que estén abiertas
+        if (planActual.isPremium) {
+            document.querySelectorAll('.premium-lock-overlay').forEach(o => o.remove());
+        }
+    } catch (e) {
+        console.error('❌ billing/sync error:', e.message, e);
+    }
+}
+
+// Actualiza el sidebar y vistas según el plan
+function actualizarUIsegunPlan() {
+    // Badges PRO en el sidebar
+    const vistasPremium = ['ofertas', 'inventario'];
+    vistasPremium.forEach(vista => {
+        const btn = document.querySelector(`.menu-item[data-view="${vista}"]`);
+        if (!btn) return;
+        const badge = btn.querySelector('.badge-premium');
+        if (!planActual.isPremium) {
+            if (!badge) {
+                const b = document.createElement('span');
+                b.className = 'badge-premium';
+                b.textContent = 'PRO';
+                b.style.cssText = 'margin-left:auto;font-size:0.65em;background:#f59e0b;color:#fff;padding:2px 5px;border-radius:4px;font-weight:700;';
+                btn.style.position = 'relative';
+                btn.appendChild(b);
+            }
+        } else {
+            if (badge) badge.remove();
+        }
+    });
+
+    // Bloquear o desbloquear cards premium en Ajustes y Clientes
+    const cardsPremium = ['card-sucursal', 'card-kds', 'card-fidelidad', 'card-puntos'];
+    cardsPremium.forEach(cardId => {
+        const el = document.getElementById(cardId);
+        if (!el) return;
+        if (!planActual.isPremium) {
+            mostrarBloqueCard(cardId);
+        } else {
+            el.querySelector('.premium-lock-overlay')?.remove();
+        }
+    });
+}
+
+// Actualiza la card "Mi Plan" en Ajustes
+function actualizarCardMiPlan() {
+    const el = document.getElementById('plan-estado-texto');
+    const elDias = document.getElementById('plan-dias-restantes');
+    const btnTrial = document.getElementById('btn-iniciar-trial');
+    const btnUpgrade = document.getElementById('btn-upgrade-premium');
+    const btnPortal = document.getElementById('btn-portal-stripe');
+    if (!el) return;
+
+    if (!modoConectado) {
+        el.textContent = 'Conecta tu cuenta para ver el estado de tu plan.';
+        if (btnTrial) btnTrial.style.display = 'none';
+        if (btnUpgrade) btnUpgrade.style.display = 'none';
+        if (btnPortal) btnPortal.style.display = 'none';
+        return;
+    }
+
+    const { plan, isPremium, daysLeft } = planActual;
+
+    if (plan === 'premium' && isPremium) {
+        el.innerHTML = '<span style="color:#10b981;font-weight:700;">Premium activo</span>';
+        if (elDias) elDias.textContent = `Válido por ${daysLeft} días más`;
+        if (btnTrial) btnTrial.style.display = 'none';
+        if (btnUpgrade) btnUpgrade.style.display = 'none';
+        if (btnPortal) btnPortal.style.display = '';
+    } else if (plan === 'trial' && isPremium) {
+        el.innerHTML = `<span style="color:#f59e0b;font-weight:700;">Prueba gratuita</span>`;
+        if (elDias) elDias.textContent = `${daysLeft} días restantes`;
+        if (btnTrial) btnTrial.style.display = 'none';
+        if (btnUpgrade) btnUpgrade.style.display = '';
+        if (btnPortal) btnPortal.style.display = 'none';
+    } else {
+        el.innerHTML = '<span style="color:#6b7280;font-weight:600;">Plan Gratuito</span>';
+        if (elDias) elDias.textContent = 'Inventario, KDS, Ofertas y más requieren Premium.';
+        const trialUsado = plan !== 'free' || planActual.expiresAt;
+        if (btnTrial) btnTrial.style.display = trialUsado ? 'none' : '';
+        if (btnUpgrade) btnUpgrade.style.display = '';
+        if (btnPortal) btnPortal.style.display = 'none';
+    }
+}
+
+async function iniciarPruebaPremium() {
+    if (!modoConectado || !apiClient) {
+        alert('Conéctate a tu cuenta Zenit primero.');
+        return;
+    }
+    const btn = document.getElementById('btn-iniciar-trial');
+    if (btn) { btn.disabled = true; btn.textContent = 'Activando...'; }
+    try {
+        await apiClient.request('/billing/start-trial', { method: 'POST' });
+        await cargarPlanInfo();
+        mostrarNotificacionExito('Prueba de 30 días activada', '¡Disfruta Premium!');
+    } catch (e) {
+        alert(e.message || 'No se pudo activar la prueba. Intenta de nuevo.');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Iniciar prueba gratuita (30 días)'; }
+    }
+}
+
+let _planPollingInterval = null;
+
+async function abrirCheckoutStripe() {
+    if (!modoConectado || !apiClient) {
+        alert('Conéctate a tu cuenta Zenit primero.');
+        return;
+    }
+    const btn = document.getElementById('btn-upgrade-premium');
+    if (btn) { btn.disabled = true; btn.textContent = 'Preparando pago...'; }
+    try {
+        const data = await apiClient.request('/billing/create-checkout', { method: 'POST' });
+        if (data.url) {
+            await window.api.abrirEnNavegador(data.url);
+            // Iniciar polling: verificar plan cada 6 seg por 3 minutos
+            iniciarPollingPlan();
+        }
+    } catch (e) {
+        alert(e.message || 'No se pudo iniciar el proceso de pago. Intenta de nuevo.');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Actualizar a Premium — $499 MXN/mes'; }
+    }
+}
+
+function iniciarPollingPlan() {
+    if (_planPollingInterval) clearInterval(_planPollingInterval);
+    const msg = document.getElementById('plan-polling-msg');
+    if (msg) { msg.style.display = ''; msg.textContent = 'Esperando confirmación de pago...'; }
+    let intentos = 0;
+    const planAntes = planActual.plan;
+    _planPollingInterval = setInterval(async () => {
+        intentos++;
+        try {
+            const info = await apiClient.request('/billing/sync');
+            if (info.plan === 'premium' && info.is_premium) {
+                clearInterval(_planPollingInterval);
+                _planPollingInterval = null;
+                if (msg) msg.style.display = 'none';
+                planActual = { plan: info.plan, isPremium: true, daysLeft: info.days_left, expiresAt: info.plan_expires_at ? new Date(info.plan_expires_at) : null };
+                await window.api.guardarAjuste('plan', info.plan);
+                await window.api.guardarAjuste('plan_expires_at', info.plan_expires_at || '');
+                actualizarUIsegunPlan();
+                actualizarCardMiPlan();
+                document.querySelectorAll('.premium-lock-overlay').forEach(o => o.remove());
+                mostrarNotificacionExito('¡Plan Premium activado!', 'Todas las funciones están disponibles');
+                return;
+            }
+        } catch (e) { console.error('❌ Polling plan error:', e.message, e); }
+        if (intentos >= 30) { // 3 minutos (30 × 6 seg)
+            clearInterval(_planPollingInterval);
+            _planPollingInterval = null;
+            if (msg) { msg.textContent = 'No se detectó el pago. Usa "Ya pagué / Refrescar" si completaste el pago.'; }
+        }
+    }, 6000);
+}
+
+async function refrescarPlanManual() {
+    if (_planPollingInterval) { clearInterval(_planPollingInterval); _planPollingInterval = null; }
+    const msg = document.getElementById('plan-polling-msg');
+    if (msg) msg.style.display = 'none';
+    const btn = document.getElementById('btn-refrescar-plan');
+    if (btn) { btn.textContent = 'Verificando...'; btn.style.pointerEvents = 'none'; }
+    await cargarPlanInfo();
+    if (btn) { btn.textContent = 'Ya pagué / Refrescar estado'; btn.style.pointerEvents = ''; }
+    if (!planActual.isPremium) {
+        mostrarNotificacionExito('Plan verificado', 'No se detectó un plan Premium activo aún.');
+    }
+}
+
+async function abrirPortalStripe() {
+    if (!modoConectado || !apiClient) return;
+    const btn = document.getElementById('btn-portal-stripe');
+    if (btn) { btn.disabled = true; btn.textContent = 'Abriendo...'; }
+    try {
+        const data = await apiClient.request('/billing/portal', { method: 'POST' });
+        if (data.url) await window.api.abrirEnNavegador(data.url);
+    } catch (e) {
+        alert(e.message || 'No se pudo abrir el portal de facturación.');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Gestionar suscripción'; }
+    }
+}
+
+// Verifica si el usuario puede acceder a una vista premium
+function puedeAccederPremium() {
+    return planActual.isPremium;
+}
+
+const _LOCK_SVG_LG = `<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+const _LOCK_SVG_MD = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+
+function _irAPlanes() {
+    mostrarVista('ajustes');
+    setTimeout(() => document.getElementById('card-mi-plan')?.scrollIntoView({ behavior: 'smooth' }), 300);
+}
+
+// Overlay de bloqueo sobre una vista completa
+function mostrarBloquePremium(containerId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    if (el.querySelector('.premium-lock-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'premium-lock-overlay';
+    overlay.style.cssText = 'position:absolute;inset:0;background:linear-gradient(180deg, rgba(255,255,255,0.45) 0%, rgba(255,255,255,0.72) 100%);backdrop-filter:blur(2px) saturate(0.95);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;text-align:center;padding:40px;border-radius:12px;';
+    overlay.innerHTML = `
+        <div style="background:rgba(255,255,255,0.92);border:1px solid rgba(209,213,219,0.9);border-radius:12px;padding:18px 20px;box-shadow:0 10px 24px rgba(0,0,0,0.08);max-width:360px;">
+            <div style="margin-bottom:12px;">${_LOCK_SVG_LG}</div>
+            <h3 style="margin:0 0 8px;color:#374151;">Función Premium</h3>
+            <p style="margin:0 0 18px;font-size:0.95em;color:#6b7280;">Esta sección requiere un plan Premium activo.</p>
+            <button class="btn-primary" onclick="_irAPlanes()">Ver planes</button>
+        </div>
+    `;
+    el.style.position = 'relative';
+    el.appendChild(overlay);
+}
+
+// Overlay de bloqueo sobre una card de Ajustes
+function mostrarBloqueCard(cardId) {
+    const el = document.getElementById(cardId);
+    if (!el) return;
+    if (el.querySelector('.premium-lock-overlay')) return;
+    // Calcula dónde termina el h3 para que el título quede visible
+    const h3 = el.querySelector('h3');
+    const topOffset = h3 ? (h3.offsetTop + h3.offsetHeight + 8) : 0;
+    const overlay = document.createElement('div');
+    overlay.className = 'premium-lock-overlay';
+    overlay.style.cssText = `position:absolute;left:0;right:0;bottom:0;top:${topOffset}px;background:linear-gradient(180deg, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0.78) 100%);backdrop-filter:blur(1.5px) saturate(0.95);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10;text-align:center;padding:24px;border-radius:0 0 12px 12px;`;
+    overlay.innerHTML = `
+        <div style="background:rgba(255,255,255,0.92);border:1px solid rgba(209,213,219,0.9);border-radius:10px;padding:12px 14px;box-shadow:0 8px 18px rgba(0,0,0,0.06);">
+            <div style="margin-bottom:8px;">${_LOCK_SVG_MD}</div>
+            <p style="margin:0 0 10px;font-size:0.85em;color:#6b7280;">Requiere plan Premium</p>
+            <button class="btn-primary" style="font-size:0.82em;padding:7px 14px;" onclick="_irAPlanes()">Ver planes</button>
+        </div>
+    `;
+    el.style.position = 'relative';
+    el.appendChild(overlay);
+}
+
+/* ============================================
+   SISTEMA DE PUNTOS
+   ============================================ */
+
+let puntosUsadosVenta = 0;
+
+async function calcularPuntosGanados(total) {
+    const aj = await window.api.obtenerAjustes();
+    if (aj.puntos_activos !== 'true') return 0;
+    const rate = parseFloat(aj.puntos_por_peso ?? '0.1');  // mismo default que la UI
+    const bono = parseInt(aj.puntos_bono_pedido || '0');
+    return Math.floor(total * rate) + bono;
+}
+
+async function actualizarPanelPuntosVenta() {
+    const panel = document.getElementById('panel-puntos-venta');
+    if (!panel) return;
+    if (!puedeAccederPremium()) { panel.style.display = 'none'; return; }
+    if (!clienteSeleccionadoVenta || !clienteSeleccionadoVenta.enFidelidad) {
+        panel.style.display = 'none';
+        puntosUsadosVenta = 0;
+        return;
+    }
+    const aj = await window.api.obtenerAjustes().catch(() => ({}));
+    if (aj.puntos_activos !== 'true') {
+        panel.style.display = 'none';
+        return;
+    }
+    const puntos = clienteSeleccionadoVenta.puntos || 0;
+    const valorPunto = parseFloat(aj.puntos_valor || '0.10');
+    const descuentoMax = parseFloat((puntos * valorPunto).toFixed(2));
+    const subtotal = carrito.reduce((s, i) => s + i.precio, 0);
+    const ptsGanar = await calcularPuntosGanados(subtotal);
+
+    document.getElementById('puntos-balance-venta').textContent = puntos;
+    document.getElementById('puntos-valor-display').textContent = descuentoMax.toFixed(2);
+    const elGanar = document.getElementById('puntos-a-ganar-venta');
+    if (elGanar) elGanar.textContent = puntosUsadosVenta > 0
+        ? 'No ganas puntos si los usas en esta compra'
+        : ptsGanar > 0 ? `+${ptsGanar} puntos con esta compra` : 'Agrega productos para ver puntos a ganar';
+
+    // Ocultar botón de canjear si no tiene puntos disponibles
+    const btnUsar = document.getElementById('btn-usar-puntos');
+    if (btnUsar) btnUsar.style.display = puntos > 0 ? '' : 'none';
+
+    panel.style.display = ''; // Siempre visible para clientes inscritos con puntos activos
+}
+
+async function toggleUsarPuntosVenta() {
+    if (!clienteSeleccionadoVenta?.enFidelidad) return;
+    const aj = await window.api.obtenerAjustes().catch(() => ({}));
+    const valorPunto = parseFloat(aj.puntos_valor || '0.10');
+    const btn = document.getElementById('btn-usar-puntos');
+
+    if (puntosUsadosVenta === 0) {
+        // Activar: usar todos los puntos disponibles (cap al total del carrito)
+        const puntos = clienteSeleccionadoVenta.puntos || 0;
+        const subtotal = carrito.reduce((s, i) => s + i.precio, 0);
+        const descMax = parseFloat((puntos * valorPunto).toFixed(2));
+        puntosUsadosVenta = puntos;
+        descuentoActual = Math.min(descMax, subtotal);
+        if (btn) {
+            btn.style.background = '#7c3aed';
+            btn.style.color = 'white';
+            btn.style.borderColor = '#6d28d9';
+            btn.innerHTML = '<span>✓ Descuento de puntos activo</span><span style="font-size:1.15em;line-height:1;">●</span>';
+        }
+    } else {
+        // Desactivar
+        puntosUsadosVenta = 0;
+        descuentoActual = 0;
+        if (btn) {
+            btn.style.background = 'white';
+            btn.style.color = '#7c3aed';
+            btn.style.borderColor = '#7c3aed';
+            btn.innerHTML = '<span>Aplicar descuento de puntos</span><span style="font-size:1.15em;line-height:1;">○</span>';
+        }
+    }
+    renderizarCarrito();
+    actualizarPanelPuntosVenta();
+}
+
+/* ============================================
+   PROGRAMA DE FIDELIDAD
+   ============================================ */
+
+async function cargarProgramaFidelidad() {
+    const tbody = document.getElementById('lista-fidelidad-body');
+    if (!tbody) return;
+    try {
+        const inscritos = await window.api.obtenerClientesFidelidad();
+        if (!inscritos || inscritos.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" style="color:#9ca3af;text-align:center;padding:12px;">Ningún cliente inscrito aún. Usa el buscador de arriba para inscribir.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = inscritos.map(c => `
+            <tr>
+                <td><strong>${esc(c.nombre)}</strong></td>
+                <td style="color:#6b7280;">📱 ${esc(c.telefono)}</td>
+                <td style="color:#7c3aed;font-weight:600;">⭐ ${c.puntos || 0} pts</td>
+                <td>
+                    <button class="btn-secondary small" style="color:#ef4444;font-size:0.82em;"
+                        onclick="toggleClienteFidelidad(${c.id}, '${esc(c.nombre)}', 1)">
+                        Quitar
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="4" style="color:#ef4444;">Error al cargar</td></tr>`;
+    }
+}
+
+async function buscarClienteParaFidelidad(texto) {
+    const contenedor = document.getElementById('resultados-inscribir-fidelidad');
+    if (!contenedor) return;
+    if (!texto || texto.trim().length < 2) {
+        contenedor.innerHTML = '';
+        return;
+    }
+    const busqueda = texto.trim().toLowerCase();
+    try {
+        const todos = await window.api.obtenerClientesConCompras();
+        const resultados = todos
+            .filter(c => !c.en_fidelidad && (
+                c.nombre.toLowerCase().includes(busqueda) ||
+                (c.telefono || '').includes(busqueda)
+            ))
+            .slice(0, 5);
+        if (resultados.length === 0) {
+            contenedor.innerHTML = `<p style="color:#9ca3af;font-size:0.85em;margin-top:4px;">No se encontraron clientes (o ya están inscritos)</p>`;
+            return;
+        }
+        contenedor.innerHTML = resultados.map(c => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#f9fafb;border-radius:6px;margin-bottom:4px;border:1px solid #e5e7eb;">
+                <span><strong>${esc(c.nombre)}</strong> — ${esc(c.telefono)}</span>
+                <button class="btn-primary small" style="font-size:0.8em;"
+                    onclick="toggleClienteFidelidad(${c.id}, '${esc(c.nombre)}', 0)">
+                    + Inscribir
+                </button>
+            </div>
+        `).join('');
+    } catch (e) {
+        contenedor.innerHTML = `<p style="color:#ef4444;font-size:0.85em;">Error al buscar</p>`;
+    }
+}
+
+// Sincroniza cambios de fidelidad/puntos al backend si hay conexión
+async function syncLoyaltyBackend(clienteId, payload) {
+    if (modoConectado && apiClient && tokenActual) {
+        apiClient.request(`/customers/${clienteId}/loyalty`, {
+            method: 'PATCH', body: payload
+        }).catch(e => console.warn('No se pudo sincronizar fidelidad al backend:', e.message));
+    }
+}
+
+async function toggleClienteFidelidad(id, nombre, enFidelidad) {
+    const nuevoValor = enFidelidad === 1 ? 0 : 1;
+    await window.api.toggleFidelidad(id, nuevoValor).catch(() => {});
+    syncLoyaltyBackend(id, { in_loyalty: nuevoValor === 1 });
+    if (nuevoValor === 1) {
+        mostrarNotificacionExito(`${nombre} inscrito al programa de fidelidad`, '⭐ Fidelidad');
+    }
+    // Limpiar búsqueda y recargar lista
+    const inputBuscar = document.getElementById('buscar-inscribir-fidelidad');
+    if (inputBuscar) inputBuscar.value = '';
+    document.getElementById('resultados-inscribir-fidelidad').innerHTML = '';
+    cargarProgramaFidelidad();
 }
 
 /* ============================================
@@ -167,7 +659,8 @@ async function crearPedidoWrapper(datosPedido, items) {
                 reference: datosPedido.referencia || null,
                 delivery_address: datosPedido.direccion_domicilio || null,
                 maps_link: datosPedido.link_maps || null,
-                notes: datosPedido.notas_generales || null
+                notes: datosPedido.notas_generales || null,
+                branch_id: sucursalIdActual || null
             };
             const itemsAPI = items.map(i => ({
                 product_id: i.id,
@@ -192,9 +685,15 @@ async function crearPedidoWrapper(datosPedido, items) {
 async function obtenerPedidosWrapper(filtro) {
     if (modoConectado && apiClient && tokenActual) {
         try {
-            const orders = await apiClient.getOrders(filtro);
-            // Traducir campos inglés → español para compatibilidad con el frontend
-            return orders.map(o => ({
+            const filtroBackend = { ...filtro };
+            if (filtro.date_from) filtroBackend.date_from = new Date(filtro.date_from + 'T00:00:00').toISOString();
+            if (filtro.date_to)   filtroBackend.date_to   = new Date(filtro.date_to   + 'T23:59:59').toISOString();
+            // Filtrar por sucursal de este dispositivo si está asignada
+            if (sucursalIdActual) filtroBackend.branch_id = sucursalIdActual;
+            const result = await apiClient.getOrders(filtroBackend);
+            const rawOrders = result.data || result;
+            const pag = result.pagination || { total: rawOrders.length, page: 1, limit: rawOrders.length, pages: 1 };
+            const data = rawOrders.map(o => ({
                 id: o.id,
                 cliente_id: o.customer_id,
                 total: parseFloat(o.total),
@@ -208,14 +707,56 @@ async function obtenerPedidosWrapper(filtro) {
                 cajero: null,
                 fecha: o.createdAt,
                 telefono: o.customer ? o.customer.name : (o.customer_temp_info || null),
-                _items: o.items  // guardar items para verDetallePedido
+                _items: o.items
             }));
+            // Safety net: agregar órdenes locales que no se sincronizaron al backend
+            try {
+                const pendientes = await window.api.obtenerPedidosPendientes();
+                const noSinc = (pendientes || []).filter(p => p.estado === 'completado');
+                if (noSinc.length > 0) {
+                    const backendIds = new Set(data.map(o => o.id));
+                    noSinc.forEach(p => {
+                        if (!backendIds.has(p.id)) {
+                            data.unshift({
+                                id: p.id,
+                                cajero: p.cajero,
+                                telefono: p.info_cliente_temp || null,
+                                total: p.total,
+                                metodo_pago: p.metodo_pago,
+                                estado: p.estado,
+                                tipo_pedido: p.tipo_pedido,
+                                referencia: p.referencia,
+                                fecha: p.fecha_pedido
+                            });
+                        }
+                    });
+                }
+            } catch (e) { /* ignorar errores del fallback local */ }
+            // Ordenar por fecha descendente después de mezclar local + backend
+            data.sort((a, b) => new Date(b.fecha || 0) - new Date(a.fecha || 0));
+            const resumen = {
+                total_pedidos: pag.total || data.length,
+                total_ventas:  data.reduce((s, o) => s + o.total, 0),
+                efectivo:      data.filter(o => o.metodo_pago === 'efectivo').reduce((s, o) => s + o.total, 0),
+                tarjeta:       data.filter(o => ['tarjeta','debito','credito'].includes(o.metodo_pago)).reduce((s, o) => s + o.total, 0),
+                transferencia: data.filter(o => o.metodo_pago === 'transferencia').reduce((s, o) => s + o.total, 0),
+            };
+            return { data, pagination: pag, resumen };
         } catch (error) {
             console.error('Error al obtener pedidos del backend:', error);
-            return await window.api.obtenerPedidos(filtro);
+            // Marcar que hubo error para mostrar aviso en la UI
+            const localResult = await window.api.obtenerPedidos(filtro);
+            const result = (() => {
+                if (localResult && localResult.data) return { data: localResult.data, pagination: localResult.paginacion || {}, resumen: localResult.resumen };
+                return { data: localResult || [], pagination: {} };
+            })();
+            result._backendError = true;
+            return result;
         }
     } else {
-        return await window.api.obtenerPedidos(filtro);
+        const localResult = await window.api.obtenerPedidos(filtro);
+        if (localResult && localResult.data) return { data: localResult.data, pagination: localResult.paginacion || {}, resumen: localResult.resumen };
+        return { data: localResult || [], pagination: {} };
     }
 }
 
@@ -285,10 +826,11 @@ async function crearClienteWrapper(datos) {
 }
 
 // ESTADÍSTICAS
-async function obtenerEstadisticasWrapper() {
+async function obtenerEstadisticasWrapper(branchId) {
     if (modoConectado && apiClient && tokenActual) {
         try {
-            return await apiClient.getDashboardStats();
+            const qs = branchId ? `?branch_id=${branchId}` : '';
+            return await apiClient.request(`/stats/dashboard${qs}`);
         } catch (error) {
             console.error('Error al obtener estadísticas del backend:', error);
             return await window.api.obtenerEstadisticas();
@@ -347,6 +889,50 @@ if (window.api) {
         document.getElementById('btn-install-update').style.display = 'block';
         document.getElementById('update-message').innerText = '¡Actualización lista para instalar!';
     });
+
+    // Listener: ventana recupera foco → re-verificar plan (ej. después de Stripe Checkout)
+    window.api.onWindowFocus(() => {
+        if (modoConectado && apiClient && tokenActual) {
+            cargarPlanInfo().catch(() => {});
+        }
+    });
+
+    // Listener: KDS cambió estado de un pedido
+    window.api.onKdsEstadoCambio(async ({ pedidoId, estado }) => {
+        if (!pedidoId) return;
+        const colores = {
+            'registrado':    { color: '#10b981', bg: '#d1fae5' },
+            'en_preparacion':{ color: '#f59e0b', bg: '#fef3c7' },
+            'completado':    { color: '#3b82f6', bg: '#dbeafe' },
+            'entregado':     { color: '#6366f1', bg: '#e0e7ff' },
+            'cancelado':     { color: '#ef4444', bg: '#fee2e2' }
+        };
+        try {
+            // 1. Actualizar SQLite local
+            await window.api.actualizarEstadoPedido(pedidoId, estado);
+            // 2. Actualizar backend si está conectado (para que persista al reiniciar)
+            if (modoConectado && apiClient && tokenActual) {
+                apiClient.request(`/orders/${pedidoId}/status`, {
+                    method: 'PUT',
+                    body: { status: estado }
+                }).catch(e => console.warn('kds backend status update:', e));
+            }
+            // 3. Parchear el select en pantalla si Pedidos está abierto
+            const select = document.querySelector(`select[onchange*="cambiarEstadoPedido(${pedidoId},"]`);
+            if (select) {
+                const c = colores[estado];
+                // Reemplazar innerHTML garantiza que todas las opciones existen
+                select.innerHTML = `
+                    <option value="registrado"     ${estado==='registrado'?'selected':''}>🟢 Registrado</option>
+                    <option value="en_preparacion" ${estado==='en_preparacion'?'selected':''}>🟡 En preparación</option>
+                    <option value="completado"     ${estado==='completado'?'selected':''}>🔵 Completado</option>
+                    <option value="entregado"      ${estado==='entregado'?'selected':''}>🟣 Entregado</option>
+                    <option value="cancelado"      ${estado==='cancelado'?'selected':''}>🔴 Cancelado</option>
+                `;
+                if (c) { select.style.background = c.bg; select.style.color = c.color; select.style.borderColor = c.color; }
+            }
+        } catch(err) { console.warn('kds-estado-cambio error:', err); }
+    });
 }
 
 function descargarActualizacion() {
@@ -367,18 +953,70 @@ function cerrarModalActualizacion() {
    LOGIN — Contraseña de acceso al app
    ============================================ */
 async function inicializarLogin() {
-    // Solo valida el token guardado. Si es inválido, limpia la sesión.
-    // No hay contraseña local — la seguridad es la cuenta Zenit.
     const ajustesPwd = await window.api.obtenerAjustes();
-    if (!ajustesPwd.api_token) return;
+
+    // Pedir contraseña si el switch está activado (es seguridad local, no requiere backend)
+    if (ajustesPwd.pedir_password_inicio === 'true') {
+        const tienePass = await window.api.tienePasswordApp();
+        if (tienePass) {
+            await new Promise((resolve) => {
+                const screen = document.getElementById('login-screen');
+                const input = document.getElementById('login-password');
+                const btn = document.getElementById('login-btn');
+                const error = document.getElementById('login-error');
+                const subtitle = document.getElementById('login-subtitle');
+                const confirmInput = document.getElementById('login-password-confirm');
+
+                if (!screen || !input || !btn) { resolve(); return; }
+
+                screen.style.display = 'flex';
+                if (subtitle) subtitle.textContent = 'Ingresa tu contraseña para continuar';
+                if (confirmInput) confirmInput.style.display = 'none';
+                input.value = '';
+                if (error) error.textContent = '';
+                setTimeout(() => input.focus(), 100);
+
+                const verificar = async () => {
+                    const password = input.value;
+                    if (!password) return;
+                    btn.disabled = true;
+                    const valido = await window.api.verificarPasswordApp(password);
+                    btn.disabled = false;
+                    if (valido) {
+                        screen.style.display = 'none';
+                        resolve();
+                    } else {
+                        if (error) error.textContent = 'Contraseña incorrecta. Intenta de nuevo.';
+                        input.value = '';
+                        input.focus();
+                    }
+                };
+
+                btn.addEventListener('click', verificar);
+                input.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') verificar();
+                });
+            });
+        }
+    }
+
+    // Validar token usando el sistema seguro (cifrado tiene precedencia sobre legacy)
+    const token = await window.api.obtenerTokenSeguro();
+    if (!token) {
+        // Sin token → asegurar que el modo conectado esté desactivado
+        await window.api.guardarAjuste('modo_conectado', 'false');
+        return;
+    }
+
     try {
         const backendUrl = ajustesPwd.api_url || 'https://zenit-pos-backend.onrender.com/api';
-        if (!apiClient) window.apiClient = new APIClient(backendUrl);
         apiClient.setBaseURL(backendUrl);
-        apiClient.setToken(ajustesPwd.api_token);
+        apiClient.setToken(token);
         await apiClient.request('/auth/me');
+        // Token válido — mantener sesión
     } catch (e) {
-        // Token inválido o expirado — limpiar sesión
+        // Token inválido o expirado — limpiar sesión completamente
+        await window.api.guardarTokenSeguro(null);
         await window.api.guardarAjuste('api_token', '');
         await window.api.guardarAjuste('modo_conectado', 'false');
     }
@@ -387,29 +1025,27 @@ async function inicializarLogin() {
 document.addEventListener('DOMContentLoaded', async () => {
 
     // ── PERFIL (primero) ────────────────────────────────
-    // Si hay perfiles activos → muestra pantalla de selección.
-    // Cajero/Encargado → verifican PIN y entran directamente.
-    // Administrador → pasa al login. Si no hay perfiles → va directo al login.
-    await inicializarPerfil();
+    try { await inicializarPerfil(); } catch(e) { console.error('Error inicializarPerfil:', e); }
     // ───────────────────────────────────────────────────
 
     // ── LOGIN (solo Administrador) ──────────────────────
     if (rolActivo === 'dueno') {
-        await inicializarLogin();
+        try { await inicializarLogin(); } catch(e) { console.error('Error inicializarLogin:', e); }
     }
     // ───────────────────────────────────────────────────
 
     // ── TURNO ──────────────────────────────────────────
-    await inicializarTurno();
+    try { await inicializarTurno(); } catch(e) { console.error('Error inicializarTurno:', e); }
     // ───────────────────────────────────────────────────
 
     // Cargar configuración de modo
-    await cargarConfiguracionModo();
+    try { await cargarConfiguracionModo(); } catch(e) { console.error('Error cargarConfiguracionModo:', e); }
 
     // Sincronizar desde backend si hay sesión activa
     if (modoConectado) {
         subirPedidosPendientes().catch(e => console.warn('subirPendientes:', e));
         sincronizarDesdeBackend().catch(e => console.warn('syncDesdeBackend:', e));
+        cargarSucursalesAjustes().catch(e => console.warn('cargarSucursales:', e));
     }
 
     const logo = document.getElementById('brand-logo');
@@ -540,22 +1176,41 @@ setTimeout(() => {
     } else if (vista === 'clientes') {
         cargarClientes();
     } else if (vista === 'ofertas') {
-        cargarOfertas();
+        if (modoConectado && !puedeAccederPremium()) {
+            mostrarBloquePremium('view-ofertas');
+        } else {
+            document.querySelector('#view-ofertas .premium-lock-overlay')?.remove();
+            cargarOfertas();
+        }
     } else if (vista === 'inventario') {
-        cargarInventario();
+        if (modoConectado && !puedeAccederPremium()) {
+            mostrarBloquePremium('view-inventario');
+        } else {
+            document.querySelector('#view-inventario .premium-lock-overlay')?.remove();
+            cargarInventario();
+        }
     } else if (vista === 'ajustes') {
         cargarAjustesInstalados();
     } else if (vista === 'turno') {
         cargarVistaTurno();
+    } else if (vista === 'mesas') {
+        cargarVistaMesas();
+        if (!turnoActivo && !ventaSinTurno) {
+            setTimeout(() => {
+                const modal = document.getElementById('modal-turno-venta');
+                if (modal) modal.classList.remove('hidden');
+            }, 150);
+        }
     }
 
-    
+
     // Actualizar el título de la cabecera
     const titulos = {
     dashboard: 'Dashboard',
     pedidos: 'Pedidos',
     productos: 'Productos',
     'nueva-venta': 'Nueva Venta',
+    mesas: 'Mesas',
     clientes: 'Clientes',
     ofertas: 'Ofertas',
     inventario: 'Inventario',
@@ -611,31 +1266,49 @@ async function buscarClientesVenta(e, tipo) {
     }
     
     try {
-        const clientes = await obtenerClientesWrapper();
+        // Usar SQLite local siempre: tiene en_fidelidad y puntos (locales) + está sincronizado con backend al inicio
+        const clientes = await window.api.obtenerClientesConCompras();
         let resultados;
-        
+
         if (tipo === 'nombre') {
-            resultados = clientes.filter(c => 
-                c.nombre.toLowerCase().includes(busqueda)
+            resultados = clientes.filter(c =>
+                c.nombre && c.nombre.toLowerCase().includes(busqueda)
             ).slice(0, 5);
         } else {
-            resultados = clientes.filter(c => 
-                c.telefono.includes(busqueda)
+            resultados = clientes.filter(c =>
+                c.telefono && c.telefono.includes(busqueda)
             ).slice(0, 5);
         }
-        
+
         if (resultados.length === 0) {
             dropdown.classList.add('hidden');
             return;
         }
-        
+
         dropdown.innerHTML = resultados.map(c => `
-            <div class="sugerencia-item" onclick="seleccionarClienteVenta(${c.id}, '${c.nombre}', '${c.telefono}', '${c.direccion || ''}')">
-                <div class="sugerencia-nombre">${c.nombre}</div>
-                <div class="sugerencia-tel">📱 ${c.telefono}</div>
-                ${c.direccion ? `<div class="sugerencia-direccion">📍 ${c.direccion}</div>` : ''}
+            <div class="sugerencia-item"
+                data-id="${esc(c.id)}"
+                data-nombre="${esc(c.nombre)}"
+                data-telefono="${esc(c.telefono)}"
+                data-direccion="${esc(c.direccion || '')}"
+                data-puntos="${c.puntos || 0}"
+                data-fidelidad="${c.en_fidelidad || 0}">
+                <div class="sugerencia-nombre">${esc(c.nombre)}${c.en_fidelidad ? ' ⭐' : ''}</div>
+                <div class="sugerencia-tel">📱 ${esc(c.telefono)}</div>
+                ${c.direccion ? `<div class="sugerencia-direccion">📍 ${esc(c.direccion)}</div>` : ''}
             </div>
         `).join('');
+        // Registrar click usando data attributes (evita inyección en onclick)
+        dropdown.querySelectorAll('.sugerencia-item').forEach(el => {
+            el.onclick = () => seleccionarClienteVenta(
+                parseInt(el.dataset.id),
+                el.dataset.nombre,
+                el.dataset.telefono,
+                el.dataset.direccion,
+                parseInt(el.dataset.puntos || '0'),
+                parseInt(el.dataset.fidelidad || '0')
+            );
+        });
         
         dropdown.classList.remove('hidden');
         
@@ -644,16 +1317,19 @@ async function buscarClientesVenta(e, tipo) {
     }
 }
 
-function seleccionarClienteVenta(id, nombre, telefono, direccion) {
-    clienteSeleccionadoVenta = { id, nombre, telefono, direccion };
-    
+function seleccionarClienteVenta(id, nombre, telefono, direccion, puntos, enFidelidad) {
+    clienteSeleccionadoVenta = { id, nombre, telefono, direccion, puntos: puntos || 0, enFidelidad: enFidelidad || 0 };
+
     // Autocompletar ambos campos
     document.getElementById('nombre-cliente').value = nombre;
     document.getElementById('telefono-cliente').value = telefono;
-    
+
     // Cerrar sugerencias
     document.getElementById('sugerencias-nombre').classList.add('hidden');
     document.getElementById('sugerencias-telefono').classList.add('hidden');
+
+    // Mostrar panel de puntos si el cliente está en el programa de fidelidad
+    actualizarPanelPuntosVenta();
 }
 
 function actualizarInfoClientePago() {
@@ -743,13 +1419,19 @@ function renderizarGridVenta(listaProductos) {
     }
     const mostrarStock = document.getElementById('adj-mostrar-stock')?.checked;
 
-    grid.innerHTML = listaProductos.map(p => `
+    grid.innerHTML = listaProductos.map(p => {
+        const imgUrl = urlImagenSegura(p.imagen);
+        const visual = imgUrl
+            ? `<img src="${imgUrl}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${esc(p.emoji || '📦')}</span>`
+            : `<span class="product-emoji">${esc(p.emoji || '📦')}</span>`;
+        return `
         <div class="product-card" onclick="agregarAlCarrito(${p.id})" id="pcard-${p.id}">
-            <div class="product-visual">${p.imagen ? `<img src="file://${p.imagen}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${p.emoji || '📦'}</span>` : `<span class="product-emoji">${p.emoji || '📦'}</span>`}</div>
-            <h4>${p.nombre}</h4>
+            <div class="product-visual">${visual}</div>
+            <h4>${esc(p.nombre)}</h4>
             <p class="precio">$${p.precio.toFixed(2)}</p>
             ${mostrarStock ? `<div id="stock-badge-${p.id}" style="font-size:0.75em; color:#9ca3af; margin-top:3px;">...</div>` : ''}
-        </div>`).join('');
+        </div>`;
+    }).join('');
 
     if (mostrarStock) {
         listaProductos.forEach(p => {
@@ -808,9 +1490,9 @@ function renderizarCarrito() {
         <div class="cart-item">
             <div class="cart-qty">1</div>
             <div class="cart-info">
-                <h5>${item.nombre}</h5>
+                <h5>${esc(item.nombre)}</h5>
                 <div class="cart-price">$${item.precio.toFixed(2)}</div>
-                ${item.nota ? `<span class="cart-note">📝 ${item.nota}</span>` : ''}
+                ${item.nota ? `<span class="cart-note">📝 ${esc(item.nota)}</span>` : ''}
             </div>
             <div class="cart-actions">
     <button class="btn-ticket-action" onclick="abrirModalNotas(${index})" title="Agregar nota" style="display:flex; align-items:center; justify-content:center; color:#6b7280;">
@@ -828,6 +1510,9 @@ function renderizarCarrito() {
     if (subtotalEl) subtotalEl.innerText = `$${subtotal.toFixed(2)}`;
     if (descuentoEl) descuentoEl.innerText = `-$${descuentoActual.toFixed(2)}`;
     totalEl.innerText = `$${totalFinal.toFixed(2)}`;
+
+    // Actualizar panel de puntos si hay cliente inscrito
+    if (clienteSeleccionadoVenta?.enFidelidad) actualizarPanelPuntosVenta();
 }
 
 function eliminarDelCarrito(index) {
@@ -850,7 +1535,12 @@ function limpiarCarrito() {
         // Cerrar sugerencias si están abiertas
         document.getElementById('sugerencias-nombre')?.classList.add('hidden');
         document.getElementById('sugerencias-telefono')?.classList.add('hidden');
-        
+
+        // Ocultar panel de puntos y resetear canje
+        const elPts = document.getElementById('panel-puntos-venta');
+        if (elPts) elPts.style.display = 'none';
+        puntosUsadosVenta = 0;
+
         renderizarCarrito();
     }
 }
@@ -1015,12 +1705,39 @@ async function ejecutarVenta() {
         }));
         
         const pedidoId = await crearPedidoWrapper(datosPedido, itemsParaDB);
-        
+
+        // Enviar comanda al KDS
+        window.api.kdsNuevoPedido({
+            pedidoId: pedidoId || null,
+            tipo: datosPedido.tipo_pedido === 'domicilio' ? 'delivery' : 'mostrador',
+            mesa: null,
+            notas: datosPedido.notas_generales || null,
+            items: carrito.map(i => ({ nombre: i.nombre, cantidad: 1, notas: i.nota || '' }))
+        }).catch(() => {});
+
         // Guardar ID del pedido para impresión
         window.ultimoPedidoId = pedidoId;
-        
+
+        // Puntos: solo aplica a clientes inscritos en programa de fidelidad
+        if (clienteSeleccionadoVenta?.id && clienteSeleccionadoVenta.enFidelidad === 1) {
+            if (puntosUsadosVenta > 0) {
+                // Canjear puntos: descontar del balance
+                await window.api.actualizarPuntosCliente(clienteSeleccionadoVenta.id, -puntosUsadosVenta).catch(() => {});
+                syncLoyaltyBackend(clienteSeleccionadoVenta.id, { points_delta: -puntosUsadosVenta });
+            } else {
+                // Ganar puntos normalmente
+                const puntosGanados = await calcularPuntosGanados(total);
+                if (puntosGanados > 0) {
+                    await window.api.actualizarPuntosCliente(clienteSeleccionadoVenta.id, puntosGanados).catch(() => {});
+                    syncLoyaltyBackend(clienteSeleccionadoVenta.id, { points_delta: puntosGanados });
+                    mostrarNotificacionExito(`+${puntosGanados} puntos acumulados`, '⭐ Puntos');
+                }
+            }
+        }
+        puntosUsadosVenta = 0;
+
         cerrarModalPago();
-        
+
         mostrarNotificacionExito(`Venta registrada - Total: $${total.toFixed(2)}`, '¡Venta Exitosa!');
         
         // Preguntar si quiere imprimir el ticket
@@ -1033,6 +1750,8 @@ async function ejecutarVenta() {
         clienteSeleccionadoVenta = null;
         document.getElementById('telefono-cliente').value = '';
         document.getElementById('nombre-cliente').value = '';
+        const elPanelPuntos = document.getElementById('panel-puntos-venta');
+        if (elPanelPuntos) elPanelPuntos.style.display = 'none';
         renderizarCarrito();
         
     } catch (e) {
@@ -1051,28 +1770,29 @@ function cerrarModalPago() {
 }
 
 // --- APLICAR DESCUENTO ---
+let _pendienteDescuento = null; // guarda descuento esperando PIN
+
 async function abrirModalDescuento() {
-    const inputMonto = document.getElementById('desc-monto-custom');
-    const inputPct = document.getElementById('desc-pct-custom');
-    if (inputMonto) inputMonto.value = descuentoActual > 0 ? descuentoActual : '';
-    if (inputPct) inputPct.value = '';
-    
-    // Cargar descuentos predefinidos
+    // Cargar descuentos predefinidos (solo pre-creados en Ofertas)
     const contenedor = document.getElementById('descuentos-rapidos');
     try {
         const descuentos = await window.api.obtenerDescuentos();
-        if (!descuentos.length) {
-            contenedor.innerHTML = '<span style="color:#9ca3af; font-size:0.85em;">Sin descuentos predefinidos. Créalos en la sección Ofertas.</span>';
+        if (!descuentos || !descuentos.length) {
+            contenedor.innerHTML = `<div style="color:#9ca3af;font-size:0.85em;padding:8px;">
+                No tienes descuentos creados. Ve a <strong>Ofertas → Descuentos</strong> para crearlos.
+            </div>`;
         } else {
             const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
             contenedor.innerHTML = descuentos.map(d => {
                 const montoCalc = d.tipo === 'porcentaje'
                     ? (subtotal * d.valor / 100).toFixed(2)
                     : parseFloat(d.valor).toFixed(2);
-                return `<button onclick="aplicarDescuentoRapido(${d.tipo === 'porcentaje' ? d.valor : 0}, ${d.tipo === 'monto_fijo' ? d.valor : 0})"
+                const pct = d.tipo === 'porcentaje' ? d.valor : 0;
+                const mnto = d.tipo === 'monto_fijo' ? d.valor : 0;
+                return `<button onclick="aplicarDescuentoRapido(${pct}, ${mnto}, '${esc(d.nombre)}')"
                     style="background:#eff6ff; border:1px solid #bfdbfe; color:#1d4ed8; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:0.85em; font-weight:600; transition:0.2s;"
                     onmouseover="this.style.background='#dbeafe'" onmouseout="this.style.background='#eff6ff'">
-                    ${d.nombre}<br><span style="font-weight:400; color:#6b7280;">-$${montoCalc}</span>
+                    ${esc(d.nombre)}<br><span style="font-weight:400; color:#6b7280;">-$${montoCalc}</span>
                 </button>`;
             }).join('');
         }
@@ -1080,40 +1800,63 @@ async function abrirModalDescuento() {
         contenedor.innerHTML = '<span style="color:#9ca3af; font-size:0.85em;">No se pudieron cargar.</span>';
     }
 
-    actualizarPreviewDescuento();
     document.getElementById('modal-descuento').classList.remove('hidden');
 }
 
-function aplicarDescuentoRapido(pct, monto) {
+async function aplicarDescuentoRapido(pct, monto, nombre) {
+    const aj = await window.api.obtenerAjustes().catch(() => ({}));
+    if (aj.requiere_pin_descuentos === 'true') {
+        // Guardar pendiente y mostrar modal de PIN
+        _pendienteDescuento = { pct, monto, nombre };
+        document.getElementById('input-pin-descuento').value = '';
+        document.getElementById('modal-pin-descuento').classList.remove('hidden');
+        cerrarModalDescuento();
+        return;
+    }
+    _aplicarDescuentoFinal(pct, monto, nombre);
+}
+
+async function _aplicarDescuentoFinal(pct, monto, nombre) {
     const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
     descuentoActual = pct > 0 ? (subtotal * pct / 100) : monto;
     cerrarModalDescuento();
     renderizarCarrito();
+    // Registrar en log
+    await window.api.registrarLogDescuento({
+        cajero: nombreActivo || 'cajero',
+        descuento_nombre: nombre,
+        monto_descuento: descuentoActual,
+        total_antes: subtotal
+    }).catch(() => {});
+    // Refrescar alertas del dashboard si está activo
+    if (document.getElementById('view-dashboard')?.classList.contains('active')) {
+        calcularAlertasWrapper();
+    }
+}
+
+async function confirmarPinDescuento() {
+    if (!_pendienteDescuento) return;
+    const pinIngresado = document.getElementById('input-pin-descuento').value;
+    const aj = await window.api.obtenerAjustes().catch(() => ({}));
+    if (pinIngresado !== (aj.pin_descuentos || '')) {
+        document.getElementById('input-pin-descuento').style.borderColor = '#ef4444';
+        setTimeout(() => { document.getElementById('input-pin-descuento').style.borderColor = ''; }, 1500);
+        return;
+    }
+    document.getElementById('modal-pin-descuento').classList.add('hidden');
+    const { pct, monto, nombre } = _pendienteDescuento;
+    _pendienteDescuento = null;
+    _aplicarDescuentoFinal(pct, monto, nombre);
+}
+
+function cancelarPinDescuento() {
+    _pendienteDescuento = null;
+    document.getElementById('input-pin-descuento').value = '';
+    document.getElementById('modal-pin-descuento').classList.add('hidden');
 }
 
 function cerrarModalDescuento() {
     document.getElementById('modal-descuento').classList.add('hidden');
-}
-
-function actualizarPreviewDescuento() {
-    const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
-    const pct = parseFloat(document.getElementById('desc-pct-custom')?.value) || 0;
-    const monto = parseFloat(document.getElementById('desc-monto-custom')?.value) || 0;
-    const descPreview = pct > 0 ? (subtotal * pct / 100) : monto;
-    const totalPreview = Math.max(0, subtotal - descPreview);
-    const el = document.getElementById('desc-preview-total');
-    if (el) el.innerText = `$${totalPreview.toFixed(2)}`;
-}
-
-function aplicarDescuentoModal() {
-    const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
-    const pct = parseFloat(document.getElementById('desc-pct-custom').value) || 0;
-    const monto = parseFloat(document.getElementById('desc-monto-custom').value) || 0;
-    descuentoActual = pct > 0 ? (subtotal * pct / 100) : monto;
-    if (descuentoActual < 0) descuentoActual = 0;
-    if (descuentoActual > subtotal) descuentoActual = subtotal;
-    cerrarModalDescuento();
-    renderizarCarrito();
 }
 
 function quitarDescuento() {
@@ -1176,7 +1919,7 @@ function mostrarModalImpresion(pedidoId) {
 
 async function cargarDashboard() {
     try {
-        const stats = await obtenerEstadisticasWrapper();
+        const stats = await obtenerEstadisticasWrapper(sucursalVistaActual);
         console.log('📊 Stats completos:', stats); // ⬅️ LÍNEA TEMPORAL DE DEBUG
         
         // ============ KPIs PRINCIPALES ============
@@ -1296,33 +2039,7 @@ async function cargarDashboard() {
         }
         
         // ============ ALERTAS ============
-        
-        const alertasContainer = document.getElementById('alertas-dashboard');
-        const alertas = [];
-        
-        if (stockBajo > 0) {
-            alertas.push(`
-                <div class="alerta-item">
-                    <div class="alerta-item-icon">⚠️</div>
-                    <div>${stockBajo} producto${stockBajo > 1 ? 's' : ''} con stock bajo</div>
-                </div>
-            `);
-        }
-        
-        if (pedidosHoy === 0) {
-            alertas.push(`
-                <div class="alerta-item">
-                    <div class="alerta-item-icon">📊</div>
-                    <div>Sin ventas registradas hoy</div>
-                </div>
-            `);
-        }
-        
-        if (alertas.length === 0) {
-            alertasContainer.innerHTML = '<p style="color: #10b981; font-size: 0.85em;">✅ Todo en orden</p>';
-        } else {
-            alertasContainer.innerHTML = alertas.join('');
-        }
+        calcularAlertasWrapper();
         
     } catch (e) {
         console.error('Error al cargar dashboard:', e);
@@ -1750,17 +2467,23 @@ async function cargarPedidos() {
     contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center;">Cargando pedidos...</td></tr>';
 
     try {
-        const pedidos = await obtenerPedidosWrapper(filtroActual);
-        
-        if (pedidos.length === 0) {
+        const resultado = await obtenerPedidosWrapper({ ...filtroActual, pagina: paginaPedidos, limite: 50 });
+        const pedidos = resultado.data || [];
+        const pag = resultado.pagination || {};
+
+        if (resultado._backendError) {
+            contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc2626;">⚠️ Error de conexión con el servidor. Tus pedidos están guardados en la nube, revisa tu conexión e intenta de nuevo.</td></tr>';
+            return;
+        }
+        if (pedidos.length === 0 && paginaPedidos === 1) {
             contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 20px;">No hay ventas registradas todavía.</td></tr>';
+            renderizarControlPaginacion(pag);
             return;
         }
 
         // Limpiamos y llenamos la tabla
         contenedor.innerHTML = '';
-        
-        // Los ordenamos para que el más reciente salga arriba (.reverse)
+
         pedidos.forEach(p => {
     // FIX PARA FECHA: Si la fecha existe, reemplazamos el espacio por una 'T' 
     // para que el formato sea ISO (ej: 2023-10-25T14:30:00) y JS lo entienda.
@@ -1798,30 +2521,198 @@ async function cargarPedidos() {
     contenedor.appendChild(fila);
 });
 
+        renderizarControlPaginacion(pag);
+        renderizarResumenPedidos(resultado.resumen);
+
     } catch (error) {
         console.error("Error al cargar pedidos:", error);
         contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center; color:red;">Error al cargar los datos.</td></tr>';
     }
 }
 
+function renderizarResumenPedidos(resumen) {
+    const el = document.getElementById('resumen-pedidos');
+    if (!el) return;
+    const r = resumen || { total_pedidos: 0, total_ventas: 0, efectivo: 0, tarjeta: 0, transferencia: 0 };
+    const f = (v) => '$' + parseFloat(v || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const tarjeta = (r.tarjeta || 0) + (r.debito || 0) + (r.credito || 0);
+    const card = (icono, label, valor, color) =>
+        `<div style="display:flex;flex-direction:column;align-items:center;background:${color};border-radius:8px;padding:8px 16px;min-width:110px;gap:2px;">
+            <span style="font-size:0.75em;color:#6b7280;font-weight:500;">${icono} ${label}</span>
+            <span style="font-size:1.05em;font-weight:700;color:#111827;">${valor}</span>
+        </div>`;
+    let html = card('📋', 'Pedidos', r.total_pedidos, '#e5e7eb')
+             + card('💰', 'Total', f(r.total_ventas), '#bbf7d0')
+             + card('💵', 'Efectivo', f(r.efectivo), '#fde68a');
+    if (tarjeta > 0) html += card('💳', 'Tarjeta', f(tarjeta), '#bfdbfe');
+    if ((r.transferencia || 0) > 0) html += card('🏦', 'Transferencia', f(r.transferencia), '#ddd6fe');
+    el.innerHTML = html;
+    el.style.display = 'flex';
+}
+
+function aplicarFiltrosPedidos() {
+    const nuevo = {
+        date_from:   document.getElementById('filtro-fecha-desde')?.value || undefined,
+        date_to:     document.getElementById('filtro-fecha-hasta')?.value || undefined,
+        metodo_pago: document.getElementById('filtro-metodo')?.value || undefined,
+        status:      document.getElementById('filtro-estado')?.value || undefined,
+    };
+    filtroActual = Object.fromEntries(Object.entries(nuevo).filter(([, v]) => v));
+    paginaPedidos = 1;
+    cargarPedidos();
+}
+
+function limpiarFiltrosPedidos() {
+    filtroActual = {};
+    paginaPedidos = 1;
+    ['filtro-fecha-desde', 'filtro-fecha-hasta', 'filtro-metodo', 'filtro-estado']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    cargarPedidos();
+}
+
+function filtroRapido(tipo) {
+    const hoy = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    const hasta = fmt(hoy);
+    let desde;
+    if (tipo === 'hoy') {
+        desde = hasta;
+    } else if (tipo === 'semana') {
+        const inicio = new Date(hoy);
+        const dia = hoy.getDay();
+        inicio.setDate(hoy.getDate() - (dia === 0 ? 6 : dia - 1)); // lunes de esta semana
+        desde = fmt(inicio);
+    } else if (tipo === 'mes') {
+        desde = `${hoy.getFullYear()}-${pad(hoy.getMonth()+1)}-01`;
+    }
+    const inputDesde = document.getElementById('filtro-fecha-desde');
+    const inputHasta = document.getElementById('filtro-fecha-hasta');
+    if (inputDesde) inputDesde.value = desde;
+    if (inputHasta) inputHasta.value = hasta;
+    aplicarFiltrosPedidos();
+}
+
+async function exportarCSV() {
+    try {
+        const resultado = await obtenerPedidosWrapper({ ...filtroActual, limite: 10000, pagina: 1 });
+        const filas = resultado.data || resultado;
+        if (!filas || filas.length === 0) { alert('No hay pedidos para exportar con los filtros actuales.'); return; }
+
+        const cabecera = ['ID', 'Cajero', 'Cliente', 'Fecha', 'Método de Pago', 'Total', 'Estado'];
+        const lineas = filas.map(p => {
+            const fecha = p.fecha ? new Date(p.fecha.replace(' ', 'T')).toLocaleString('es-MX') : '';
+            return [
+                p.id,
+                p.cajero || '',
+                (p.telefono || 'General').replace(/,/g, ' '),
+                fecha,
+                p.metodo_pago || '',
+                parseFloat(p.total || 0).toFixed(2),
+                p.estado || ''
+            ].join(',');
+        });
+
+        const csv = [cabecera.join(','), ...lineas].join('\n');
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ventas_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        console.error('Error al exportar CSV:', e);
+        alert('Error al exportar. Intenta de nuevo.');
+    }
+}
+
+async function calcularAlertasWrapper() {
+    let alertas = [];
+    try {
+        if (apiClient && apiClient.token) {
+            const res = await apiClient.getAlerts();
+            alertas = res.alertas || [];
+        } else {
+            alertas = await window.api.calcularAlertas();
+        }
+    } catch (e) {
+        try { alertas = await window.api.calcularAlertas(); } catch (e2) { alertas = []; }
+    }
+    renderizarAlertas(alertas);
+}
+
+function renderizarAlertas(alertas) {
+    const container = document.getElementById('alertas-dashboard');
+    if (!container) return;
+    if (!alertas || alertas.length === 0) {
+        container.innerHTML = '<p style="color:#10b981;font-size:0.85em;">✅ Sin alertas activas</p>';
+        return;
+    }
+    const colores = {
+        peligro:    { bg: '#fee2e2', border: '#ef4444', texto: '#991b1b' },
+        advertencia:{ bg: '#fef3c7', border: '#f59e0b', texto: '#92400e' },
+        info:       { bg: '#dbeafe', border: '#3b82f6', texto: '#1e40af' }
+    };
+    container.innerHTML = alertas.map(a => {
+        const c = colores[a.nivel] || colores.info;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;margin-bottom:6px;background:${c.bg};border-left:3px solid ${c.border};color:${c.texto};font-size:0.85em;">
+            <span style="font-size:1.1em;flex-shrink:0;">${a.icono}</span>
+            <span>${a.mensaje}</span>
+        </div>`;
+    }).join('');
+}
+
+function renderizarControlPaginacion(pag) {
+    let ctrl = document.getElementById('ctrl-paginacion-pedidos');
+    if (!ctrl) {
+        const wrapper = document.querySelector('#view-pedidos .table-wrapper');
+        if (!wrapper) return;
+        ctrl = document.createElement('div');
+        ctrl.id = 'ctrl-paginacion-pedidos';
+        ctrl.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid var(--border-color, #e5e7eb);font-size:0.9em;';
+        wrapper.after(ctrl);
+    }
+
+    const total = pag.total || 0;
+    const paginas = pag.pages || pag.paginas || 1;
+    const pagActual = pag.page || pag.pagina || 1;
+    const limite = pag.limit || pag.limite || 50;
+    const desde = total === 0 ? 0 : (pagActual - 1) * limite + 1;
+    const hasta = Math.min(pagActual * limite, total);
+
+    ctrl.innerHTML = `
+        <span style="color:var(--text-muted,#6b7280);">${desde}–${hasta} de ${total}</span>
+        <button onclick="cambiarPaginaPedidos(-1)" ${pagActual <= 1 ? 'disabled' : ''} class="btn-secondary small" style="padding:4px 10px;">← Anterior</button>
+        <button onclick="cambiarPaginaPedidos(1)" ${pagActual >= paginas ? 'disabled' : ''} class="btn-secondary small" style="padding:4px 10px;">Siguiente →</button>
+    `;
+}
+
+function cambiarPaginaPedidos(delta) {
+    paginaPedidos = Math.max(1, paginaPedidos + delta);
+    cargarPedidos();
+}
+
 function renderizarEstadoPedido(pedidoId, estadoActual) {
     const estados = {
-        'registrado': { color: '#10b981', bg: '#d1fae5', texto: 'Registrado' },
-        'completado': { color: '#3b82f6', bg: '#dbeafe', texto: 'Completado' },
-        'entregado': { color: '#6366f1', bg: '#e0e7ff', texto: 'Entregado' },
-        'cancelado': { color: '#ef4444', bg: '#fee2e2', texto: 'Cancelado' }
+        'registrado':    { color: '#10b981', bg: '#d1fae5', texto: 'Registrado' },
+        'en_preparacion':{ color: '#f59e0b', bg: '#fef3c7', texto: 'En preparación' },
+        'completado':    { color: '#3b82f6', bg: '#dbeafe', texto: 'Completado' },
+        'entregado':     { color: '#6366f1', bg: '#e0e7ff', texto: 'Entregado' },
+        'cancelado':     { color: '#ef4444', bg: '#fee2e2', texto: 'Cancelado' }
     };
-    
+
     const estado = estados[estadoActual] || estados['registrado'];
-    
+
     return `
-        <select onchange="cambiarEstadoPedido(${pedidoId}, this.value, this)" 
-                style="background: ${estado.bg}; color: ${estado.color}; border: 1px solid ${estado.color}; 
+        <select onchange="cambiarEstadoPedido(${pedidoId}, this.value, this)"
+                style="background: ${estado.bg}; color: ${estado.color}; border: 1px solid ${estado.color};
                        padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: 600; cursor: pointer;">
-            <option value="registrado" ${estadoActual === 'registrado' ? 'selected' : ''}>🟢 Registrado</option>
-            <option value="completado" ${estadoActual === 'completado' ? 'selected' : ''}>🔵 Completado</option>
-            <option value="entregado" ${estadoActual === 'entregado' ? 'selected' : ''}>🟣 Entregado</option>
-            <option value="cancelado" ${estadoActual === 'cancelado' ? 'selected' : ''}>🔴 Cancelado</option>
+            <option value="registrado"     ${estadoActual === 'registrado'     ? 'selected' : ''}>🟢 Registrado</option>
+            <option value="en_preparacion" ${estadoActual === 'en_preparacion' ? 'selected' : ''}>🟡 En preparación</option>
+            <option value="completado"     ${estadoActual === 'completado'     ? 'selected' : ''}>🔵 Completado</option>
+            <option value="entregado"      ${estadoActual === 'entregado'      ? 'selected' : ''}>🟣 Entregado</option>
+            <option value="cancelado"      ${estadoActual === 'cancelado'      ? 'selected' : ''}>🔴 Cancelado</option>
         </select>
     `;
 }
@@ -1829,13 +2720,14 @@ function renderizarEstadoPedido(pedidoId, estadoActual) {
 async function cambiarEstadoPedido(pedidoId, nuevoEstado, selectElement) {
     try {
         await window.api.actualizarEstadoPedido(pedidoId, nuevoEstado);
-        
+
         // Actualizar el color del select en tiempo real
         const estados = {
-            'registrado': { color: '#10b981', bg: '#d1fae5' },
-            'completado': { color: '#3b82f6', bg: '#dbeafe' },
-            'entregado': { color: '#6366f1', bg: '#e0e7ff' },
-            'cancelado': { color: '#ef4444', bg: '#fee2e2' }
+            'registrado':    { color: '#10b981', bg: '#d1fae5' },
+            'en_preparacion':{ color: '#f59e0b', bg: '#fef3c7' },
+            'completado':    { color: '#3b82f6', bg: '#dbeafe' },
+            'entregado':     { color: '#6366f1', bg: '#e0e7ff' },
+            'cancelado':     { color: '#ef4444', bg: '#fee2e2' }
         };
         
         const estado = estados[nuevoEstado];
@@ -2046,6 +2938,9 @@ async function cargarClientes() {
                     </span>
                 </td>
                 <td>
+                    <span style="color: #7c3aed; font-weight: 600; font-size: 0.88em;">⭐ ${c.puntos || 0} pts</span>
+                </td>
+                <td>
                     <span style="color: #6b7280; font-size: 0.9em;">${fechaRegistro}</span>
                 </td>
                   <td>
@@ -2068,6 +2963,9 @@ async function cargarClientes() {
 
         // Configurar buscador
         configurarBuscadorClientes(clientes);
+
+        // Cargar programa de fidelidad
+        cargarProgramaFidelidad();
 
     } catch (err) {
         console.error("Error al cargar clientes:", err);
@@ -2149,6 +3047,9 @@ function configurarBuscadorClientes(clientes) {
                     </span>
                 </td>
                 <td>
+                    <span style="color: #7c3aed; font-weight: 600; font-size: 0.88em;">⭐ ${c.puntos || 0} pts</span>
+                </td>
+                <td>
                     <span style="color: #6b7280; font-size: 0.9em;">${fechaRegistro}</span>
                 </td>
                <td>
@@ -2159,7 +3060,7 @@ function configurarBuscadorClientes(clientes) {
                         <button class="btn-secondary small" onclick="editarCliente(${c.id})" title="Editar">
                             ✏️ Editar
                         </button>
-                        <button class="btn-secondary small" onclick="confirmarEliminarCliente(${c.id}, '${c.nombre}')" 
+                        <button class="btn-secondary small" onclick="confirmarEliminarCliente(${c.id}, '${c.nombre}')"
                                 style="color: #ef4444;" title="Eliminar">
                             🗑️
                         </button>
@@ -2311,12 +3212,16 @@ async function actualizarClienteExistente(id) {
             notas: ''
         });
 
-        // ✅ CORREGIDO: Usar mostrarNotificacionExito en lugar de mostrarToast
+        // En modo conectado, también guardar en el backend
+        if (modoConectado && apiClient && tokenActual) {
+            await apiClient.updateCustomer(id, { phone: telefono, name: nombre, address: direccion }).catch(() => {});
+        }
+
         mostrarNotificacionExito('Cliente actualizado correctamente', '¡Cliente Actualizado!');
-        
+
         cerrarModalCliente();
         cargarClientes(); // Recargar la lista
-        
+
     } catch (error) {
         console.error("Error al actualizar cliente:", error);
         alert("Error al actualizar el cliente");
@@ -2349,6 +3254,8 @@ function verDetalleCliente(id) {
         document.getElementById('ver-cli-direccion').innerText = cliente.direccion || 'Sin dirección registrada';
         document.getElementById('ver-cli-compras').innerText = cliente.total_compras || 0;
         document.getElementById('ver-cli-monto').innerText = `$${(cliente.monto_total || 0).toFixed(2)}`;
+        const elPuntos = document.getElementById('ver-cli-puntos');
+        if (elPuntos) elPuntos.innerText = `${cliente.puntos || 0} pts`;
         
         // Formatear fecha
         let fechaRegistro = 'No disponible';
@@ -2393,7 +3300,7 @@ function mostrarRegistroZenit() {
 
 async function cargarCuentaZenitAjustes() {
     const ajustes = await window.api.obtenerAjustes();
-    const token = ajustes.api_token;
+    const token = await window.api.obtenerTokenSeguro();
     const nombre = ajustes.zenit_user_name;
     const email = ajustes.zenit_user_email;
 
@@ -2409,6 +3316,111 @@ async function cargarCuentaZenitAjustes() {
     } else {
         sinCuenta.style.display = '';
         conCuenta.style.display = 'none';
+    }
+    actualizarCardMiPlan();
+    // Cargar empleados si el usuario está conectado y es dueño
+    if (modoConectado && token) {
+        cargarEmpleados();
+        document.getElementById('card-empleados')?.style.setProperty('display', '');
+        document.getElementById('empleados-desc-conectado')?.style.setProperty('display', '');
+        document.getElementById('empleados-desc-local')?.style.setProperty('display', 'none');
+        document.getElementById('btn-nuevo-empleado')?.style.setProperty('display', '');
+    } else {
+        document.getElementById('lista-empleados-body').innerHTML = '';
+        document.getElementById('empleados-desc-conectado')?.style.setProperty('display', 'none');
+        document.getElementById('empleados-desc-local')?.style.setProperty('display', '');
+        document.getElementById('btn-nuevo-empleado')?.style.setProperty('display', 'none');
+    }
+}
+
+/* ============================================
+   GESTIÓN DE EMPLEADOS
+   ============================================ */
+
+const _ROL_LABEL = { cashier: 'Cajero', waiter: 'Mesero', delivery: 'Repartidor' };
+
+async function cargarEmpleados() {
+    const container = document.getElementById('lista-empleados-body');
+    if (!container || !modoConectado || !apiClient) return;
+    try {
+        const empleados = await apiClient.request('/staff');
+        if (!empleados || empleados.length === 0) {
+            container.innerHTML = '<p style="font-size:0.85em;color:#9ca3af;margin:0 0 12px;">Aún no tienes empleados registrados.</p>';
+            return;
+        }
+        container.innerHTML = empleados.map(e => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f3f4f6;">
+                <div>
+                    <p style="margin:0;font-weight:600;font-size:0.9em;">${e.name}</p>
+                    <p style="margin:0;font-size:0.78em;color:#6b7280;">@${e.username} · ${_ROL_LABEL[e.role] || e.role}</p>
+                </div>
+                <button onclick="eliminarEmpleado(${e.id}, '${e.name.replace(/'/g, "\\'")}')"
+                    style="background:none;border:1px solid #fca5a5;color:#ef4444;padding:5px 10px;border-radius:6px;font-size:0.78em;cursor:pointer;">
+                    Eliminar
+                </button>
+            </div>
+        `).join('');
+    } catch (e) {
+        container.innerHTML = '<p style="font-size:0.85em;color:#9ca3af;">No se pudo cargar la lista de empleados.</p>';
+    }
+}
+
+function mostrarFormNuevoEmpleado() {
+    document.getElementById('form-nuevo-empleado').style.display = '';
+    document.getElementById('btn-nuevo-empleado').style.display = 'none';
+    document.getElementById('nv-emp-nombre').value = '';
+    document.getElementById('nv-emp-usuario').value = '';
+    document.getElementById('nv-emp-password').value = '';
+    document.getElementById('nv-emp-rol').value = 'cashier';
+    document.getElementById('nv-emp-nombre').focus();
+}
+
+function cancelarFormEmpleado() {
+    document.getElementById('form-nuevo-empleado').style.display = 'none';
+    document.getElementById('btn-nuevo-empleado').style.display = '';
+}
+
+async function guardarNuevoEmpleado() {
+    const name     = document.getElementById('nv-emp-nombre').value.trim();
+    const username = document.getElementById('nv-emp-usuario').value.trim();
+    const password = document.getElementById('nv-emp-password').value;
+    const role     = document.getElementById('nv-emp-rol').value;
+
+    if (!name || !username || !password) {
+        alert('Completa nombre, usuario y contraseña.');
+        return;
+    }
+    if (password.length < 6) {
+        alert('La contraseña debe tener al menos 6 caracteres.');
+        return;
+    }
+
+    const btn = document.querySelector('#form-nuevo-empleado .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Creando...'; }
+
+    try {
+        const data = await apiClient.request('/staff', {
+            method: 'POST',
+            body: { name, username, password, role }
+        });
+        cancelarFormEmpleado();
+        await cargarEmpleados();
+        mostrarNotificacionExito('Empleado creado', `${name} puede iniciar sesión con usuario "${username}".`);
+    } catch (e) {
+        alert(e.message || 'No se pudo crear el empleado. Verifica que el usuario no esté en uso.');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Crear empleado'; }
+    }
+}
+
+async function eliminarEmpleado(id, nombre) {
+    if (!confirm(`¿Eliminar a ${nombre}? Ya no podrá iniciar sesión.`)) return;
+    try {
+        await apiClient.request(`/staff/${id}`, { method: 'DELETE' });
+        await cargarEmpleados();
+        mostrarNotificacionExito('Empleado eliminado', `${nombre} ya no tiene acceso.`);
+    } catch (e) {
+        alert(e.message || 'No se pudo eliminar el empleado.');
     }
 }
 
@@ -2442,10 +3454,12 @@ async function registrarCuentaZenit() {
 
         const response = await apiClient.register(nombre, email, password);
 
-        await window.api.guardarAjuste('api_token', response.token);
+        await window.api.guardarTokenSeguro(response.token); // Token cifrado
         await window.api.guardarAjuste('api_url', backendUrl);
         await window.api.guardarAjuste('zenit_user_name', response.user.name);
         await window.api.guardarAjuste('zenit_user_email', email);
+        await window.api.guardarAjuste('plan', response.user.plan || 'free');
+        await window.api.guardarAjuste('plan_expires_at', response.user.plan_expires_at || '');
 
         await window.api.guardarAjuste('modo_conectado', 'true');
 
@@ -2453,11 +3467,12 @@ async function registrarCuentaZenit() {
         tokenActual = response.token;
         modoConectado = true;
 
-        await window.api.guardarAjuste('pedir_password_inicio', 'false');
+        await window.api.guardarAjuste('pedir_password_inicio', 'true');
         const switchPwd = document.getElementById('adj-pedir-password');
-        if (switchPwd) switchPwd.checked = false;
+        if (switchPwd) switchPwd.checked = true;
 
         await syncLocalToCloud();
+        await cargarPlanInfo();
         await cargarCuentaZenitAjustes();
         mostrarNotificacionExito('Cuenta creada y datos sincronizados', '¡Bienvenido a Zenit!');
     } catch (error) {
@@ -2490,25 +3505,46 @@ async function iniciarSesionZenitAjustes() {
         if (!apiClient) window.apiClient = new APIClient(backendUrl);
         apiClient.setBaseURL(backendUrl);
 
+        // Verificar si hay pedidos locales "anónimos" antes de iniciar sesión
+        const pendientesLocales = await window.api.obtenerPedidosPendientes();
+        let subirAnonimos = false;
+        if (pendientesLocales && pendientesLocales.length > 0) {
+            subirAnonimos = confirm(
+                `Tienes ${pendientesLocales.length} pedido(s) registrado(s) sin cuenta.\n\n` +
+                '¿Subirlos a tu cuenta?\n\n' +
+                'Acepta → se suben a tu cuenta\n' +
+                'Cancela → se descartan (no se pierden del historial local hasta cerrar sesión)'
+            );
+        }
+
         const response = await apiClient.login(email, password);
 
-        await window.api.guardarAjuste('api_token', response.token);
+        await window.api.guardarTokenSeguro(response.token); // Token cifrado
         await window.api.guardarAjuste('api_url', backendUrl);
         await window.api.guardarAjuste('zenit_user_name', response.user.name);
         await window.api.guardarAjuste('zenit_user_email', email);
+        await window.api.guardarAjuste('plan', response.user.plan || 'free');
+        await window.api.guardarAjuste('plan_expires_at', response.user.plan_expires_at || '');
 
         await window.api.guardarAjuste('modo_conectado', 'true');
 
         apiClient.setToken(response.token);
         tokenActual = response.token;
         modoConectado = true;
+        actualizarIndicadorModo();
 
-        await window.api.guardarAjuste('pedir_password_inicio', 'false');
-        const switchPwd = document.getElementById('adj-pedir-password');
-        if (switchPwd) switchPwd.checked = false;
+        if (subirAnonimos) {
+            await subirPedidosPendientes();
+        } else if (pendientesLocales && pendientesLocales.length > 0) {
+            // Marcar como sincronizados para que no se suban automáticamente al arrancar
+            for (const p of pendientesLocales) {
+                await window.api.marcarPedidoSincronizado(p.id);
+            }
+        }
 
         // Sincronizar todos los datos del backend
         sincronizarDesdeBackend().catch(e => console.warn('syncDesdeBackend:', e));
+        cargarPlanInfo().catch(() => {});
 
         await cargarCuentaZenitAjustes();
         mostrarNotificacionExito('Sesión iniciada', '¡Bienvenido!');
@@ -2521,7 +3557,21 @@ async function iniciarSesionZenitAjustes() {
 }
 
 async function cerrarSesionZenit() {
-    if (!confirm('¿Cerrar sesión?')) return;
+    if (!confirm('¿Cerrar sesión? Los datos se sincronizarán con tu cuenta antes de salir.')) return;
+
+    // 1. Subir pedidos pendientes ANTES de limpiar local
+    try {
+        const pendientes = await window.api.obtenerPedidosPendientes();
+        if (pendientes && pendientes.length > 0) {
+            mostrarNotificacionExito('Sincronizando...', `Subiendo ${pendientes.length} pedido(s) antes de cerrar sesión`);
+            await subirPedidosPendientes();
+        }
+    } catch (e) {
+        console.warn('Error al subir pedidos antes de cerrar sesión:', e);
+    }
+
+    // 2. Limpiar credenciales y datos locales (ahora están seguros en la nube)
+    await window.api.guardarTokenSeguro('');
     await window.api.guardarAjuste('api_token', '');
     await window.api.guardarAjuste('modo_conectado', 'false');
     await window.api.guardarAjuste('pedir_password_inicio', 'false');
@@ -2533,7 +3583,10 @@ async function cerrarSesionZenit() {
 
 function mostrarCambiarPasswordApp() {
     const form = document.getElementById('form-cambiar-password');
-    if (form) form.style.display = form.style.display === 'none' ? '' : 'none';
+    if (!form) return;
+    const visible = form.style.display !== 'none';
+    form.style.display = visible ? 'none' : 'block';
+    if (!visible) document.getElementById('nueva-password-app')?.focus();
 }
 
 async function guardarNuevaPasswordApp() {
@@ -2546,6 +3599,257 @@ async function guardarNuevaPasswordApp() {
     document.getElementById('nueva-password-app').value = '';
     document.getElementById('confirm-password-app').value = '';
     mostrarNotificacionExito('Contraseña del sistema actualizada', '¡Listo!');
+}
+
+// ==========================================
+// SUCURSALES
+// ==========================================
+
+async function guardarYRecargarSucursal() {
+    const sel = document.getElementById('aj-sucursal-id');
+    const valor = sel ? sel.value : '';
+    sucursalIdActual = parseInt(valor) || null;
+    await window.api.guardarAjuste('sucursal_id', valor);
+    mostrarNotificacionExito('Sucursal guardada', 'Actualizando datos...');
+    // Re-sincronizar pedidos y datos con el filtro de la nueva sucursal
+    await sincronizarDesdeBackend();
+    // Refrescar vista de mesas si está abierta
+    const vistaActiva = document.querySelector('.view.active');
+    if (vistaActiva && vistaActiva.id === 'view-mesas') {
+        await cargarVistaMesas();
+    }
+}
+
+async function cargarSucursalesAjustes() {
+    if (!modoConectado || !apiClient || !tokenActual) return;
+    const sel = document.getElementById('aj-sucursal-id');
+    if (!sel) return;
+    try {
+        let branches = await apiClient.request('/branches');
+        // Si no hay ninguna sucursal, crear la primera automáticamente
+        if (!branches || branches.length === 0) {
+            const nueva = await apiClient.request('/branches', {
+                method: 'POST',
+                body: { name: 'Esta sucursal' }
+            });
+            branches = [nueva];
+        }
+        // Si hay exactamente una sucursal y este dispositivo no tiene ninguna asignada, asignarla automáticamente
+        if (branches.length === 1 && !sucursalIdActual) {
+            sucursalIdActual = branches[0].id;
+            await window.api.guardarAjuste('sucursal_id', String(sucursalIdActual));
+        }
+        // Limpiar opciones excepto la primera (sin sucursal)
+        while (sel.options.length > 1) sel.remove(1);
+        (branches || []).forEach(b => {
+            const opt = document.createElement('option');
+            opt.value = b.id;
+            opt.textContent = b.name;
+            if (sucursalIdActual === b.id) opt.selected = true;
+            sel.appendChild(opt);
+        });
+        sel.addEventListener('change', async () => {
+            sucursalIdActual = parseInt(sel.value) || null;
+            await window.api.guardarAjuste('sucursal_id', sel.value);
+        });
+        await cargarTabsSucursales(branches);
+    } catch (e) {
+        console.error('Error cargando sucursales:', e);
+    }
+}
+
+async function cargarTabsSucursales(branches) {
+    const container = document.getElementById('branch-tabs-container');
+    if (!container) return;
+    if (!branches || branches.length <= 1) {
+        container.style.display = 'none';
+        return;
+    }
+    container.innerHTML = '';
+    container.style.display = 'flex';
+
+    const btnTodas = document.createElement('button');
+    btnTodas.className = 'branch-tab active';
+    btnTodas.textContent = 'Todas';
+    btnTodas.onclick = () => cambiarSucursalVista(null, btnTodas, container);
+    container.appendChild(btnTodas);
+
+    branches.forEach(b => {
+        const btn = document.createElement('button');
+        btn.className = 'branch-tab';
+        btn.textContent = b.name;
+        btn.onclick = () => cambiarSucursalVista(b.id, btn, container);
+        container.appendChild(btn);
+    });
+}
+
+async function cambiarSucursalVista(branchId, activeBtn, container) {
+    sucursalVistaActual = branchId;
+    if (container) {
+        container.querySelectorAll('.branch-tab').forEach(b => b.classList.remove('active'));
+    }
+    if (activeBtn) activeBtn.classList.add('active');
+    await cargarDashboard();
+}
+
+async function abrirGestorSucursales() {
+    const modal = document.getElementById('modal-gestor-sucursales');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    await recargarListaSucursales();
+}
+
+async function recargarListaSucursales() {
+    const tbody = document.getElementById('lista-sucursales-body');
+    if (!tbody) return;
+    try {
+        const branches = await apiClient.request('/branches');
+        tbody.innerHTML = '';
+        (branches || []).forEach(b => {
+            const esEsteDispositivo = sucursalIdActual === b.id;
+            const tr = document.createElement('tr');
+            const badge = esEsteDispositivo
+                ? ' <span style="background:#ede9fe;color:#7c3aed;font-size:0.75em;padding:2px 6px;border-radius:10px;font-weight:600;">📍 Este dispositivo</span>'
+                : '';
+            const btnEliminar = esEsteDispositivo ? '' : `<button class="btn-danger small" onclick="desactivarSucursal(${b.id}, '${(b.name||'').replace(/'/g,"\\'")}')">Eliminar</button>`;
+            const svgLapiz = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:middle;"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>';
+            tr.innerHTML = `<td>${b.name}${badge}</td><td>${b.address || '—'}</td><td>Activa</td>
+                <td><div style="display:flex;gap:6px;align-items:center;">
+                <button class="btn-secondary small" style="display:inline-flex;align-items:center;" onclick="editarSucursal(${b.id}, '${(b.name||'').replace(/'/g,"\\'")}', '${(b.address||'').replace(/'/g,"\\'")}', '${(b.phone||'').replace(/'/g,"\\'")}')"><span style="display:flex;align-items:center;gap:4px;">${svgLapiz}Editar</span></button>
+                ${btnEliminar}</div></td>`;
+            tbody.appendChild(tr);
+        });
+    } catch (e) {
+        console.error('Error cargando sucursales:', e);
+    }
+}
+
+function mostrarFormNuevaSucursal() {
+    const f = document.getElementById('form-nueva-sucursal');
+    if (f) f.style.display = '';
+}
+
+function ocultarFormNuevaSucursal() {
+    const f = document.getElementById('form-nueva-sucursal');
+    if (f) f.style.display = 'none';
+    ['ns-nombre','ns-direccion','ns-telefono'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+}
+
+async function guardarNuevaSucursal() {
+    const nombre = document.getElementById('ns-nombre')?.value?.trim();
+    if (!nombre) { alert('El nombre de la sucursal es requerido'); return; }
+    const direccion = document.getElementById('ns-direccion')?.value?.trim() || '';
+    const telefono = document.getElementById('ns-telefono')?.value?.trim() || '';
+    const checkboxes = document.querySelectorAll('#form-nueva-sucursal input[type="checkbox"][value]');
+    const clone_options = [...checkboxes].filter(c => c.checked).map(c => c.value);
+    try {
+        await apiClient.request('/branches', {
+            method: 'POST',
+            body: { name: nombre, address: direccion, phone: telefono, clone_options }
+        });
+        ocultarFormNuevaSucursal();
+        await recargarListaSucursales();
+        await cargarSucursalesAjustes();
+        mostrarNotificacionExito('Sucursal creada correctamente', '¡Listo!');
+    } catch (e) {
+        alert('Error al crear la sucursal: ' + (e.message || 'Error desconocido'));
+    }
+}
+
+async function desactivarSucursal(id, nombre) {
+    if (!confirm(`¿Eliminar la sucursal "${nombre}"?\n\nSus pedidos no se borran, pero esta sucursal dejará de aparecer.`)) return;
+    try {
+        await apiClient.request(`/branches/${id}`, { method: 'DELETE' });
+        await recargarListaSucursales();
+        await cargarSucursalesAjustes();
+    } catch (e) {
+        alert('Error al desactivar la sucursal');
+    }
+}
+
+function editarSucursal(id, nombre, direccion) {
+    document.getElementById('es-id').value = id;
+    document.getElementById('es-nombre').value = nombre;
+    document.getElementById('es-direccion').value = direccion;
+    document.getElementById('form-nueva-sucursal').style.display = 'none';
+    document.getElementById('form-editar-sucursal').style.display = '';
+    document.getElementById('es-nombre').focus();
+}
+
+function cerrarFormEditarSucursal() {
+    document.getElementById('form-editar-sucursal').style.display = 'none';
+}
+
+async function guardarEditarSucursal() {
+    const id = document.getElementById('es-id').value;
+    const nombre = document.getElementById('es-nombre').value.trim();
+    const direccion = document.getElementById('es-direccion').value.trim();
+    if (!nombre) { alert('El nombre es requerido'); return; }
+    try {
+        await apiClient.request(`/branches/${id}`, {
+            method: 'PUT',
+            body: { name: nombre, address: direccion }
+        });
+        cerrarFormEditarSucursal();
+        await recargarListaSucursales();
+        await cargarSucursalesAjustes();
+        mostrarNotificacionExito('Sucursal actualizada', '¡Listo!');
+    } catch (e) {
+        alert('Error al actualizar la sucursal');
+    }
+}
+
+async function cargarUrlKDS() {
+    try {
+        const urls = await window.api.kdsGetUrl();
+        const elUrls = document.getElementById('kds-urls');
+        const elNo   = document.getElementById('kds-no-disponible');
+        if (!elUrls || !elNo) return;
+        if (urls && urls.local) {
+            document.getElementById('kds-url-local').textContent = urls.local;
+            const lanUrl = urls.red || urls.local;
+            document.getElementById('kds-url-lan').textContent = lanUrl;
+
+            // QR code via servicio público (requiere internet en la red)
+            const qrImg = document.getElementById('kds-qr-img');
+            if (qrImg && lanUrl !== urls.local) {
+                const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(lanUrl)}`;
+                qrImg.src = qrSrc;
+                qrImg.style.display = 'block';
+                document.getElementById('kds-qr-fallback').style.display = 'none';
+            }
+
+            elUrls.style.display = 'block';
+            elNo.style.display   = 'none';
+        }
+    } catch (e) {
+        console.warn('cargarUrlKDS:', e);
+    }
+}
+
+function abrirKDSLocal() {
+    const url = document.getElementById('kds-url-local')?.textContent;
+    if (url) window.open(url, '_blank');
+}
+
+function copiarUrl(elementId) {
+    const texto = document.getElementById(elementId)?.textContent;
+    if (!texto) return;
+    navigator.clipboard.writeText(texto).then(() => {
+        mostrarNotificacionExito('URL copiada al portapapeles', '');
+    }).catch(() => {
+        // Fallback para Electron
+        const el = document.createElement('textarea');
+        el.value = texto;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+        mostrarNotificacionExito('URL copiada al portapapeles', '');
+    });
 }
 
 async function cargarAjustesInstalados() {
@@ -2621,12 +3925,42 @@ async function cargarAjustesInstalados() {
         // Permisos por rol (solo dueño)
         cargarPermisosAjustes();
 
+        // Sistema de puntos
+        const elPuntosActivos = document.getElementById('aj-puntos-activos');
+        if (elPuntosActivos) elPuntosActivos.checked = (ajustes.puntos_activos === 'true');
+        const elPuntosPeso = document.getElementById('aj-puntos-por-peso');
+        if (elPuntosPeso) elPuntosPeso.value = ajustes.puntos_por_peso || '0.1';
+        const elPuntosBono = document.getElementById('aj-puntos-bono');
+        if (elPuntosBono) elPuntosBono.value = ajustes.puntos_bono_pedido || '0';
+        const elPuntosValor = document.getElementById('aj-puntos-valor');
+        if (elPuntosValor) elPuntosValor.value = ajustes.puntos_valor || '0.10';
+
+        // PIN de descuentos
+        const elReqPin = document.getElementById('aj-requiere-pin-descuento');
+        if (elReqPin) {
+            elReqPin.checked = (ajustes.requiere_pin_descuentos === 'true');
+            const grupoPin = document.getElementById('grupo-pin-descuento');
+            if (grupoPin) grupoPin.style.display = elReqPin.checked ? '' : 'none';
+        }
+        const elPinVal = document.getElementById('aj-pin-descuento');
+        if (elPinVal) elPinVal.value = ajustes.pin_descuentos || '';
+
         // Switch pedir contraseña al iniciar
         const switchPwd = document.getElementById('adj-pedir-password');
         if (switchPwd) switchPwd.checked = (ajustes.pedir_password_inicio !== 'false');
 
         // Cuenta Zenit
         await cargarCuentaZenitAjustes();
+
+        // Modo solo online
+        const elModoOnline = document.getElementById('aj-modo-solo-online');
+        if (elModoOnline) elModoOnline.checked = (ajustes.modo_solo_online === 'true');
+
+        // Sucursales
+        await cargarSucursalesAjustes();
+
+        // KDS
+        cargarUrlKDS();
 
         console.log("Ajustes cargados con éxito.");
     } catch (error) {
@@ -2706,6 +4040,52 @@ function agregarListenersGuardadoAjustes() {
             await window.api.guardarAjuste('venta_sin_turno', ventaSinTurnoEl.checked ? 'true' : 'false');
         });
     }
+
+    // Sistema de puntos
+    const elPuntosActivos = document.getElementById('aj-puntos-activos');
+    if (elPuntosActivos) {
+        elPuntosActivos.addEventListener('change', () =>
+            window.api.guardarAjuste('puntos_activos', elPuntosActivos.checked ? 'true' : 'false'));
+    }
+    const elPuntosPeso = document.getElementById('aj-puntos-por-peso');
+    if (elPuntosPeso) {
+        elPuntosPeso.addEventListener('change', () =>
+            window.api.guardarAjuste('puntos_por_peso', elPuntosPeso.value));
+    }
+    const elPuntosBono = document.getElementById('aj-puntos-bono');
+    if (elPuntosBono) {
+        elPuntosBono.addEventListener('change', () =>
+            window.api.guardarAjuste('puntos_bono_pedido', elPuntosBono.value));
+    }
+    const elPuntosValor = document.getElementById('aj-puntos-valor');
+    if (elPuntosValor) {
+        elPuntosValor.addEventListener('change', () =>
+            window.api.guardarAjuste('puntos_valor', elPuntosValor.value));
+    }
+
+    // PIN de descuentos
+    const elReqPin = document.getElementById('aj-requiere-pin-descuento');
+    if (elReqPin) {
+        elReqPin.addEventListener('change', () => {
+            window.api.guardarAjuste('requiere_pin_descuentos', elReqPin.checked ? 'true' : 'false');
+            const grupoPin = document.getElementById('grupo-pin-descuento');
+            if (grupoPin) grupoPin.style.display = elReqPin.checked ? '' : 'none';
+        });
+    }
+    const elPinVal = document.getElementById('aj-pin-descuento');
+    if (elPinVal) {
+        elPinVal.addEventListener('change', () =>
+            window.api.guardarAjuste('pin_descuentos', elPinVal.value));
+    }
+
+    // Modo Solo Online
+    const elModoOnline = document.getElementById('aj-modo-solo-online');
+    if (elModoOnline) {
+        elModoOnline.addEventListener('change', () => {
+            modoSoloOnline = elModoOnline.checked;
+            window.api.guardarAjuste('modo_solo_online', modoSoloOnline ? 'true' : 'false');
+        });
+    }
 }
 
 function toggleDarkMode(isChecked) {
@@ -2740,8 +4120,8 @@ async function imprimirTicket(pedidoId) {
     try {
         // 1. Obtener datos del pedido
         const detalles = await obtenerDetallePedidoWrapper(pedidoId);
-        const pedidos = await obtenerPedidosWrapper({ limit: 1000 });
-        const pedido = pedidos.find(p => p.id === pedidoId);
+        const pedidosResult = await obtenerPedidosWrapper({ limit: 1000 });
+        const pedido = (pedidosResult.data || pedidosResult).find(p => p.id === pedidoId);
         
         if (!pedido || !detalles) {
             alert('No se pudo cargar la información del pedido');
@@ -2971,6 +4351,12 @@ async function imprimirTicket(pedidoId) {
                             <span>${pedido.metodo_pago || 'N/A'}</span>
                         </div>
                     </div>
+
+                    ${(ajustes.puntos_activos === 'true' && nombreClienteTicket) ? `
+                    <div class="separator"></div>
+                    <div style="text-align:center;font-size:11px;margin:6px 0;">
+                        <div>⭐ Puntos ganados: <b>+${Math.floor(pedido.total * parseFloat(ajustes.puntos_por_peso || '0')) + parseInt(ajustes.puntos_bono_pedido || '0')}</b></div>
+                    </div>` : ''}
 
                     <div class="footer">
                         <div class="gracias">¡Gracias por tu compra!</div>
@@ -3788,16 +5174,27 @@ async function guardarDescuento() {
     if (!nombre || isNaN(valor) || valor <= 0) { alert('Completa todos los campos correctamente.'); return; }
     try {
         const datos = { nombre, tipo, valor };
-        if (descuentoEditandoId) {
-            await window.api.actualizarDescuento(descuentoEditandoId, datos);
+        if (modoConectado && apiClient && tokenActual) {
+            const tipoBackend = tipo === 'porcentaje' ? 'percentage' : 'fixed';
+            if (descuentoEditandoId) {
+                await apiClient.request(`/offers/discounts/${descuentoEditandoId}`, { method: 'PUT', body: { name: nombre, type: tipoBackend, value: valor, applies_to: 'all' } });
+                await window.api.actualizarDescuento(descuentoEditandoId, datos);
+            } else {
+                const creado = await apiClient.request('/offers/discounts', { method: 'POST', body: { name: nombre, type: tipoBackend, value: valor, applies_to: 'all' } });
+                await window.api.agregarDescuentoConId(creado.id, datos);
+            }
         } else {
-            await window.api.agregarDescuento(datos);
+            if (descuentoEditandoId) {
+                await window.api.actualizarDescuento(descuentoEditandoId, datos);
+            } else {
+                await window.api.agregarDescuento(datos);
+            }
         }
         cerrarModalNuevoDescuento();
         descuentosCache = await window.api.obtenerDescuentos();
         renderizarTablaDescuentos();
         mostrarNotificacionExito('Descuento guardado', '¡Guardado!');
-    } catch(e) { alert('Error al guardar el descuento'); }
+    } catch(e) { console.error(e); alert('Error al guardar el descuento'); }
 }
 
 function editarDescuento(id) {
@@ -3807,6 +5204,9 @@ function editarDescuento(id) {
 
 async function confirmarEliminarDescuento(id, nombre) {
     if (confirm(`¿Eliminar el descuento "${nombre}"?`)) {
+        if (modoConectado && apiClient && tokenActual) {
+            try { await apiClient.request(`/offers/discounts/${id}`, { method: 'DELETE' }); } catch(e) { console.warn('Error al eliminar descuento en backend:', e.message); }
+        }
         await window.api.eliminarDescuento(id);
         descuentosCache = await window.api.obtenerDescuentos();
         renderizarTablaDescuentos();
@@ -3927,12 +5327,27 @@ async function guardarCombo() {
     if (items.length === 0) { alert('Agrega al menos un producto al combo.'); return; }
     try {
         const datos = { nombre, descripcion, precio_especial };
-        if (comboEditandoId) {
-            await window.api.actualizarCombo(comboEditandoId, datos);
-            await window.api.guardarItemsCombo(comboEditandoId, items);
+        const itemsBackend = items.map(i => ({ product_id: i.producto_id, quantity: i.cantidad }));
+        if (modoConectado && apiClient && tokenActual) {
+            if (comboEditandoId) {
+                await apiClient.request(`/offers/combos/${comboEditandoId}`, { method: 'PUT', body: { name: nombre, description: descripcion, price: precio_especial } });
+                await apiClient.request(`/offers/combos/${comboEditandoId}/items`, { method: 'POST', body: { items: itemsBackend } });
+                await window.api.actualizarCombo(comboEditandoId, datos);
+                await window.api.guardarItemsCombo(comboEditandoId, items);
+            } else {
+                const creado = await apiClient.request('/offers/combos', { method: 'POST', body: { name: nombre, description: descripcion, price: precio_especial } });
+                await apiClient.request(`/offers/combos/${creado.id}/items`, { method: 'POST', body: { items: itemsBackend } });
+                await window.api.agregarComboConId(creado.id, datos);
+                await window.api.guardarItemsCombo(creado.id, items);
+            }
         } else {
-            const nuevoId = await window.api.agregarCombo(datos);
-            await window.api.guardarItemsCombo(nuevoId, items);
+            if (comboEditandoId) {
+                await window.api.actualizarCombo(comboEditandoId, datos);
+                await window.api.guardarItemsCombo(comboEditandoId, items);
+            } else {
+                const nuevoId = await window.api.agregarCombo(datos);
+                await window.api.guardarItemsCombo(nuevoId, items);
+            }
         }
         cerrarModalNuevoCombo();
         combosCache = await window.api.obtenerCombos();
@@ -3948,6 +5363,9 @@ async function editarCombo(id) {
 
 async function confirmarEliminarCombo(id, nombre) {
     if (confirm(`¿Eliminar el combo "${nombre}"?`)) {
+        if (modoConectado && apiClient && tokenActual) {
+            try { await apiClient.request(`/offers/combos/${id}`, { method: 'DELETE' }); } catch(e) { console.warn('Error al eliminar combo en backend:', e.message); }
+        }
         await window.api.eliminarCombo(id);
         combosCache = await window.api.obtenerCombos();
         renderizarTablaCombos();
@@ -3983,75 +5401,6 @@ async function crearRespaldoAhora() {
 async function abrirCarpetaBackups() {
     await window.api.abrirCarpetaBackups();
 }
-
-/* ============================================
-   GESTIÓN DE MODO DE CONEXIÓN
-   ============================================ */
-
-// Definir funciones globalmente
-(function() {
-    window.abrirModalConfiguracionConexion = function() {
-        console.log('🔵 Abriendo modal de configuración...');
-        
-        // Actualizar UI con estado actual
-        const selectorModo = document.getElementById('selector-modo-conexion');
-        const modoDisplay = document.getElementById('modo-actual-display');
-        const configBackend = document.getElementById('config-backend');
-        const infoConexion = document.getElementById('info-conexion-actual');
-        
-        if (modoConectado) {
-            selectorModo.value = 'conectado';
-            modoDisplay.innerHTML = '🌐 MODO CONECTADO';
-            modoDisplay.style.color = '#10b981';
-            configBackend.style.display = 'block';
-            
-            if (tokenActual) {
-                infoConexion.style.display = 'block';
-                document.getElementById('usuario-conectado').innerText = `Usuario autenticado correctamente`;
-            }
-        } else {
-            selectorModo.value = 'local';
-            modoDisplay.innerHTML = '🔌 MODO LOCAL';
-            modoDisplay.style.color = '#2563eb';
-            configBackend.style.display = 'none';
-        }
-        
-        // Mostrar modal
-        const modal = document.getElementById('modal-configuracion-conexion');
-        modal.classList.remove('hidden');
-        modal.style.display = 'flex';
-        
-        console.log('✅ Modal abierto');
-    };
-
-    window.cerrarModalConfiguracionConexion = function() {
-        console.log('🔴 Cerrando modal de configuración...');
-        const modal = document.getElementById('modal-configuracion-conexion');
-        modal.classList.add('hidden');
-        modal.style.display = 'none';
-    };
-
-    window.cambiarModoConexion = function(modo) {
-        console.log('🔄 Cambiando modo a:', modo);
-        const configBackend = document.getElementById('config-backend');
-        const modoDisplay = document.getElementById('modo-actual-display');
-        
-        if (modo === 'conectado') {
-            configBackend.style.display = 'block';
-            modoDisplay.innerHTML = '🌐 MODO CONECTADO';
-            modoDisplay.style.color = '#10b981';
-        } else {
-            configBackend.style.display = 'none';
-            modoDisplay.innerHTML = '🔌 MODO LOCAL';
-            modoDisplay.style.color = '#2563eb';
-            
-            // Cambiar a modo local inmediatamente
-            if (typeof window.activarModoLocal === 'function') {
-                window.activarModoLocal();
-            }
-        }
-    };
-})();
 
 // ============================================
 // SINCRONIZACIÓN LOCAL → NUBE
@@ -4145,6 +5494,7 @@ async function syncLocalToCloud() {
 
 async function sincronizarDesdeBackend() {
     if (!modoConectado || !apiClient || !tokenActual) return;
+    if (modoSoloOnline) return; // En modo solo online no se descarga nada localmente
     console.log('🔄 Sincronizando datos del backend...');
     try {
         // 1. Categorías
@@ -4159,24 +5509,27 @@ async function sincronizarDesdeBackend() {
         const clientes = await apiClient.getCustomers();
         await window.api.syncClientes(clientes);
 
-        // 4-6. Inventario (insumos, preparaciones, recetas) — solo sincronizar si el
-        // backend tiene datos; si está vacío, conservar los datos locales para no perderlos
-        const insumosBackend = await apiClient.request('/inventory/ingredients');
-        if (insumosBackend && insumosBackend.length > 0) {
-            await window.api.syncInsumos(insumosBackend);
-            const preps = await apiClient.request('/inventory/preparations');
-            await window.api.syncPreparaciones(preps);
-            const recetas = await apiClient.request('/inventory/all-recipes');
-            await window.api.syncRecetas(recetas);
+        // 4-6. Inventario (solo Premium)
+        if (puedeAccederPremium()) {
+            await subirInventarioLocalAlBackend();
+            const insumosBackend = await apiClient.request('/inventory/ingredients');
+            if (insumosBackend && insumosBackend.length > 0) {
+                await window.api.syncInsumos(insumosBackend);
+                const preps = await apiClient.request('/inventory/preparations');
+                await window.api.syncPreparaciones(preps);
+                const recetas = await apiClient.request('/inventory/all-recipes');
+                await window.api.syncRecetas(recetas);
+            }
         }
 
-        // 7. Descuentos
-        const descuentos = await apiClient.request('/offers/discounts');
-        await window.api.syncDescuentos(descuentos);
-
-        // 8. Combos (con sus items)
-        const combos = await apiClient.request('/offers/combos');
-        await window.api.syncCombos(combos);
+        // 7-8. Ofertas (solo Premium)
+        if (puedeAccederPremium()) {
+            await subirOfertasLocalesAlBackend();
+            const descuentos = await apiClient.request('/offers/discounts');
+            await window.api.syncDescuentos(descuentos);
+            const combos = await apiClient.request('/offers/combos');
+            await window.api.syncCombos(combos);
+        }
 
         // 9. Ajustes del negocio (PINs y permisos)
         try {
@@ -4186,6 +5539,16 @@ async function sincronizarDesdeBackend() {
             }
         } catch (e) {
             console.warn('No se pudieron sincronizar ajustes de negocio:', e.message);
+        }
+
+        // 10. Pedidos recientes (para consulta offline)
+        try {
+            const branchQuery = sucursalIdActual ? `&branch_id=${sucursalIdActual}` : '';
+            const pedidosBackend = await apiClient.request(`/orders?limit=200&page=1${branchQuery}`);
+            // Siempre sincronizar (incluso con 0 resultados limpia pedidos de otra sucursal)
+            await window.api.syncPedidos((pedidosBackend && pedidosBackend.data) ? pedidosBackend.data : []);
+        } catch (e) {
+            console.warn('No se pudieron sincronizar pedidos:', e.message);
         }
 
         console.log('✅ Sincronización desde backend completada');
@@ -4208,11 +5571,12 @@ async function subirPedidosPendientes() {
                     customer_temp_info: pedido.info_cliente_temp || null,
                     total: pedido.total,
                     payment_method: pedido.metodo_pago,
-                    order_type: pedido.tipo_pedido || 'comer',
+                    order_type: (pedido.tipo_pedido === 'mesa' ? 'comer' : pedido.tipo_pedido) || 'comer',
                     reference: pedido.referencia || null,
                     delivery_address: pedido.direccion_domicilio || null,
                     maps_link: pedido.link_maps || null,
-                    notes: pedido.notas_generales || null
+                    notes: pedido.notas_generales || null,
+                    branch_id: sucursalIdActual || null
                 };
                 const itemsAPI = items.map(i => ({
                     product_id: i.producto_id,
@@ -4233,92 +5597,121 @@ async function subirPedidosPendientes() {
     }
 }
 
-window.testearConexionBackend = async function() {
-    const url = document.getElementById('backend-url').value.trim();
-    const username = document.getElementById('backend-username').value.trim();
-    const password = document.getElementById('backend-password').value.trim();
-    const resultadoDiv = document.getElementById('resultado-conexion');
-    const infoConexion = document.getElementById('info-conexion-actual');
-    
-    if (!url || !username || !password) {
-        window.mostrarResultadoConexion('error', '❌ Por favor completa todos los campos');
-        return;
-    }
-    
-    resultadoDiv.style.display = 'block';
-    resultadoDiv.style.background = '#fef3c7';
-    resultadoDiv.style.color = '#92400e';
-    resultadoDiv.innerHTML = '⏳ Probando conexión...';
-    
+async function subirInventarioLocalAlBackend() {
+    if (!modoConectado || !apiClient || !tokenActual) return;
     try {
-        apiClient.setBaseURL(url);
-        const response = await apiClient.login(username, password);
-        
-        if (response.token) {
-            tokenActual = response.token;
-            apiClient.setToken(response.token);
-            modoConectado = true;
-            
-            await window.api.guardarAjuste('modo_conectado', 'true');
-            await window.api.guardarAjuste('api_url', url);
-            await window.api.guardarAjuste('api_token', response.token);
+        // Verificar si el backend ya tiene inventario
+        const insumosBackend = await apiClient.request('/inventory/ingredients');
+        if (insumosBackend && insumosBackend.length > 0) return; // Ya tiene datos, no sobreescribir
 
-            await syncLocalToCloud();
+        const insumosLocales = await window.api.obtenerInsumos();
+        if (!insumosLocales || insumosLocales.length === 0) return;
+        console.log(`📤 Subiendo ${insumosLocales.length} insumo(s) al backend...`);
 
-            window.mostrarResultadoConexion('success', `✅ Conexión exitosa. Bienvenido ${response.user.name}`);
-            
-            infoConexion.style.display = 'block';
-            document.getElementById('usuario-conectado').innerText = 
-                `Usuario: ${response.user.name} (${response.user.role})`;
-            
-            document.getElementById('modo-actual-display').innerHTML = '🌐 MODO CONECTADO';
-            document.getElementById('modo-actual-display').style.color = '#10b981';
-            
-            console.log('✅ Modo conectado activado');
-            
-            setTimeout(() => {
-                location.reload();
-            }, 2000);
-            
-        } else {
-            throw new Error('No se recibió token de autenticación');
+        // Mapa: id local → id backend
+        const mapaInsumos = {};
+        for (const insumo of insumosLocales) {
+            try {
+                const creado = await apiClient.request('/inventory/ingredients', { method: 'POST', body: {
+                    name: insumo.nombre, unit: insumo.unidad,
+                    stock: insumo.stock_actual || 0, min_stock: insumo.stock_minimo || 0
+                } });
+                mapaInsumos[insumo.id] = creado.id;
+            } catch (e) { console.warn(`No se pudo subir insumo ${insumo.nombre}:`, e.message); }
+        }
+
+        // Subir preparaciones
+        const prepsLocales = await window.api.obtenerPreparaciones();
+        const mapaPreps = {};
+        for (const prep of (prepsLocales || [])) {
+            try {
+                const creado = await apiClient.request('/inventory/preparations', { method: 'POST', body: {
+                    name: prep.nombre, unit: 'unidad', yield_quantity: 1, notes: prep.descripcion || ''
+                } });
+                mapaPreps[prep.id] = creado.id;
+                // Subir items de esta preparación
+                const items = await window.api.obtenerItemsPreparacion(prep.id);
+                if (items && items.length > 0) {
+                    const itemsMapeados = items
+                        .filter(it => mapaInsumos[it.insumo_id])
+                        .map(it => ({ ingredient_id: mapaInsumos[it.insumo_id], quantity: it.cantidad }));
+                    if (itemsMapeados.length > 0) {
+                        await apiClient.request(`/inventory/preparations/${creado.id}/recipe`, { method: 'POST', body: { items: itemsMapeados } });
+                    }
+                }
+            } catch (e) { console.warn(`No se pudo subir preparación ${prep.nombre}:`, e.message); }
+        }
+
+        // Subir recetas de productos (receta_items)
+        const productosLocales = await window.api.obtenerProductosAgrupados();
+        const todosProductos = (productosLocales || []).flatMap(c => c.productos || []);
+        for (const prod of todosProductos) {
+            try {
+                const receta = await window.api.obtenerRecetaProducto(prod.id);
+                if (!receta || receta.length === 0) continue;
+                const itemsMapeados = receta.map(it => {
+                    const backendId = it.tipo === 'ingrediente' ? mapaInsumos[it.referencia_id] : mapaPreps[it.referencia_id];
+                    if (!backendId) return null;
+                    return { item_type: it.tipo === 'ingrediente' ? 'ingredient' : 'preparation', item_id: backendId, quantity: it.cantidad };
+                }).filter(Boolean);
+                if (itemsMapeados.length > 0) {
+                    await apiClient.request(`/inventory/products/${prod.id}/recipe`, { method: 'POST', body: { items: itemsMapeados } });
+                }
+            } catch (e) { console.warn(`No se pudo subir receta del producto ${prod.id}:`, e.message); }
+        }
+
+        console.log('✅ Inventario local subido al backend');
+        // Re-sincronizar para que los IDs locales queden iguales a los del backend
+        const insumosNuevos = await apiClient.request('/inventory/ingredients');
+        await window.api.syncInsumos(insumosNuevos);
+        const prepsNuevos = await apiClient.request('/inventory/preparations');
+        await window.api.syncPreparaciones(prepsNuevos);
+        const recetasNuevas = await apiClient.request('/inventory/all-recipes');
+        await window.api.syncRecetas(recetasNuevas);
+    } catch (error) {
+        console.error('Error al subir inventario al backend:', error);
+    }
+}
+
+async function subirOfertasLocalesAlBackend() {
+    if (!modoConectado || !apiClient || !tokenActual) return;
+    try {
+        // Descuentos
+        const descBackend = await apiClient.request('/offers/discounts');
+        if (!descBackend || descBackend.length === 0) {
+            const descLocales = await window.api.obtenerDescuentos();
+            for (const d of (descLocales || [])) {
+                try {
+                    const tipoBackend = d.tipo === 'porcentaje' ? 'percentage' : 'fixed';
+                    const creado = await apiClient.request('/offers/discounts', { method: 'POST', body: { name: d.nombre, type: tipoBackend, value: d.valor, applies_to: 'all' } });
+                    await window.api.agregarDescuentoConId(creado.id, d);
+                    await window.api.eliminarDescuento(d.id);
+                } catch (e) { console.warn(`No se pudo subir descuento ${d.nombre}:`, e.message); }
+            }
+        }
+
+        // Combos
+        const combosBackend = await apiClient.request('/offers/combos');
+        if (!combosBackend || combosBackend.length === 0) {
+            const combosLocales = await window.api.obtenerCombos();
+            for (const c of (combosLocales || [])) {
+                try {
+                    const creado = await apiClient.request('/offers/combos', { method: 'POST', body: { name: c.nombre, description: c.descripcion || '', price: c.precio_especial } });
+                    const items = await window.api.obtenerItemsCombo(c.id);
+                    if (items && items.length > 0) {
+                        const itemsBackend = items.map(i => ({ product_id: i.producto_id, quantity: i.cantidad }));
+                        await apiClient.request(`/offers/combos/${creado.id}/items`, { method: 'POST', body: { items: itemsBackend } });
+                    }
+                    await window.api.agregarComboConId(creado.id, c);
+                    await window.api.guardarItemsCombo(creado.id, items || []);
+                    await window.api.eliminarCombo(c.id);
+                } catch (e) { console.warn(`No se pudo subir combo ${c.nombre}:`, e.message); }
+            }
         }
     } catch (error) {
-        console.error('Error al conectar con backend:', error);
-        window.mostrarResultadoConexion('error', `❌ Error: ${error.message}`);
-        window.activarModoLocal();
+        console.error('Error al subir ofertas al backend:', error);
     }
-};
-
-window.mostrarResultadoConexion = function(tipo, mensaje) {
-    const resultadoDiv = document.getElementById('resultado-conexion');
-    resultadoDiv.style.display = 'block';
-    
-    if (tipo === 'success') {
-        resultadoDiv.style.background = '#d1fae5';
-        resultadoDiv.style.color = '#065f46';
-        resultadoDiv.style.borderLeft = '4px solid #10b981';
-    } else {
-        resultadoDiv.style.background = '#fee2e2';
-        resultadoDiv.style.color = '#991b1b';
-        resultadoDiv.style.borderLeft = '4px solid #ef4444';
-    }
-    
-    resultadoDiv.innerHTML = mensaje;
-};
-
-window.activarModoLocal = async function() {
-    modoConectado = false;
-    tokenActual = null;
-    
-    await window.api.guardarAjuste('modo_conectado', 'false');
-    await window.api.guardarAjuste('api_token', '');
-    
-    console.log('🔌 Modo local activado');
-    
-    document.getElementById('modo-actual-display').innerHTML = '🔌 MODO LOCAL';
-    document.getElementById('modo-actual-display').style.color = '#2563eb';
-};
+}
 
 // ============================================
 // PERFIL — SELECCIÓN AL INICIO
@@ -4421,6 +5814,8 @@ function cancelarSeleccionPerfil() {
 function completarSeleccionPerfil(rol) {
     rolActivo = rol;
     nombreActivo = document.getElementById('perfil-nombre-input')?.value?.trim() || '';
+    // Comunicar el rol al proceso principal para validación de permisos en IPC
+    window.api.establecerRolActivo(rol);
     const screen = document.getElementById('perfil-screen');
     if (screen) screen.style.display = 'none';
     // Actualizar botón en header con nombre del perfil activo
@@ -4511,6 +5906,7 @@ async function aplicarPermisos() {
         ver_nueva_venta: 'nueva-venta',
         ver_pedidos:     'pedidos',
         ver_turno:       'turno',
+        ver_mesas:       'mesas',
         ver_productos:   'productos',
         ver_clientes:    'clientes',
         ver_ofertas:     'ofertas',
@@ -4587,7 +5983,7 @@ async function cargarHistorialTurnos() {
     try {
         const turnos = await window.api.obtenerTurnos();
         if (!turnos.length) {
-            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);">Sin turnos registrados</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);">Sin turnos registrados</td></tr>';
             return;
         }
         tbody.innerHTML = turnos.map(t => `
@@ -4601,6 +5997,7 @@ async function cargarHistorialTurnos() {
                 <td>${fmt(t.total_efectivo)}</td>
                 <td class="${t.diferencia < 0 ? 'text-danger' : t.diferencia > 0 ? 'text-success' : ''}">${fmt(t.diferencia)}</td>
                 <td><span class="badge-${t.estado}">${t.estado === 'abierto' ? 'Abierto' : 'Cerrado'}</span></td>
+                <td><button class="btn-secondary small" onclick="verReporteTurno(${t.id})" title="Ver reporte"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg></button></td>
             </tr>
         `).join('');
     } catch(e) {
@@ -4608,21 +6005,242 @@ async function cargarHistorialTurnos() {
     }
 }
 
+// --- Reporte de Turno ---
+let _turnoReporteData = null;
+
+async function verReporteTurno(id) {
+    const turnos = await window.api.obtenerTurnos();
+    const turno = turnos.find(t => t.id === id);
+    if (!turno) return;
+
+    let totales = {
+        total_pedidos:      turno.total_pedidos,
+        total_ventas:       turno.total_ventas,
+        total_efectivo:     turno.total_efectivo,
+        total_tarjeta:      turno.total_tarjeta,
+        total_transferencia:turno.total_transferencia,
+    };
+    if (turno.estado === 'abierto') {
+        try {
+            const live = await window.api.calcularTotalesTurno(turno.apertura);
+            if (live && live[0]) totales = live[0];
+        } catch(e) { console.warn('Error calculando totales live:', e); }
+    }
+
+    _turnoReporteData = { turno, totales };
+
+    const rolLabel = { cajero: 'Cajero', encargado: 'Encargado', dueno: 'Administrador' };
+    const fmtFecha = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle:'short', timeStyle:'short' }) : null;
+    const fmtMonto = (v) => '$' + parseFloat(v || 0).toLocaleString('es-MX', { minimumFractionDigits:2, maximumFractionDigits:2 });
+    const fila = (lbl, val, color='') =>
+        `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f3f4f6;">
+            <span style="color:#6b7280;font-size:0.9em;">${lbl}</span>
+            <strong style="color:${color||'#111827'};font-size:0.9em;">${val}</strong>
+        </div>`;
+    const seccion = (titulo) =>
+        `<p style="font-weight:700;font-size:0.8em;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin:16px 0 6px;">${titulo}</p>`;
+
+    const esperado = (turno.fondo_inicial || 0) + (totales.total_efectivo || 0);
+    const difColor = (turno.diferencia || 0) < 0 ? '#ef4444' : (turno.diferencia || 0) > 0 ? '#10b981' : '#111827';
+
+    let html = seccion('Información del turno');
+    html += fila('# Turno', `#${turno.id}`);
+    html += fila('Cajero', turno.cajero_nombre);
+    html += fila('Rol', rolLabel[turno.rol] || turno.rol);
+    html += fila('Apertura', fmtFecha(turno.apertura));
+    html += fila('Cierre', turno.cierre ? fmtFecha(turno.cierre) : '— Turno en curso');
+
+    html += seccion('Resumen de ventas');
+    html += fila('Pedidos', totales.total_pedidos || 0);
+    html += fila('Total vendido', fmtMonto(totales.total_ventas));
+    html += fila('Efectivo', fmtMonto(totales.total_efectivo));
+    if ((totales.total_tarjeta || 0) > 0)       html += fila('Tarjeta / Débito', fmtMonto(totales.total_tarjeta));
+    if ((totales.total_transferencia || 0) > 0) html += fila('Transferencia', fmtMonto(totales.total_transferencia));
+
+    if (turno.estado === 'cerrado') {
+        html += seccion('Corte de caja');
+        html += fila('Fondo inicial', fmtMonto(turno.fondo_inicial));
+        html += fila('Efectivo en ventas', fmtMonto(totales.total_efectivo));
+        html += fila('Efectivo esperado', fmtMonto(esperado));
+        html += fila('Efectivo contado', fmtMonto(turno.efectivo_contado));
+        html += fila('Diferencia', fmtMonto(turno.diferencia), difColor);
+    }
+
+    if (turno.notas) {
+        html += seccion('Notas');
+        html += `<p style="font-size:0.9em;color:#374151;background:#f9fafb;padding:8px;border-radius:6px;margin-top:4px;">${turno.notas}</p>`;
+    }
+
+    document.getElementById('rpt-titulo').textContent = `Reporte de Turno #${turno.id}`;
+    document.getElementById('rpt-cuerpo').innerHTML = html;
+    document.getElementById('modal-reporte-turno').classList.remove('hidden');
+}
+
+function verReporteTurnoActivo() {
+    if (!turnoActivo) return;
+    verReporteTurno(turnoActivo.id);
+}
+
+function cerrarReporteTurno() {
+    document.getElementById('modal-reporte-turno').classList.add('hidden');
+    _turnoReporteData = null;
+}
+
+async function imprimirReporteTurno() {
+    if (!_turnoReporteData) return;
+    const { turno, totales } = _turnoReporteData;
+
+    const ajustes = await window.api.obtenerAjustes();
+    const negocio = ajustes.business_name || 'Mi Negocio';
+    const impresora = ajustes.impresora || '';
+
+    const rolLabel = { cajero: 'Cajero', encargado: 'Encargado', dueno: 'Administrador' };
+    const fmtFecha = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle:'short', timeStyle:'short' }) : '—';
+    const fmtMonto = (v) => '$' + parseFloat(v || 0).toLocaleString('es-MX', { minimumFractionDigits:2, maximumFractionDigits:2 });
+    const sep = '─'.repeat(32);
+    const esperado = (turno.fondo_inicial || 0) + (totales.total_efectivo || 0);
+    const difColor = (turno.diferencia || 0) < 0 ? '#ef4444' : (turno.diferencia || 0) > 0 ? '#10b981' : '#000';
+
+    const fila = (lbl, val, bold=false, color='#000') =>
+        `<div style="display:flex;justify-content:space-between;margin:2px 0;">
+            <span>${lbl}</span>
+            <span style="font-weight:${bold?'700':'400'};color:${color};">${val}</span>
+        </div>`;
+
+    let html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: 'Courier New', monospace; font-size: 12px; width: 350px; padding: 12px; color: #000; }
+        .centro { text-align:center; }
+        .sep { border-top:1px dashed #999; margin:8px 0; }
+        .titulo-sec { font-weight:700; font-size:11px; text-transform:uppercase; margin:8px 0 4px; }
+        @media print { body { width:100%; } }
+    </style></head><body>
+    <div class="centro"><strong style="font-size:14px;">${negocio}</strong></div>
+    <div class="sep"></div>
+    <div class="centro"><strong>REPORTE DE TURNO #${turno.id}</strong></div>
+    <div class="sep"></div>
+    ${fila('Cajero:', turno.cajero_nombre)}
+    ${fila('Rol:', rolLabel[turno.rol] || turno.rol)}
+    ${fila('Apertura:', fmtFecha(turno.apertura))}
+    ${fila('Cierre:', turno.cierre ? fmtFecha(turno.cierre) : 'En curso')}
+    <div class="sep"></div>
+    <div class="titulo-sec">Ventas</div>
+    ${fila('Pedidos:', totales.total_pedidos || 0)}
+    ${fila('Total:', fmtMonto(totales.total_ventas), true)}
+    ${fila('Efectivo:', fmtMonto(totales.total_efectivo))}
+    ${(totales.total_tarjeta||0)>0 ? fila('Tarjeta:', fmtMonto(totales.total_tarjeta)) : ''}
+    ${(totales.total_transferencia||0)>0 ? fila('Transfer.:', fmtMonto(totales.total_transferencia)) : ''}
+    ${turno.estado === 'cerrado' ? `
+    <div class="sep"></div>
+    <div class="titulo-sec">Corte de Caja</div>
+    ${fila('Fondo inicial:', fmtMonto(turno.fondo_inicial))}
+    ${fila('Efvo. ventas:', fmtMonto(totales.total_efectivo))}
+    ${fila('Esperado:', fmtMonto(esperado))}
+    ${fila('Contado:', fmtMonto(turno.efectivo_contado))}
+    ${fila('DIFERENCIA:', fmtMonto(turno.diferencia), true, difColor)}
+    ` : ''}
+    ${turno.notas ? `<div class="sep"></div><div class="titulo-sec">Notas</div><p style="font-size:11px;">${turno.notas}</p>` : ''}
+    <div class="sep"></div>
+    <div class="centro" style="font-size:10px;color:#666;">Impreso: ${new Date().toLocaleString('es-MX')}</div>
+    </body></html>`;
+
+    await window.api.imprimirTicket(html, impresora);
+}
+
+// --- Autenticación al cambiar rol en turno ---
+let _turnoAuthResolve = null;
+let _turnoAuthReject  = null;
+let _turnoAuthRol     = null;
+
+async function solicitarAuthTurno(rol) {
+    return new Promise(async (resolve, reject) => {
+        if (rol === 'dueno') {
+            const tienePass = await window.api.tienePasswordApp();
+            if (!tienePass) { resolve(); return; }
+        } else {
+            const ajustes = await window.api.obtenerAjustes();
+            const permisosData = ajustes.permisos_roles ? JSON.parse(ajustes.permisos_roles) : {};
+            const permisos = permisosData[rol] || {};
+            if (!permisos.pin_set) { resolve(); return; }
+        }
+        _turnoAuthResolve = resolve;
+        _turnoAuthReject  = reject;
+        _turnoAuthRol     = rol;
+        const labels = { cajero: 'Cajero', encargado: 'Encargado', dueno: 'Administrador' };
+        const tipo   = rol === 'dueno' ? 'contraseña' : 'PIN';
+        document.getElementById('auth-turno-titulo').textContent = labels[rol] || rol;
+        document.getElementById('auth-turno-label').textContent  =
+            `Ingresa la ${tipo} de ${labels[rol] || rol} para continuar.`;
+        document.getElementById('auth-turno-input').value = '';
+        document.getElementById('auth-turno-error').style.display = 'none';
+        document.getElementById('modal-auth-turno').classList.remove('hidden');
+        setTimeout(() => document.getElementById('auth-turno-input').focus(), 50);
+    });
+}
+
+async function confirmarAuthTurno() {
+    const valor = document.getElementById('auth-turno-input').value;
+    if (!valor) return;
+    let ok = false;
+    if (_turnoAuthRol === 'dueno') {
+        ok = await window.api.verificarPasswordApp(valor);
+    } else {
+        const ajustes = await window.api.obtenerAjustes();
+        const permisosData = ajustes.permisos_roles ? JSON.parse(ajustes.permisos_roles) : {};
+        const permisos = permisosData[_turnoAuthRol] || {};
+        if (!permisos.pin_set) { ok = true; }
+        else {
+            const hash = await hashPin(valor);
+            ok = (hash === permisos.pin);
+        }
+    }
+    if (ok) {
+        document.getElementById('modal-auth-turno').classList.add('hidden');
+        _turnoAuthResolve && _turnoAuthResolve();
+    } else {
+        document.getElementById('auth-turno-error').style.display = '';
+        document.getElementById('auth-turno-input').value = '';
+        document.getElementById('auth-turno-input').focus();
+    }
+}
+
+function cancelarAuthTurno() {
+    document.getElementById('modal-auth-turno').classList.add('hidden');
+    _turnoAuthReject && _turnoAuthReject();
+}
+
 async function abrirTurno() {
-    const nombre = document.getElementById('turno-nombre')?.value?.trim();
-    const rol    = document.getElementById('turno-rol')?.value || 'cajero';
-    const fondo  = parseFloat(document.getElementById('turno-fondo')?.value) || 0;
+    const nombre     = document.getElementById('turno-nombre')?.value?.trim();
+    const rolDeseado = document.getElementById('turno-rol')?.value || 'cajero';
+    const fondo      = parseFloat(document.getElementById('turno-fondo')?.value) || 0;
 
     if (!nombre) {
         mostrarNotificacionExito('Ingresa el nombre del cajero', '⚠️ Error');
         return;
     }
 
+    // Si el rol elegido es diferente al actual, pedir autenticación
+    if (rolDeseado !== rolActivo) {
+        try {
+            await solicitarAuthTurno(rolDeseado);
+        } catch (e) {
+            return; // El usuario canceló
+        }
+    }
+
     try {
         nombreActivo = nombre;
-        const id = await window.api.abrirTurno(nombre, rol, fondo);
+        await window.api.abrirTurno(nombre, rolDeseado, fondo);
         turnoActivo = await window.api.obtenerTurnoActivo();
-        rolActivo = turnoActivo?.rol || 'dueno';
+
+        // Switch completo de sesión
+        rolActivo = rolDeseado;
+        await window.api.establecerRolActivo(rolDeseado);
+        const labels = { cajero: '🧑‍💼 Cajero', encargado: '👔 Encargado', dueno: '🔑 Admin' };
+        const textoBtn = document.getElementById('texto-perfil-activo');
+        if (textoBtn) textoBtn.textContent = labels[rolDeseado] || rolDeseado;
+
         aplicarPermisos();
         actualizarIndicadorTurnoSidebar();
         cargarVistaTurno();
@@ -4637,9 +6255,11 @@ async function abrirModalCierre() {
     if (!turnoActivo) return;
     try {
         const totales = await window.api.calcularTotalesTurno(turnoActivo.apertura);
-        const fondoInicial      = turnoActivo.fondo_inicial || 0;
-        const efectivoVentas    = totales.total_efectivo || 0;
-        const esperado          = fondoInicial + efectivoVentas;
+        const fondoInicial   = turnoActivo.fondo_inicial || 0;
+        const efectivoVentas = totales.total_efectivo || 0;
+        const tarjeta        = totales.total_tarjeta || 0;
+        const transferencia  = totales.total_transferencia || 0;
+        const esperado       = fondoInicial + efectivoVentas;
 
         document.getElementById('cierre-fondo').textContent           = fmt(fondoInicial);
         document.getElementById('cierre-efectivo-ventas').textContent = fmt(efectivoVentas);
@@ -4647,6 +6267,22 @@ async function abrirModalCierre() {
         document.getElementById('cierre-efectivo-contado').value      = '';
         document.getElementById('cierre-diferencia').textContent      = '$0.00';
         document.getElementById('cierre-notas').value                 = '';
+
+        // Mostrar sección de pagos digitales solo si hay alguno
+        const hayDigitales = tarjeta > 0 || transferencia > 0;
+        const seccion = document.getElementById('cierre-digitales-section');
+        if (seccion) seccion.style.display = hayDigitales ? '' : 'none';
+
+        const rowTarjeta = document.getElementById('cierre-tarjeta-row');
+        if (rowTarjeta) {
+            rowTarjeta.style.display = tarjeta > 0 ? '' : 'none';
+            document.getElementById('cierre-tarjeta').textContent = fmt(tarjeta);
+        }
+        const rowTransferencia = document.getElementById('cierre-transferencia-row');
+        if (rowTransferencia) {
+            rowTransferencia.style.display = transferencia > 0 ? '' : 'none';
+            document.getElementById('cierre-transferencia').textContent = fmt(transferencia);
+        }
 
         document.getElementById('modal-cierre-turno').classList.remove('hidden');
     } catch(e) {
@@ -4676,7 +6312,6 @@ async function confirmarCierreTurno() {
         await window.api.cerrarTurno(turnoActivo.id, contado, notas);
         document.getElementById('modal-cierre-turno').classList.add('hidden');
         turnoActivo = null;
-        rolActivo   = 'dueno';
         aplicarPermisos();
         actualizarIndicadorTurnoSidebar();
         cargarVistaTurno();
@@ -4718,6 +6353,7 @@ async function cargarPermisosAjustes() {
         { clave: 'ver_nueva_venta', label: 'Nueva Venta' },
         { clave: 'ver_pedidos',     label: 'Pedidos' },
         { clave: 'ver_turno',       label: 'Turno / Caja' },
+        { clave: 'ver_mesas',       label: 'Mesas' },
         { clave: 'ver_productos',   label: 'Productos' },
         { clave: 'ver_clientes',    label: 'Clientes' },
         { clave: 'ver_ofertas',     label: 'Ofertas' },
@@ -4909,6 +6545,773 @@ function cerrarModalTurnoVenta() {
     // Si no hay turno abierto, redirigir a la pantalla de Turno en lugar de dejar al usuario en Nueva Venta sin turno
     if (!turnoActivo) {
         cambiarVista('turno');
+    }
+}
+
+// ============================================
+// SISTEMA DE MESAS
+// ============================================
+
+let _mesasData = [];
+let _pedidosMesa = {};        // { mesa_id: pedido | null }
+let _mesaActivaId = null;
+let _pedidoMesaActivo = null;
+let _zonaActivaMesas = 'Todas';
+let _carritoMesa = {};        // { producto_id: { nombre, precio, cantidad } }
+let _notasDebounceTimer = null;
+let _categoriaActivaMesa = null;
+
+const _fmtMesa = (v) => '$' + parseFloat(v || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Parsea el campo items_raw del GROUP_CONCAT
+function _parsearItemsMesa(items_raw) {
+    if (!items_raw) return [];
+    return items_raw.split(';;').filter(Boolean).map(s => {
+        const p = s.split('|');
+        return {
+            id:             parseInt(p[0]),
+            producto_id:    parseInt(p[1]),
+            cantidad:       parseFloat(p[2]),
+            precio_unitario:parseFloat(p[3]),
+            subtotal:       parseFloat(p[4]),
+            nota_item:      p[5] || '',
+            nombre:         p[6] || 'Producto'
+        };
+    });
+}
+
+// Calcula tiempo transcurrido desde una fecha string (CURRENT_TIMESTAMP format)
+function _tiempoEnMesa(fechaStr) {
+    if (!fechaStr) return '';
+    // SQLite: '2024-01-01 10:00:00' → añadir 'T' y 'Z'
+    // ISO backend: '2024-01-01T10:00:00.000Z' → usar directamente
+    const inicio = fechaStr.includes('T') ? new Date(fechaStr) : new Date(fechaStr.replace(' ', 'T') + 'Z');
+    const diff = Math.floor((Date.now() - inicio.getTime()) / 60000);
+    if (diff < 0) return '0min';
+    if (diff < 60) return `${diff}min`;
+    const h = Math.floor(diff / 60);
+    const m = diff % 60;
+    return `${h}h ${m}m`;
+}
+
+// Convierte la respuesta del backend al formato que usa el desktop
+function _normalizarMesasApi(tables) {
+    return tables.map(t => ({
+        id: t.id,
+        nombre: t.name,
+        zona: t.zone || 'General',
+        capacidad: t.capacity || 4,
+    }));
+}
+
+function _normalizarPedidoApi(order) {
+    if (!order) return null;
+    const items_raw = (order.items || []).map(item =>
+        [item.id, item.product?.id || 0, item.quantity,
+         parseFloat(item.product?.price || 0),
+         parseFloat(item.subtotal || 0),
+         item.notes || '',
+         item.product?.name || 'Producto'].join('|')
+    ).join(';;');
+    return {
+        id: order.id,
+        total: parseFloat(order.total || 0),
+        fecha_pedido: order.createdAt,
+        comensales: order.guests || 0,
+        notas_generales: order.notes || null,
+        items_raw,
+        _isApiOrder: true,
+    };
+}
+
+async function cargarVistaMesas() {
+    // Si el dueño está viendo otra sucursal en el dashboard, mostrar aviso
+    if (sucursalVistaActual !== null && sucursalVistaActual !== sucursalIdActual) {
+        const cont = document.getElementById('mesas-grid-container') || document.querySelector('#view-mesas .view-header');
+        const aviso = document.getElementById('mesas-otra-sucursal-aviso');
+        if (!aviso && cont) {
+            const div = document.createElement('div');
+            div.id = 'mesas-otra-sucursal-aviso';
+            div.style.cssText = 'background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:12px 16px;margin:16px 20px;font-size:0.9em;color:#92400e;';
+            div.textContent = 'Estás viendo el dashboard de otra sucursal. Las mesas mostradas pertenecen a este dispositivo.';
+            cont.parentElement.insertBefore(div, cont);
+        }
+    } else {
+        const aviso = document.getElementById('mesas-otra-sucursal-aviso');
+        if (aviso) aviso.remove();
+    }
+    try {
+        if (modoConectado && apiClient && tokenActual) {
+            const tables = await apiClient.getTables();
+            _mesasData = _normalizarMesasApi(tables);
+            _pedidosMesa = {};
+            for (const t of tables) {
+                _pedidosMesa[t.id] = t.open_order ? _normalizarPedidoApi(t.open_order) : null;
+            }
+        } else {
+            _mesasData = await window.api.obtenerMesas(sucursalIdActual);
+            _pedidosMesa = {};
+            await Promise.all(_mesasData.map(async m => {
+                _pedidosMesa[m.id] = await window.api.obtenerPedidoMesa(m.id) || null;
+            }));
+        }
+        _renderizarZonasMesas();
+        _renderizarTarjetasMesas();
+        // Si había mesa seleccionada, refrescar panel
+        if (_mesaActivaId !== null) {
+            const pedido = _pedidosMesa[_mesaActivaId];
+            if (pedido) {
+                _pedidoMesaActivo = pedido;
+                _renderizarPanelMesa();
+            } else {
+                cerrarPanelMesa();
+            }
+        }
+    } catch(e) {
+        console.error('Error cargando mesas:', e);
+    }
+}
+
+function _renderizarZonasMesas() {
+    const el = document.getElementById('mesas-zonas-tabs');
+    if (!el) return;
+    const zonas = ['Todas', ...new Set(_mesasData.map(m => m.zona || 'General'))];
+    el.innerHTML = zonas.map(z =>
+        `<button onclick="_filtrarZonaMesas('${z}')"
+            style="padding:5px 14px;border-radius:20px;border:1px solid ${z === _zonaActivaMesas ? '#4f46e5' : '#d1d5db'};
+                   background:${z === _zonaActivaMesas ? '#4f46e5' : '#fff'};
+                   color:${z === _zonaActivaMesas ? '#fff' : '#374151'};
+                   cursor:pointer;font-size:0.85em;font-weight:500;">${z}</button>`
+    ).join('');
+}
+
+function _filtrarZonaMesas(zona) {
+    _zonaActivaMesas = zona;
+    _renderizarZonasMesas();
+    _renderizarTarjetasMesas();
+}
+
+function _renderizarTarjetasMesas() {
+    const el = document.getElementById('mesas-grid');
+    if (!el) return;
+    let mesas = _mesasData;
+    if (_zonaActivaMesas !== 'Todas') {
+        mesas = mesas.filter(m => (m.zona || 'General') === _zonaActivaMesas);
+    }
+    if (mesas.length === 0) {
+        el.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:40px;color:#9ca3af;">
+            ${_mesasData.length === 0
+                ? 'No hay mesas configuradas. Usa el botón <b>Configurar</b> para agregar mesas.'
+                : 'No hay mesas en esta zona.'}
+        </div>`;
+        return;
+    }
+    el.innerHTML = mesas.map(m => {
+        const pedido = _pedidosMesa[m.id];
+        const ocupada = !!pedido;
+        const bg = ocupada ? '#fff3e0' : '#f0fdf4';
+        const border = ocupada ? '#f59e0b' : '#22c55e';
+        const dot = ocupada ? '#f59e0b' : '#22c55e';
+        const items = ocupada ? _parsearItemsMesa(pedido.items_raw) : [];
+        const total = ocupada ? parseFloat(pedido.total || 0) : 0;
+        const tiempo = ocupada ? _tiempoEnMesa(pedido.fecha_pedido) : '';
+        const comensales = ocupada && pedido.comensales ? `👥 ${pedido.comensales}` : `👥 ${m.capacidad}`;
+        return `<div onclick="${ocupada ? `abrirPanelMesa(${m.id})` : `seleccionarMesaLibre(${m.id})`}"
+            style="background:${bg};border:2px solid ${border};border-radius:10px;padding:14px;cursor:pointer;
+                   display:flex;flex-direction:column;gap:6px;min-height:110px;position:relative;
+                   transition:box-shadow 0.15s;" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.12)'" onmouseout="this.style.boxShadow=''">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-weight:700;font-size:1em;">${m.nombre}</span>
+                <span style="width:10px;height:10px;border-radius:50%;background:${dot};display:inline-block;"></span>
+            </div>
+            <div style="font-size:0.78em;color:#6b7280;">${m.zona || 'General'} · ${comensales}</div>
+            ${ocupada ? `<div style="font-size:0.85em;font-weight:600;color:#d97706;">${_fmtMesa(total)}</div>
+                <div style="font-size:0.75em;color:#9ca3af;">${items.length} producto${items.length !== 1 ? 's' : ''} · ${tiempo}</div>`
+            : `<div style="font-size:0.78em;color:#16a34a;margin-top:auto;">Libre</div>`}
+        </div>`;
+    }).join('');
+}
+
+function seleccionarMesaLibre(mesa_id) {
+    _mesaActivaId = mesa_id;
+    const mesa = _mesasData.find(m => m.id === mesa_id);
+    document.getElementById('modal-abrir-mesa-titulo').textContent = `Abrir ${mesa?.nombre || 'Mesa'}`;
+    document.getElementById('mesa-comensales').value = mesa?.capacidad || 2;
+    document.getElementById('mesa-notas-apertura').value = '';
+    document.getElementById('modal-abrir-mesa').classList.remove('hidden');
+}
+
+function cerrarModalAbrirMesa() {
+    document.getElementById('modal-abrir-mesa').classList.add('hidden');
+}
+
+async function confirmarAbrirMesa() {
+    if (!_mesaActivaId) return;
+    const comensales = parseInt(document.getElementById('mesa-comensales').value) || 1;
+    const notas = document.getElementById('mesa-notas-apertura').value.trim();
+    try {
+        const mesaAbrir = _mesasData.find(m => m.id === _mesaActivaId);
+        if (modoConectado && apiClient && tokenActual) {
+            const order = await apiClient.openTableOrder(_mesaActivaId, comensales, notas || null);
+            _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(order);
+        } else {
+            await window.api.abrirPedidoMesa(_mesaActivaId, mesaAbrir?.nombre || '', nombreActivo || 'Cajero', comensales, notas || null);
+        }
+        cerrarModalAbrirMesa();
+        await cargarVistaMesas();
+        // Abrir panel de la mesa recién abierta
+        abrirPanelMesa(_mesaActivaId);
+    } catch(e) {
+        console.error('Error abriendo mesa:', e);
+        mostrarNotificacionExito('Error al abrir la mesa', '⚠️ Error');
+    }
+}
+
+async function abrirPanelMesa(mesa_id) {
+    _mesaActivaId = mesa_id;
+    const pedido = _pedidosMesa[mesa_id];
+    if (!pedido) return seleccionarMesaLibre(mesa_id);
+    _pedidoMesaActivo = pedido;
+    const mesa = _mesasData.find(m => m.id === mesa_id);
+    const panel = document.getElementById('mesa-panel');
+    panel.classList.remove('hidden');
+    document.getElementById('mesa-panel-titulo').textContent = mesa?.nombre || 'Mesa';
+    const comensales = pedido.comensales ? `👥 ${pedido.comensales} comensales · ` : '';
+    document.getElementById('mesa-panel-info').textContent = `${comensales}Desde ${_tiempoEnMesa(pedido.fecha_pedido)}`;
+    document.getElementById('mesa-notas-input').value = pedido.notas_generales || '';
+    _renderizarPanelMesa();
+}
+
+function cerrarPanelMesa() {
+    _mesaActivaId = null;
+    _pedidoMesaActivo = null;
+    document.getElementById('mesa-panel').classList.add('hidden');
+}
+
+function _renderizarPanelMesa() {
+    const el = document.getElementById('mesa-panel-items');
+    if (!el || !_pedidoMesaActivo) return;
+    const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
+    if (items.length === 0) {
+        el.innerHTML = `<div style="text-align:center;padding:20px;color:#9ca3af;font-size:0.9em;">Sin productos aún</div>`;
+        return;
+    }
+    const total = items.reduce((s, i) => s + i.subtotal, 0);
+    el.innerHTML = items.map(it => `
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid #f3f4f6;">
+            <div style="flex:1;min-width:0;">
+                <div style="font-size:0.9em;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.nombre}</div>
+                ${it.nota_item ? `<div style="font-size:0.75em;color:#6b7280;">${it.nota_item}</div>` : ''}
+                <div style="font-size:0.8em;color:#6b7280;">${it.cantidad} × ${_fmtMesa(it.precio_unitario)}</div>
+            </div>
+            <div style="font-weight:600;font-size:0.9em;">${_fmtMesa(it.subtotal)}</div>
+            <button onclick="eliminarItemDeMesa(${it.id})" title="Eliminar"
+                style="background:none;border:none;cursor:pointer;color:#ef4444;padding:4px;flex-shrink:0;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            </button>
+        </div>
+    `).join('') + `<div style="padding:8px 16px;text-align:right;font-weight:700;font-size:1em;border-top:2px solid #e5e7eb;margin-top:4px;">
+        Total: ${_fmtMesa(total)}
+    </div>
+    <div style="padding:8px 16px;">
+        <button onclick="enviarMesaACocina()" style="width:100%;padding:10px;background:#f97316;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:0.95em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 13.87A4 4 0 0 1 7.41 6a5.11 5.11 0 0 1 1.05-1.54 5 5 0 0 1 7.08 0A5.11 5.11 0 0 1 16.59 6 4 4 0 0 1 18 13.87V21H6Z"/><line x1="6" x2="18" y1="17" y2="17"/></svg>
+            Enviar a cocina
+        </button>
+    </div>`;
+}
+
+async function enviarMesaACocina() {
+    if (!_pedidoMesaActivo) return;
+    const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
+    if (items.length === 0) return;
+    const mesa = _mesasData.find(m => m.id === _mesaActivaId);
+    await window.api.kdsNuevoPedido({
+        pedidoId: _pedidoMesaActivo.id || null,
+        tipo: 'mesa',
+        mesa: mesa?.nombre || `Mesa ${_mesaActivaId}`,
+        notas: _pedidoMesaActivo.notas_generales || null,
+        items: items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, notas: i.nota_item || '' }))
+    }).catch(() => {});
+    mostrarNotificacionExito('Comanda enviada a cocina', '');
+}
+
+async function eliminarItemDeMesa(item_id) {
+    if (!_pedidoMesaActivo) return;
+    try {
+        if (modoConectado && apiClient && tokenActual) {
+            const updated = await apiClient.removeOrderItem(_pedidoMesaActivo.id, item_id);
+            _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(updated);
+        } else {
+            await window.api.eliminarItemMesa(item_id, _pedidoMesaActivo.id);
+            _pedidosMesa[_mesaActivaId] = await window.api.obtenerPedidoMesa(_mesaActivaId) || null;
+        }
+        _pedidoMesaActivo = _pedidosMesa[_mesaActivaId];
+        if (_pedidoMesaActivo) {
+            _renderizarPanelMesa();
+            const info = document.getElementById('mesa-panel-info');
+            if (info) {
+                const comensales = _pedidoMesaActivo.comensales ? `👥 ${_pedidoMesaActivo.comensales} comensales · ` : '';
+                info.textContent = `${comensales}Desde ${_tiempoEnMesa(_pedidoMesaActivo.fecha_pedido)}`;
+            }
+        }
+        _renderizarTarjetasMesas();
+    } catch(e) {
+        console.error('Error eliminando item:', e);
+    }
+}
+
+function guardarNotasMesaDebounced(notas) {
+    clearTimeout(_notasDebounceTimer);
+    _notasDebounceTimer = setTimeout(async () => {
+        if (!_pedidoMesaActivo) return;
+        try { await window.api.actualizarNotasMesa(_pedidoMesaActivo.id, notas); } catch(e) {}
+    }, 800);
+}
+
+// ---- Modal Agregar Productos ----
+
+async function abrirModalAgregarProductosMesa() {
+    _carritoMesa = {};
+    document.getElementById('mesa-prod-busqueda').value = '';
+    _categoriaActivaMesa = null;
+    // Cargar catálogo si aún no se ha visitado Nueva Venta
+    if (productosGlobales.length === 0) {
+        try {
+            const grupos = await obtenerProductosAgrupadosWrapper();
+            productosGlobales = [];
+            grupos.forEach(c => c.productos.forEach(p => productosGlobales.push({ ...p, categoria: c.nombre })));
+        } catch(e) { console.error('Error cargando productos para mesa:', e); }
+    }
+    _renderizarProductoresMesa(productosGlobales);
+    _renderizarCategoriasMesa();
+    _actualizarResumenCarritoMesa();
+    document.getElementById('modal-agregar-productos-mesa').classList.remove('hidden');
+}
+
+function cerrarModalAgregarProductosMesa() {
+    document.getElementById('modal-agregar-productos-mesa').classList.add('hidden');
+    _carritoMesa = {};
+}
+
+function _renderizarCategoriasMesa() {
+    const el = document.getElementById('mesa-prod-categorias');
+    if (!el) return;
+    const cats = [...new Set(productosGlobales.map(p => p.categoria).filter(Boolean))];
+    el.innerHTML = ['Todos', ...cats].map(c =>
+        `<button onclick="_filtrarCategoriaMesa('${c}')"
+            style="padding:3px 10px;border-radius:12px;border:1px solid ${c === (_categoriaActivaMesa || 'Todos') ? '#4f46e5' : '#d1d5db'};
+                   background:${c === (_categoriaActivaMesa || 'Todos') ? '#4f46e5' : '#fff'};
+                   color:${c === (_categoriaActivaMesa || 'Todos') ? '#fff' : '#374151'};
+                   cursor:pointer;font-size:0.8em;">${c}</button>`
+    ).join('');
+}
+
+function _filtrarCategoriaMesa(cat) {
+    _categoriaActivaMesa = cat === 'Todos' ? null : cat;
+    filtrarProductosMesa(document.getElementById('mesa-prod-busqueda')?.value || '');
+    _renderizarCategoriasMesa();
+}
+
+function filtrarProductosMesa(busqueda) {
+    let lista = productosGlobales;
+    if (_categoriaActivaMesa) lista = lista.filter(p => p.categoria === _categoriaActivaMesa);
+    if (busqueda) {
+        const q = busqueda.toLowerCase();
+        lista = lista.filter(p => p.nombre.toLowerCase().includes(q));
+    }
+    _renderizarProductoresMesa(lista);
+}
+
+function _renderizarProductoresMesa(lista) {
+    const el = document.getElementById('mesa-prod-grid');
+    if (!el) return;
+    if (lista.length === 0) {
+        el.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:20px;color:#9ca3af;">Sin resultados</div>`;
+        return;
+    }
+    el.innerHTML = lista.map(p => {
+        const en_carrito = _carritoMesa[p.id]?.cantidad || 0;
+        return `<div style="border:2px solid ${en_carrito > 0 ? '#4f46e5' : '#e5e7eb'};border-radius:8px;padding:10px;cursor:pointer;text-align:center;background:${en_carrito > 0 ? '#f0f0ff' : '#fff'};"
+            onclick="_toggleProductoMesa(${p.id}, '${(p.nombre||'').replace(/'/g,'&apos;')}', ${p.precio})">
+            <div style="font-size:1.3em;">${p.emoji || '🍽️'}</div>
+            <div style="font-size:0.8em;font-weight:500;margin:4px 0;line-height:1.2;">${p.nombre}</div>
+            <div style="font-size:0.85em;color:#4f46e5;font-weight:600;">${_fmtMesa(p.precio)}</div>
+            ${en_carrito > 0 ? `<div style="font-size:0.75em;color:#fff;background:#4f46e5;border-radius:10px;padding:1px 8px;margin-top:4px;">×${en_carrito}</div>` : ''}
+        </div>`;
+    }).join('');
+}
+
+function _toggleProductoMesa(id, nombre, precio) {
+    if (!_carritoMesa[id]) _carritoMesa[id] = { nombre, precio, cantidad: 0 };
+    _carritoMesa[id].cantidad++;
+    _actualizarResumenCarritoMesa();
+    filtrarProductosMesa(document.getElementById('mesa-prod-busqueda')?.value || '');
+}
+
+function _actualizarResumenCarritoMesa() {
+    const el = document.getElementById('mesa-carrito-resumen');
+    if (!el) return;
+    const items = Object.values(_carritoMesa).filter(i => i.cantidad > 0);
+    if (items.length === 0) { el.textContent = 'Ningún producto seleccionado'; return; }
+    const total = items.reduce((s, i) => s + i.precio * i.cantidad, 0);
+    el.innerHTML = items.map(i => `${i.cantidad}× ${i.nombre}`).join(', ') + ` — <b>${_fmtMesa(total)}</b>`;
+}
+
+async function confirmarAgregarProductosMesa() {
+    if (!_pedidoMesaActivo) return;
+    const items = Object.entries(_carritoMesa).filter(([,v]) => v.cantidad > 0);
+    if (items.length === 0) { cerrarModalAgregarProductosMesa(); return; }
+    try {
+        if (modoConectado && apiClient && tokenActual) {
+            const apiItems = items.map(([prod_id, item]) => ({
+                product_id: parseInt(prod_id),
+                quantity: item.cantidad,
+            }));
+            const updated = await apiClient.addItemsToOrder(_pedidoMesaActivo.id, apiItems);
+            _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(updated);
+        } else {
+            for (const [prod_id, item] of items) {
+                await window.api.agregarItemMesa(_pedidoMesaActivo.id, parseInt(prod_id), item.cantidad, item.precio, null);
+            }
+            _pedidosMesa[_mesaActivaId] = await window.api.obtenerPedidoMesa(_mesaActivaId) || null;
+        }
+        cerrarModalAgregarProductosMesa();
+        _pedidoMesaActivo = _pedidosMesa[_mesaActivaId];
+        if (_pedidoMesaActivo) _renderizarPanelMesa();
+        _renderizarTarjetasMesas();
+    } catch(e) {
+        console.error('Error agregando productos a mesa:', e);
+        mostrarNotificacionExito('Error al agregar productos', '⚠️ Error');
+    }
+}
+
+// ---- Imprimir cuenta ----
+
+async function imprimirCuentaMesa() {
+    if (!_pedidoMesaActivo) return;
+    const mesa = _mesasData.find(m => m.id === _mesaActivaId);
+    const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
+    const total = items.reduce((s, i) => s + i.subtotal, 0);
+    const ajustes = await window.api.obtenerAjustes();
+    const negocio = ajustes.nombre_negocio || 'Negocio';
+    const impresora = ajustes.impresora || '';
+    const ahora = new Date().toLocaleString('es-MX');
+    const itemsHtml = items.map(it =>
+        `<tr><td>${it.cantidad}× ${it.nombre}</td><td style="text-align:right">${_fmtMesa(it.subtotal)}</td></tr>`
+    ).join('');
+    const html = `<html><head><style>
+        body{font-family:monospace;font-size:12px;width:300px;margin:0;padding:8px;}
+        h1{font-size:13px;text-align:center;margin:4px 0;}
+        .centro{text-align:center;}
+        .linea{border-top:1px dashed #000;margin:6px 0;}
+        table{width:100%;border-collapse:collapse;}
+        td{padding:1px 0;}
+        .total{font-weight:bold;font-size:13px;}
+    </style></head><body>
+        <h1>${negocio}</h1>
+        <div class="linea"></div>
+        <div class="centro"><b>CUENTA — ${mesa?.nombre || 'Mesa'}</b></div>
+        ${_pedidoMesaActivo.comensales ? `<div class="centro">Comensales: ${_pedidoMesaActivo.comensales}</div>` : ''}
+        <div class="linea"></div>
+        <table>${itemsHtml}</table>
+        <div class="linea"></div>
+        <table><tr><td class="total">TOTAL</td><td style="text-align:right" class="total">${_fmtMesa(total)}</td></tr></table>
+        <div class="linea"></div>
+        <div class="centro" style="font-size:11px;">Impreso: ${ahora}</div>
+    </body></html>`;
+    try {
+        await window.api.imprimirTicket(html, impresora);
+    } catch(e) {
+        console.error('Error imprimiendo cuenta:', e);
+        mostrarNotificacionExito('Error al imprimir', '⚠️ Error');
+    }
+}
+
+// ---- Modal Cobrar ----
+
+async function abrirModalCobrarMesa() {
+    if (!_pedidoMesaActivo) return;
+    const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
+    const total = items.reduce((s, i) => s + i.subtotal, 0);
+    document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(total);
+    document.getElementById('cobrar-mesa-metodo').value = 'efectivo';
+    document.getElementById('modal-cobrar-mesa').classList.remove('hidden');
+
+    // Mostrar puntos a ganar si el sistema está activo
+    try {
+        const aj = await window.api.obtenerAjustes();
+        const elPts = document.getElementById('cobrar-mesa-puntos-info');
+        if (elPts) {
+            if (aj.puntos_activos === 'true') {
+                const pts = await calcularPuntosGanados(total);
+                elPts.textContent = `⭐ Esta compra genera ${pts} puntos`;
+                elPts.style.display = '';
+            } else {
+                elPts.style.display = 'none';
+            }
+        }
+    } catch(e) { /* ignorar */ }
+}
+
+function cerrarModalCobrarMesa() {
+    // Si el modal está en estado de "cobrado", restaurarlo antes de ocultar
+    if (_cobroMesaSnap) { _cerrarCobrarMesaFinal(); return; }
+    document.getElementById('modal-cobrar-mesa').classList.add('hidden');
+}
+
+async function confirmarCobrarMesa() {
+    if (!_pedidoMesaActivo) return;
+    const metodo = document.getElementById('cobrar-mesa-metodo').value;
+    const pedidoSnap = { ..._pedidoMesaActivo };
+    const itemsSnap  = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
+    const totalSnap  = itemsSnap.reduce((s, i) => s + i.subtotal, 0);
+    try {
+        if (modoConectado && apiClient && tokenActual) {
+            await apiClient.closeTableOrder(pedidoSnap.id, metodo);
+        } else {
+            await window.api.cerrarPedidoMesa(pedidoSnap.id, metodo);
+
+            // Sincronizar al backend si está conectado (modo local con sync)
+            try {
+                await apiClient?.createOrder({
+                    total: totalSnap,
+                    payment_method: metodo,
+                    order_type: 'comer',
+                    notes: pedidoSnap.notas_generales || null,
+                    customer_temp_info: pedidoSnap.info_cliente_temp || null,
+                    status: 'completado'
+                }, itemsSnap.map(it => ({
+                    product_id: it.producto_id,
+                    quantity: it.cantidad,
+                    unit_price: it.precio_unitario,
+                    subtotal: it.subtotal,
+                    notes: it.nota_item || null
+                })));
+                await window.api.marcarPedidoSincronizado(pedidoSnap.id);
+            } catch(e) {
+                console.warn('Pedido de mesa guardado local, sin sync al backend:', e);
+            }
+        }
+
+        // Sumar puntos si hay cliente registrado en el pedido (solo modo local)
+        if (!modoConectado && pedidoSnap.cliente_id) {
+            const puntosGanados = await calcularPuntosGanados(totalSnap);
+            if (puntosGanados > 0) {
+                await window.api.actualizarPuntosCliente(pedidoSnap.cliente_id, puntosGanados).catch(() => {});
+                syncLoyaltyBackend(pedidoSnap.cliente_id, { points_delta: puntosGanados });
+            }
+        }
+
+        // Mostrar estado de éxito con botón de imprimir
+        document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(totalSnap);
+        const footer = document.querySelector('#modal-cobrar-mesa .modal-footer');
+        if (footer) {
+            footer.innerHTML = `
+                <button class="btn-secondary" onclick="_cerrarCobrarMesaFinal()">Cerrar</button>
+                <button class="btn-primary" onclick="imprimirCuentaMesaFinal()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>
+                    Imprimir ticket
+                </button>`;
+        }
+        const body = document.querySelector('#modal-cobrar-mesa .modal-body');
+        if (body) {
+            const metodosLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia' };
+            body.innerHTML = `
+                <div style="text-align:center;padding:8px 0;">
+                    <div style="font-size:2.5em;margin-bottom:6px;">✓</div>
+                    <div style="font-weight:700;font-size:1.1em;color:#16a34a;margin-bottom:4px;">¡Cobrado!</div>
+                    <div style="font-size:1.8em;font-weight:700;">${_fmtMesa(totalSnap)}</div>
+                    <div style="color:#6b7280;font-size:0.9em;margin-top:4px;">${metodosLabel[metodo] || metodo}</div>
+                </div>`;
+        }
+        document.querySelector('#modal-cobrar-mesa .modal-header h2').textContent = 'Pago completado';
+
+        // Guardar snapshot para imprimir
+        _cobroMesaSnap = { pedido: pedidoSnap, items: itemsSnap, total: totalSnap, metodo };
+
+        cerrarPanelMesa();
+        await cargarVistaMesas();
+    } catch(e) {
+        console.error('Error cobrando mesa:', e);
+        mostrarNotificacionExito('Error al cobrar la mesa', '⚠️ Error');
+    }
+}
+
+let _cobroMesaSnap = null;
+
+function _cerrarCobrarMesaFinal() {
+    _cobroMesaSnap = null; // Limpiar PRIMERO para romper el ciclo de recursión
+    // Restaurar modal a su estado original
+    const footer = document.querySelector('#modal-cobrar-mesa .modal-footer');
+    if (footer) footer.innerHTML = `
+        <button class="btn-secondary" onclick="cerrarModalCobrarMesa()">Cancelar</button>
+        <button class="btn-primary" onclick="confirmarCobrarMesa()">Cobrar</button>`;
+    const body = document.querySelector('#modal-cobrar-mesa .modal-body');
+    if (body) body.innerHTML = `
+        <div style="text-align:center;margin-bottom:16px;">
+            <div style="font-size:0.9em;color:#6b7280;margin-bottom:4px;">Total a cobrar</div>
+            <div id="cobrar-mesa-total" style="font-size:2em;font-weight:700;color:#111827;">$0.00</div>
+        </div>
+        <div class="form-group">
+            <label>Método de pago</label>
+            <select id="cobrar-mesa-metodo" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:1em;box-sizing:border-box;">
+                <option value="efectivo">Efectivo</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="transferencia">Transferencia</option>
+            </select>
+        </div>`;
+    const h2 = document.querySelector('#modal-cobrar-mesa .modal-header h2');
+    if (h2) h2.textContent = 'Cobrar mesa';
+    // Ocultar directamente sin llamar cerrarModalCobrarMesa() para evitar recursión
+    document.getElementById('modal-cobrar-mesa').classList.add('hidden');
+}
+
+async function imprimirCuentaMesaFinal() {
+    if (!_cobroMesaSnap) return;
+    const { pedido, items, total, metodo } = _cobroMesaSnap;
+    const ajustes = await window.api.obtenerAjustes();
+    const negocio = ajustes.nombre_negocio || 'Negocio';
+    const impresora = ajustes.impresora || '';
+    const ahora = new Date().toLocaleString('es-MX');
+    const metodosLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia' };
+    const itemsHtml = items.map(it =>
+        `<tr><td>${it.cantidad}× ${it.nombre}${it.nota_item ? ` <span style="color:#888">(${it.nota_item})</span>` : ''}</td><td style="text-align:right">${_fmtMesa(it.subtotal)}</td></tr>`
+    ).join('');
+    const html = `<html><head><style>
+        body{font-family:monospace;font-size:12px;width:300px;margin:0;padding:8px;}
+        h1{font-size:13px;text-align:center;margin:4px 0;}
+        .centro{text-align:center;}
+        .linea{border-top:1px dashed #000;margin:6px 0;}
+        table{width:100%;border-collapse:collapse;}
+        td{padding:1px 0;}
+        .total{font-weight:bold;font-size:13px;}
+    </style></head><body>
+        <h1>${negocio}</h1>
+        <div class="linea"></div>
+        <div class="centro"><b>TICKET DE VENTA</b></div>
+        ${pedido.notas_generales ? `<div class="centro" style="font-size:11px;color:#666;">${pedido.notas_generales}</div>` : ''}
+        <div class="linea"></div>
+        <table>${itemsHtml}</table>
+        <div class="linea"></div>
+        <table>
+            <tr><td class="total">TOTAL</td><td style="text-align:right" class="total">${_fmtMesa(total)}</td></tr>
+            <tr><td style="color:#555;">Pago</td><td style="text-align:right;color:#555;">${metodosLabel[metodo] || metodo}</td></tr>
+        </table>
+        <div class="linea"></div>
+        <div class="centro" style="font-size:11px;">Impreso: ${ahora}</div>
+    </body></html>`;
+    try {
+        await window.api.imprimirTicket(html, impresora);
+    } catch(e) {
+        console.error('Error imprimiendo ticket:', e);
+    }
+}
+
+// ---- Modal Transferir ----
+
+function abrirModalTransferirMesa() {
+    if (!_pedidoMesaActivo) return;
+    const libres = _mesasData.filter(m => m.id !== _mesaActivaId && !_pedidosMesa[m.id]);
+    const el = document.getElementById('transferir-mesas-lista');
+    if (libres.length === 0) {
+        el.innerHTML = `<div style="text-align:center;padding:16px;color:#9ca3af;">No hay mesas libres disponibles.</div>`;
+    } else {
+        el.innerHTML = libres.map(m =>
+            `<button onclick="confirmarTransferirMesa(${m.id})" class="btn-secondary"
+                style="text-align:left;padding:10px 14px;">
+                <b>${m.nombre}</b> <span style="color:#6b7280;font-size:0.85em;">${m.zona || 'General'} · 👥 ${m.capacidad}</span>
+            </button>`
+        ).join('');
+    }
+    document.getElementById('modal-transferir-mesa').classList.remove('hidden');
+}
+
+function cerrarModalTransferirMesa() {
+    document.getElementById('modal-transferir-mesa').classList.add('hidden');
+}
+
+async function confirmarTransferirMesa(nueva_mesa_id) {
+    if (!_pedidoMesaActivo) return;
+    try {
+        await window.api.transferirMesa(_pedidoMesaActivo.id, nueva_mesa_id);
+        cerrarModalTransferirMesa();
+        cerrarPanelMesa();
+        mostrarNotificacionExito('Pedido transferido', '¡Listo!');
+        await cargarVistaMesas();
+    } catch(e) {
+        console.error('Error transfiriendo mesa:', e);
+        mostrarNotificacionExito('Error al transferir', '⚠️ Error');
+    }
+}
+
+// ---- Configurar Mesas ----
+
+async function abrirModalConfigurarMesas() {
+    await _cargarConfigMesas();
+    document.getElementById('modal-configurar-mesas').classList.remove('hidden');
+}
+
+function cerrarModalConfigurarMesas() {
+    document.getElementById('modal-configurar-mesas').classList.add('hidden');
+    cargarVistaMesas();
+}
+
+async function _cargarConfigMesas() {
+    const raw = (modoConectado && apiClient && tokenActual)
+        ? await apiClient.getTables()
+        : await window.api.obtenerMesas(sucursalIdActual);
+    const todasMesas = (modoConectado && apiClient && tokenActual) ? _normalizarMesasApi(raw) : raw;
+    const el = document.getElementById('config-mesas-lista');
+    if (!el) return;
+    if (todasMesas.length === 0) {
+        el.innerHTML = `<div style="text-align:center;padding:16px;color:#9ca3af;">Aún no hay mesas creadas.</div>`;
+        return;
+    }
+    el.innerHTML = todasMesas.map(m => `
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f3f4f6;">
+            <div style="flex:1;">
+                <span style="font-weight:600;">${m.nombre}</span>
+                <span style="color:#6b7280;font-size:0.85em;margin-left:8px;">${m.zona || 'General'} · 👥 ${m.capacidad}</span>
+            </div>
+            <button class="btn-secondary" style="padding:4px 10px;font-size:0.8em;"
+                onclick="_eliminarMesaConfig(${m.id}, '${(m.nombre||'').replace(/'/g,'&apos;')}')">Eliminar</button>
+        </div>
+    `).join('');
+}
+
+async function crearMesaConfig() {
+    const nombre = document.getElementById('config-mesa-nombre').value.trim();
+    const zona   = document.getElementById('config-mesa-zona').value.trim() || 'General';
+    const cap    = parseInt(document.getElementById('config-mesa-capacidad').value) || 4;
+    if (!nombre) { mostrarNotificacionExito('Escribe un nombre para la mesa', '⚠️ Error'); return; }
+    try {
+        if (modoConectado && apiClient && tokenActual) {
+            await apiClient.createTable({ name: nombre, zone: zona, capacity: cap });
+        } else {
+            await window.api.crearMesa(nombre, zona, cap, sucursalIdActual);
+        }
+        document.getElementById('config-mesa-nombre').value = '';
+        await _cargarConfigMesas();
+        mostrarNotificacionExito(`Mesa "${nombre}" creada`, '¡Listo!');
+    } catch(e) {
+        console.error('Error creando mesa:', e);
+        mostrarNotificacionExito('Error al crear la mesa', '⚠️ Error');
+    }
+}
+
+async function _eliminarMesaConfig(id, nombre) {
+    if (!confirm(`¿Eliminar la mesa "${nombre}"?`)) return;
+    try {
+        if (modoConectado && apiClient && tokenActual) {
+            await apiClient.deleteTable(id);
+        } else {
+            await window.api.eliminarMesa(id);
+        }
+        await _cargarConfigMesas();
+        mostrarNotificacionExito(`Mesa eliminada`, '¡Listo!');
+    } catch(e) {
+        mostrarNotificacionExito('Error al eliminar la mesa', '⚠️ Error');
     }
 }
 

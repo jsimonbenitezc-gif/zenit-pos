@@ -272,6 +272,45 @@ class APIClient {
             body: { items }
         });
     }
+
+    async getAlerts() {
+        return await this.request('/alerts', { method: 'GET' });
+    }
+
+    // MESAS
+    async getTables() {
+        return await this.request('/tables', { method: 'GET' });
+    }
+
+    async createTable(data) {
+        return await this.request('/tables', { method: 'POST', body: data });
+    }
+
+    async deleteTable(id) {
+        return await this.request(`/tables/${id}`, { method: 'DELETE' });
+    }
+
+    async openTableOrder(tableId, guests, notes) {
+        return await this.request('/orders', {
+            method: 'POST',
+            body: { table_id: tableId, guests: guests || null, notes: notes || null, items: [] }
+        });
+    }
+
+    async addItemsToOrder(orderId, items) {
+        return await this.request(`/orders/${orderId}/items`, { method: 'POST', body: { items } });
+    }
+
+    async removeOrderItem(orderId, itemId) {
+        return await this.request(`/orders/${orderId}/items/${itemId}`, { method: 'DELETE' });
+    }
+
+    async closeTableOrder(orderId, paymentMethod) {
+        return await this.request(`/orders/${orderId}/status`, {
+            method: 'PUT',
+            body: { status: 'completado', payment_method: paymentMethod || 'efectivo' }
+        });
+    }
 }
 
 // Exportar clase
