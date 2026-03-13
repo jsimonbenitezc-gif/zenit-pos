@@ -1212,9 +1212,8 @@ async function _sincronizarRecetasAlBackend() {
             const receta = await window.api.obtenerRecetaProducto(prod.id);
             if (!receta || receta.length === 0) continue;
             const items = receta.map(it => ({
-                // 'tipo' puede ser español ('ingrediente'/'preparacion') o inglés ('ingredient'/'preparation')
-                // dependiendo de si la receta viene de SQLite local o fue sincronizada del backend
-                item_type: (it.tipo === 'ingrediente' || it.tipo === 'ingredient') ? 'ingredient' : 'preparation',
+                // 'tipo' en SQLite local es 'insumo'/'preparacion'. Del backend llega 'ingredient'/'preparation'.
+                item_type: (it.tipo === 'insumo' || it.tipo === 'ingrediente' || it.tipo === 'ingredient') ? 'ingredient' : 'preparation',
                 item_id:   it.referencia_id,
                 quantity:  it.cantidad,
             })).filter(it => it.item_id);
@@ -5099,7 +5098,7 @@ async function guardarReceta() {
     try {
         if (modoConectado && apiClient && tokenActual) {
             try {
-                const itemsAPI = items.map(i => ({ item_type: i.tipo === 'ingrediente' ? 'ingredient' : 'preparation', item_id: i.referencia_id, quantity: i.cantidad }));
+                const itemsAPI = items.map(i => ({ item_type: (i.tipo === 'insumo' || i.tipo === 'ingrediente' || i.tipo === 'ingredient') ? 'ingredient' : 'preparation', item_id: i.referencia_id, quantity: i.cantidad }));
                 await apiClient.request(`/inventory/products/${productoRecetaActual}/recipe`, { method: 'POST', body: { items: itemsAPI } });
             } catch (e) { console.warn('No se pudo guardar receta en backend:', e.message); }
         }
@@ -5688,11 +5687,12 @@ async function sincronizarDesdeBackend() {
                 await window.api.syncInsumos(insumosBackend);
                 const preps = await apiClient.request('/inventory/preparations');
                 await window.api.syncPreparaciones(preps);
+                // Subir recetas al backend ANTES de descargarlas,
+                // para que la data local (con tipos 'insumo'/'preparacion') no sea sobreescrita primero.
+                await _sincronizarRecetasAlBackend();
                 const recetas = await apiClient.request('/inventory/all-recipes');
                 await window.api.syncRecetas(recetas);
             }
-            // Subir recetas locales que el backend aún no tiene (creadas en modo offline)
-            _sincronizarRecetasAlBackend().catch(() => {});
         }
 
         // 7-8. Ofertas (solo Premium)
@@ -5823,9 +5823,10 @@ async function subirInventarioLocalAlBackend() {
                 const receta = await window.api.obtenerRecetaProducto(prod.id);
                 if (!receta || receta.length === 0) continue;
                 const itemsMapeados = receta.map(it => {
-                    const backendId = it.tipo === 'ingrediente' ? mapaInsumos[it.referencia_id] : mapaPreps[it.referencia_id];
+                    const esInsumo = it.tipo === 'insumo' || it.tipo === 'ingrediente' || it.tipo === 'ingredient';
+                    const backendId = esInsumo ? mapaInsumos[it.referencia_id] : mapaPreps[it.referencia_id];
                     if (!backendId) return null;
-                    return { item_type: it.tipo === 'ingrediente' ? 'ingredient' : 'preparation', item_id: backendId, quantity: it.cantidad };
+                    return { item_type: esInsumo ? 'ingredient' : 'preparation', item_id: backendId, quantity: it.cantidad };
                 }).filter(Boolean);
                 if (itemsMapeados.length > 0) {
                     await apiClient.request(`/inventory/products/${prod.id}/recipe`, { method: 'POST', body: { items: itemsMapeados } });
