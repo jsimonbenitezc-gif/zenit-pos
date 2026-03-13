@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('api', {
     obtenerItemsPreparacion: (id) => ipcRenderer.invoke('obtener-items-preparacion', id),
     guardarItemsPreparacion: (id, items) => ipcRenderer.invoke('guardar-items-preparacion', id, items),
     obtenerRecetaProducto: (id) => ipcRenderer.invoke('obtener-receta-producto', id),
+    eliminarRecetaProducto: (id) => ipcRenderer.invoke('eliminar-receta-producto', id),
     guardarRecetaProducto: (id, items) => ipcRenderer.invoke('guardar-receta-producto', id, items),
     calcularStockPreparacion: (id) => ipcRenderer.invoke('calcular-stock-preparacion', id),
     calcularStockProducto: (id) => ipcRenderer.invoke('calcular-stock-producto', id),
@@ -101,6 +102,8 @@ contextBridge.exposeInMainWorld('api', {
 
     agregarInsumoConId: (id, datos) => ipcRenderer.invoke('agregar-insumo-con-id', id, datos),
     agregarPreparacionConId: (id, datos) => ipcRenderer.invoke('agregar-preparacion-con-id', id, datos),
+    agregarDescuentoConId: (id, datos) => ipcRenderer.invoke('agregar-descuento-con-id', id, datos),
+    agregarComboConId: (id, datos) => ipcRenderer.invoke('agregar-combo-con-id', id, datos),
 
     // SYNC
     syncClasificaciones: (datos) => ipcRenderer.invoke('sync-clasificaciones', datos),
@@ -111,6 +114,7 @@ contextBridge.exposeInMainWorld('api', {
     syncRecetas: (datos) => ipcRenderer.invoke('sync-recetas', datos),
     syncDescuentos: (datos) => ipcRenderer.invoke('sync-descuentos', datos),
     syncCombos: (datos) => ipcRenderer.invoke('sync-combos', datos),
+    syncPedidos: (datos) => ipcRenderer.invoke('sync-pedidos', datos),
     obtenerPedidosPendientes: () => ipcRenderer.invoke('obtener-pedidos-pendientes'),
     obtenerItemsPedido: (id) => ipcRenderer.invoke('obtener-items-pedido', id),
     marcarPedidoSincronizado: (id) => ipcRenderer.invoke('marcar-pedido-sincronizado', id),
@@ -120,10 +124,48 @@ contextBridge.exposeInMainWorld('api', {
     verificarPasswordApp: (password) => ipcRenderer.invoke('verificar-password-app', password),
     establecerPasswordApp: (password) => ipcRenderer.invoke('establecer-password-app', password),
 
+    // TOKEN SEGURO (cifrado con safeStorage del sistema operativo)
+    guardarTokenSeguro: (token) => ipcRenderer.invoke('guardar-token-seguro', token),
+    obtenerTokenSeguro: () => ipcRenderer.invoke('obtener-token-seguro'),
+
+    // ABRIR URL EN NAVEGADOR EXTERNO
+    abrirEnNavegador: (url) => ipcRenderer.invoke('abrir-en-navegador', url),
+
+    // EVENTO: ventana recupera foco (para re-verificar plan tras Stripe Checkout)
+    onWindowFocus: (cb) => ipcRenderer.on('window-focused', () => cb()),
+
+    // ROL ACTIVO (para validación de permisos)
+    establecerRolActivo: (rol) => ipcRenderer.invoke('establecer-rol-activo', rol),
+
     // TURNOS
     abrirTurno: (nombre, rol, fondo) => ipcRenderer.invoke('abrir-turno', nombre, rol, fondo),
     obtenerTurnoActivo: () => ipcRenderer.invoke('obtener-turno-activo'),
     obtenerTurnos: () => ipcRenderer.invoke('obtener-turnos'),
     calcularTotalesTurno: (fecha) => ipcRenderer.invoke('calcular-totales-turno', fecha),
     cerrarTurno: (id, efectivo, notas) => ipcRenderer.invoke('cerrar-turno', id, efectivo, notas),
+
+    // ALERTAS
+    calcularAlertas: () => ipcRenderer.invoke('calcular-alertas'),
+
+    // MESAS
+    obtenerMesas:        (branchId)               => ipcRenderer.invoke('obtener-mesas', branchId),
+    crearMesa:           (n, z, c, branchId)     => ipcRenderer.invoke('crear-mesa', n, z, c, branchId),
+    actualizarMesa:      (id, n, z, c)           => ipcRenderer.invoke('actualizar-mesa', id, n, z, c),
+    eliminarMesa:        (id)                    => ipcRenderer.invoke('eliminar-mesa', id),
+    obtenerPedidoMesa:   (mesa_id)               => ipcRenderer.invoke('obtener-pedido-mesa', mesa_id),
+    abrirPedidoMesa:     (m, nom, caj, com, not)  => ipcRenderer.invoke('abrir-pedido-mesa', m, nom, caj, com, not),
+    agregarItemMesa:     (ped, prod, cant, px, n) => ipcRenderer.invoke('agregar-item-mesa', ped, prod, cant, px, n),
+    eliminarItemMesa:    (item, ped)              => ipcRenderer.invoke('eliminar-item-mesa', item, ped),
+    cerrarPedidoMesa:    (ped, metodo)            => ipcRenderer.invoke('cerrar-pedido-mesa', ped, metodo),
+    transferirMesa:      (ped, nueva)             => ipcRenderer.invoke('transferir-mesa', ped, nueva),
+    actualizarNotasMesa: (ped, notas)             => ipcRenderer.invoke('actualizar-notas-mesa', ped, notas),
+    actualizarPuntosCliente: (id, delta)          => ipcRenderer.invoke('actualizar-puntos-cliente', id, delta),
+    toggleFidelidad:         (id, valor)          => ipcRenderer.invoke('toggle-fidelidad', id, valor),
+    obtenerClientesFidelidad: ()                  => ipcRenderer.invoke('obtener-clientes-fidelidad'),
+    registrarLogDescuento:   (datos)              => ipcRenderer.invoke('registrar-log-descuento', datos),
+    obtenerLogDescuentos:    ()                   => ipcRenderer.invoke('obtener-log-descuentos'),
+    // KDS
+    kdsNuevoPedido:          (orden)              => ipcRenderer.invoke('kds-nuevo-pedido', orden),
+    kdsGetUrl:               ()                   => ipcRenderer.invoke('kds-get-url'),
+    onKdsEstadoCambio:       (cb)                 => ipcRenderer.on('kds-estado-cambio', (_, data) => cb(data)),
 });

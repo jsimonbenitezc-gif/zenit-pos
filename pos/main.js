@@ -1,7 +1,7 @@
 // ============================================
 // MAIN.JS - PROCESO PRINCIPAL (FIX DE RUTAS)
 // ============================================
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, safeStorage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
@@ -64,6 +64,14 @@ function createWindow() {
     // FIX AQUÃ: Forzamos a que busque index.html en la carpeta del script
     mainWindow.loadFile(path.join(__dirname, 'index.html'));
     mainWindow.maximize(); // Abre la ventana maximizada por defecto
+
+    // Notificar al renderer cuando la ventana recupera el foco
+    // (útil para refrescar el plan después de Stripe Checkout en el navegador)
+    mainWindow.on('focus', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('window-focused');
+        }
+    });
 }
 
 app.whenReady().then(() => {
@@ -139,19 +147,30 @@ ipcMain.handle('obtener-clasificaciones-raw', async () => {
     return new Promise((res, rej) => db.obtenerClasificacionesRaw((err, rows) => err ? rej(err) : res(rows)));
 });
 
+// Helper: verificar si el rol activo tiene permiso para operaciones de administrador
+function verificarPermisoAdmin() {
+    if (rolActivoEnMain === 'cajero') {
+        throw new Error('Permiso denegado: el perfil Cajero no puede realizar esta acción.');
+    }
+}
+
 ipcMain.handle('agregar-producto', async (_, p) => {
+    verificarPermisoAdmin();
     return new Promise((res, rej) => db.agregarProducto(p, (err) => err ? rej(err) : res(true)));
 });
 
 ipcMain.handle('actualizar-producto', async (_, id, p) => {
+    verificarPermisoAdmin();
     return new Promise((res, rej) => db.actualizarProducto(id, p, (err) => err ? rej(err) : res(true)));
 });
 
 ipcMain.handle('eliminar-producto', async (_, id) => {
+    verificarPermisoAdmin();
     return new Promise((res, rej) => db.eliminarProducto(id, (err) => err ? rej(err) : res(true)));
 });
 
 ipcMain.handle('agregar-clasificacion', async (_, datos) => {
+    verificarPermisoAdmin();
     return new Promise((resolve, reject) => {
         db.agregarClasificacion(datos, (err) => {
             if (err) reject(err);
@@ -161,6 +180,7 @@ ipcMain.handle('agregar-clasificacion', async (_, datos) => {
 });
 
 ipcMain.handle('editar-clasificacion', async (_, datos) => {
+    verificarPermisoAdmin();
     return new Promise((resolve, reject) => {
         db.editarClasificacion(datos, (err) => {
             if (err) reject(err);
@@ -170,6 +190,7 @@ ipcMain.handle('editar-clasificacion', async (_, datos) => {
 });
 
 ipcMain.handle('eliminar-clasificacion', async (_, id) => {
+    verificarPermisoAdmin();
     return new Promise((resolve, reject) => {
         db.eliminarClasificacion(id, (err) => {
             if (err) reject(err);
@@ -382,6 +403,7 @@ ipcMain.handle('obtener-receta-producto', async (_, id) => {
 ipcMain.handle('guardar-receta-producto', async (_, id, items) => {
     return new Promise((res, rej) => db.guardarRecetaProducto(id, items, (err) => err ? rej(err) : res(true)));
 });
+ipcMain.handle('eliminar-receta-producto', async (_, id) => db.eliminarRecetaProducto(id));
 
 ipcMain.handle('calcular-stock-preparacion', async (_, id) => {
     return new Promise((res, rej) => db.calcularStockPreparacion(id, (err, stock) => err ? rej(err) : res(stock)));
@@ -536,6 +558,12 @@ ipcMain.handle('agregar-insumo-con-id', (_, id, datos) => {
 ipcMain.handle('agregar-preparacion-con-id', (_, id, datos) => {
     return new Promise((res, rej) => db.agregarPreparacionConId(id, datos, (err) => err ? rej(err) : res(true)));
 });
+ipcMain.handle('agregar-descuento-con-id', (_, id, datos) => {
+    return new Promise((res, rej) => db.agregarDescuentoConId(id, datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('agregar-combo-con-id', (_, id, datos) => {
+    return new Promise((res, rej) => db.agregarComboConId(id, datos, (err) => err ? rej(err) : res(true)));
+});
 
 // SYNC — Guardar datos del backend en SQLite local
 ipcMain.handle('sync-clasificaciones', (_, datos) => {
@@ -561,6 +589,9 @@ ipcMain.handle('sync-descuentos', (_, datos) => {
 });
 ipcMain.handle('sync-combos', (_, datos) => {
     return new Promise((res, rej) => db.syncCombos(datos, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('sync-pedidos', (_, datos) => {
+    return new Promise((res, rej) => db.syncPedidos(datos, (err) => err ? rej(err) : res(true)));
 });
 ipcMain.handle('obtener-pedidos-pendientes', () => {
     return new Promise((res, rej) => db.obtenerPedidosPendientes((err, rows) => err ? rej(err) : res(rows)));
@@ -606,3 +637,205 @@ ipcMain.handle('cerrar-turno', (event, id, efectivoContado, notas) => {
         });
     });
 });
+
+// ============================================
+// TOKEN SEGURO — Cifrado con safeStorage (OS-level encryption)
+// ============================================
+
+ipcMain.handle('guardar-token-seguro', (event, token) => {
+    try {
+        if (!token) {
+            // Borrar el token cifrado
+            return db.guardarAjuste('api_token_enc', '', () => {});
+        }
+        if (safeStorage.isEncryptionAvailable()) {
+            const cifrado = safeStorage.encryptString(token).toString('base64');
+            return new Promise((resolve, reject) => {
+                db.guardarAjuste('api_token_enc', cifrado, (err) => err ? reject(err) : resolve(true));
+            });
+        } else {
+            // Fallback: guardar sin cifrar si el OS no soporta safeStorage
+            return new Promise((resolve, reject) => {
+                db.guardarAjuste('api_token', token, (err) => err ? reject(err) : resolve(true));
+            });
+        }
+    } catch (err) {
+        console.error('Error al guardar token seguro:', err);
+        return false;
+    }
+});
+
+ipcMain.handle('obtener-token-seguro', () => {
+    return new Promise((resolve) => {
+        // Intentar obtener token cifrado primero
+        db.db.get("SELECT valor FROM ajustes WHERE clave = 'api_token_enc'", [], (err, row) => {
+            if (!err && row && row.valor && safeStorage.isEncryptionAvailable()) {
+                try {
+                    const buffer = Buffer.from(row.valor, 'base64');
+                    const token = safeStorage.decryptString(buffer);
+                    return resolve(token);
+                } catch (e) {
+                    // Si falla el descifrado, intentar con el campo sin cifrar
+                }
+            }
+            // Fallback: token sin cifrar (compatibilidad hacia atrás)
+            db.db.get("SELECT valor FROM ajustes WHERE clave = 'api_token'", [], (err2, row2) => {
+                resolve(row2?.valor || null);
+            });
+        });
+    });
+});
+
+// ============================================
+// ABRIR URL EN NAVEGADOR EXTERNO
+// ============================================
+
+ipcMain.handle('abrir-en-navegador', async (event, url) => {
+    const { shell } = require('electron');
+    await shell.openExternal(url);
+    return true;
+});
+
+// ============================================
+// ROL ACTIVO — Para validación de permisos en IPC
+// ============================================
+
+let rolActivoEnMain = 'dueno'; // Cache del rol actual
+
+ipcMain.handle('establecer-rol-activo', (event, rol) => {
+    const rolesValidos = ['cajero', 'encargado', 'dueno'];
+    if (rolesValidos.includes(rol)) {
+        rolActivoEnMain = rol;
+    }
+    return true;
+});
+
+ipcMain.handle('calcular-alertas', () => {
+    return new Promise((resolve) => {
+        db.calcularAlertas((err, alertas) => resolve(alertas || []));
+    });
+});
+
+// MESAS
+ipcMain.handle('obtener-mesas', (_, branchId) =>
+    new Promise((res, rej) => db.obtenerMesas(branchId || null, (e, r) => e ? rej(e) : res(r))));
+ipcMain.handle('crear-mesa', (_, n, z, c, branchId) =>
+    new Promise((res, rej) => db.crearMesa(n, z, c, branchId || null, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('actualizar-mesa', (_, id, n, z, c) =>
+    new Promise((res, rej) => db.actualizarMesa(id, n, z, c, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('eliminar-mesa', (_, id) =>
+    new Promise((res, rej) => db.eliminarMesa(id, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('obtener-pedido-mesa', (_, mesa_id) =>
+    new Promise((res, rej) => db.obtenerPedidoAbiertoPorMesa(mesa_id, (e, r) => e ? rej(e) : res(r))));
+ipcMain.handle('abrir-pedido-mesa', (_, mesa_id, mesa_nombre, cajero, comensales, notas) =>
+    new Promise((res, rej) => db.abrirPedidoMesa(mesa_id, mesa_nombre, cajero, comensales, notas, (e, id) => e ? rej(e) : res(id))));
+ipcMain.handle('agregar-item-mesa', (_, pedido_id, producto_id, cantidad, precio, nota) =>
+    new Promise((res, rej) => db.agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('eliminar-item-mesa', (_, item_id, pedido_id) =>
+    new Promise((res, rej) => db.eliminarItemMesa(item_id, pedido_id, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('cerrar-pedido-mesa', (_, pedido_id, metodo) =>
+    new Promise((res, rej) => db.cerrarPedidoMesa(pedido_id, metodo, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('transferir-mesa', (_, pedido_id, nueva_mesa_id) =>
+    new Promise((res, rej) => db.transferirMesa(pedido_id, nueva_mesa_id, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('actualizar-notas-mesa', (_, pedido_id, notas) =>
+    new Promise((res, rej) => db.actualizarNotasMesa(pedido_id, notas, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('actualizar-puntos-cliente', (_, cliente_id, delta) =>
+    new Promise((res, rej) => db.actualizarPuntosCliente(cliente_id, delta, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('toggle-fidelidad', (_, cliente_id, valor) =>
+    new Promise((res, rej) => db.toggleFidelidad(cliente_id, valor, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('obtener-clientes-fidelidad', () =>
+    new Promise((res, rej) => db.obtenerClientesFidelidad((e, r) => e ? rej(e) : res(r))));
+ipcMain.handle('registrar-log-descuento', (_, datos) =>
+    new Promise((res, rej) => db.registrarLogDescuento(datos, (e) => e ? rej(e) : res(true))));
+ipcMain.handle('obtener-log-descuentos', () =>
+    new Promise((res, rej) => db.obtenerLogDescuentos(50, (e, r) => e ? rej(e) : res(r))));
+
+// ============================================
+// SERVIDOR KDS (Kitchen Display System)
+// ============================================
+const http = require('http');
+const os   = require('os');
+
+let kdsClients      = [];
+let kdsPendingOrders = [];
+let kdsCounter      = 0;
+
+function getLocalIP() {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+            if (net.family === 'IPv4' && !net.internal) return net.address;
+        }
+    }
+    return '127.0.0.1';
+}
+
+function broadcastKDS(data) {
+    const msg = `data: ${JSON.stringify(data)}\n\n`;
+    kdsClients = kdsClients.filter(c => !c.destroyed);
+    kdsClients.forEach(c => { try { c.write(msg); } catch(e) {} });
+}
+
+const KDS_PORT = 3001;
+const kdsServer = http.createServer((req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+
+    if (req.method === 'GET' && (req.url === '/' || req.url === '/kds')) {
+        fs.readFile(path.join(__dirname, 'kds.html'), (err, data) => {
+            if (err) { res.writeHead(500); res.end('Error'); return; }
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(data);
+        });
+    } else if (req.method === 'GET' && req.url === '/events') {
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+        });
+        res.write(`data: ${JSON.stringify({ type: 'init', orders: kdsPendingOrders })}\n\n`);
+        kdsClients.push(res);
+        req.on('close', () => { kdsClients = kdsClients.filter(c => c !== res); });
+    } else if (req.method === 'POST' && req.url.startsWith('/status/')) {
+        const kdsId = req.url.replace('/status/', '');
+        const order = kdsPendingOrders.find(o => String(o.kdsId) === kdsId);
+        if (order) {
+            order.estado = 'preparando';
+            broadcastKDS({ type: 'status', kdsId, status: 'preparando' });
+            if (order.pedidoId && mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('kds-estado-cambio', { pedidoId: order.pedidoId, estado: 'en_preparacion' });
+            }
+        }
+        res.writeHead(200); res.end('OK');
+    } else if (req.method === 'POST' && req.url.startsWith('/done/')) {
+        const kdsId = req.url.replace('/done/', '');
+        const order = kdsPendingOrders.find(o => String(o.kdsId) === kdsId);
+        kdsPendingOrders = kdsPendingOrders.filter(o => String(o.kdsId) !== kdsId);
+        broadcastKDS({ type: 'done', kdsId });
+        if (order && order.pedidoId && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('kds-estado-cambio', { pedidoId: order.pedidoId, estado: 'completado' });
+        }
+        res.writeHead(200); res.end('OK');
+    } else {
+        res.writeHead(404); res.end();
+    }
+});
+
+kdsServer.on('error', e => console.error('KDS server error:', e.message));
+kdsServer.listen(KDS_PORT, '0.0.0.0', () =>
+    console.log(`✅ KDS server en http://localhost:${KDS_PORT}`));
+
+ipcMain.handle('kds-nuevo-pedido', (_, orden) => {
+    kdsCounter++;
+    const entry = { ...orden, kdsId: String(kdsCounter), hora: Date.now() };
+    kdsPendingOrders.push(entry);
+    broadcastKDS({ type: 'nuevo', order: entry });
+    return true;
+});
+
+ipcMain.handle('kds-get-url', () => ({
+    local: `http://localhost:${KDS_PORT}`,
+    red:   `http://${getLocalIP()}:${KDS_PORT}`,
+    ip:    getLocalIP(),
+    port:  KDS_PORT
+}));

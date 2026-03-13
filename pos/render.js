@@ -89,9 +89,11 @@ async function cargarConfiguracionModo() {
         // Cargar plan desde ajustes guardados (funciona offline)
         cargarPlanDesdeAjustes(ajustes);
 
-        // Si está conectado, refrescar plan desde el backend
+        // Si está conectado, refrescar plan desde el backend e iniciar polling
         if (modoConectado && tokenActual) {
             cargarPlanInfo().catch(() => {});
+            iniciarKDSPolling();
+            iniciarSyncInventario();
         }
 
         // Actualizar indicador visual
@@ -706,7 +708,7 @@ async function obtenerPedidosWrapper(filtro) {
                 info_cliente_temp: o.customer_temp_info,
                 cajero: null,
                 fecha: o.createdAt,
-                telefono: o.customer ? o.customer.name : (o.customer_temp_info || null),
+                telefono: o.customer ? o.customer.name : (o.table ? 'Mesa: ' + o.table.name : (o.customer_temp_info || null)),
                 _items: o.items
             }));
             // Safety net: agregar órdenes locales que no se sincronizaron al backend
@@ -908,15 +910,12 @@ if (window.api) {
             'cancelado':     { color: '#ef4444', bg: '#fee2e2' }
         };
         try {
-            // 1. Actualizar SQLite local
+            // 1. Actualizar SQLite local (solo para display en pantalla Pedidos)
             await window.api.actualizarEstadoPedido(pedidoId, estado);
-            // 2. Actualizar backend si está conectado (para que persista al reiniciar)
-            if (modoConectado && apiClient && tokenActual) {
-                apiClient.request(`/orders/${pedidoId}/status`, {
-                    method: 'PUT',
-                    body: { status: estado }
-                }).catch(e => console.warn('kds backend status update:', e));
-            }
+            // 2. NO actualizar el backend desde KDS:
+            //    "Listo en cocina" ≠ "Cobrado". El backend mantiene status='registrado'
+            //    hasta que el cajero confirme el cobro. De lo contrario la mesa se
+            //    marcaría como libre antes de que se procese el pago.
             // 3. Parchear el select en pantalla si Pedidos está abierto
             const select = document.querySelector(`select[onchange*="cambiarEstadoPedido(${pedidoId},"]`);
             if (select) {
@@ -1143,7 +1142,178 @@ function configurarMenu() {
     });
 }
 
+let _mesasAutoRefreshInterval = null;
+
+// ─── Sync de Inventario en tiempo real (modo conectado) ───────────────────────
+let _invSyncInterval  = null;
+let _invEventSource   = null;
+
+// Descarga stocks actualizados del backend y actualiza SQLite local + re-renderiza si la vista está abierta.
+async function _actualizarInventarioDesdeBackend() {
+    if (!modoConectado || !apiClient || !tokenActual || modoSoloOnline) return;
+    try {
+        const [insumos, preps] = await Promise.all([
+            apiClient.request('/inventory/ingredients').catch(() => null),
+            apiClient.request('/inventory/preparations').catch(() => null),
+        ]);
+        if (insumos && insumos.length > 0) await window.api.syncInsumos(insumos);
+        if (preps  && preps.length  > 0) await window.api.syncPreparaciones(preps);
+
+        // Re-renderizar si la vista de inventario está activa
+        if (!document.getElementById('view-inventario')?.classList.contains('hidden')) {
+            insumosCache = await window.api.obtenerInsumos();
+            renderizarTablaInsumos?.();
+            renderizarTablaPreparaciones?.();
+        }
+    } catch(e) {
+        console.warn('Sync inventario backend→local:', e.message);
+    }
+}
+
+function _conectarSSEInventario() {
+    if (_invEventSource) { _invEventSource.close(); _invEventSource = null; }
+    if (!modoConectado || !tokenActual) return;
+    const sseUrl = `${apiClient.baseURL}/inventory/events?token=${tokenActual}`;
+    _invEventSource = new EventSource(sseUrl);
+    _invEventSource.onmessage = () => _actualizarInventarioDesdeBackend();
+    _invEventSource.onerror = () => {
+        _invEventSource?.close();
+        _invEventSource = null;
+        // Reconectar SSE tras 10s sin tocar el intervalo de polling
+        setTimeout(() => { if (modoConectado && tokenActual) _conectarSSEInventario(); }, 10000);
+    };
+}
+
+function iniciarSyncInventario() {
+    detenerSyncInventario();
+    if (!modoConectado || !tokenActual) return;
+    // Polling cada 15s garantizado (independiente del SSE)
+    _invSyncInterval = setInterval(_actualizarInventarioDesdeBackend, 15000);
+    // SSE para actualizaciones inmediatas (complementa el polling)
+    _conectarSSEInventario();
+    // Primera actualización inmediata al conectar
+    _actualizarInventarioDesdeBackend();
+}
+
+function detenerSyncInventario() {
+    clearInterval(_invSyncInterval); _invSyncInterval = null;
+    _invEventSource?.close();        _invEventSource  = null;
+}
+
+// Sube recetas de productos locales al backend (para las creadas en modo offline).
+// Solo sube las que el backend aún no tiene. Asume que local ID = backend ID (válido
+// cuando los insumos/prods ya están sincronizados en modo conectado).
+async function _sincronizarRecetasAlBackend() {
+    if (!modoConectado || !apiClient || !tokenActual) return;
+    try {
+        const agrupados  = await window.api.obtenerProductosAgrupados();
+        const todosProds = (agrupados || []).flatMap(c => c.productos || []);
+        for (const prod of todosProds) {
+            const receta = await window.api.obtenerRecetaProducto(prod.id);
+            if (!receta || receta.length === 0) continue;
+            const items = receta.map(it => ({
+                // 'tipo' puede ser español ('ingrediente'/'preparacion') o inglés ('ingredient'/'preparation')
+                // dependiendo de si la receta viene de SQLite local o fue sincronizada del backend
+                item_type: (it.tipo === 'ingrediente' || it.tipo === 'ingredient') ? 'ingredient' : 'preparation',
+                item_id:   it.referencia_id,
+                quantity:  it.cantidad,
+            })).filter(it => it.item_id);
+            if (items.length > 0) {
+                await apiClient.request(`/inventory/products/${prod.id}/recipe`, {
+                    method: 'POST', body: { items }
+                }).catch(e => console.warn(`No se pudo sync receta prod ${prod.id}:`, e.message));
+            }
+        }
+    } catch(e) {
+        console.warn('Error sincronizando recetas al backend:', e.message);
+    }
+}
+
+// ─── KDS Polling (modo conectado) ─────────────────────────────────────────────
+// Sincroniza órdenes del backend al KDS local, incluyendo las de mobile.
+// Rastrea por (orderId → { updatedAt, itemIds:Set }) para detectar solo items nuevos.
+let _kdsPollingInterval = null;
+const _kdsTracked       = new Map(); // orderId → { updatedAt, itemIds: Set<itemId> }
+let   _kdsSeeded        = false;     // true tras la primera consulta (siembra)
+
+// Marcar una orden como ya enviada al KDS (con el estado actual de sus items).
+// Llamar después de enviar explícitamente al KDS desde el desktop,
+// para evitar que el polling la reenvíe.
+function _kdsMarcarEnviado(orderId, updatedAt, items) {
+    if (!orderId) return;
+    _kdsTracked.set(orderId, {
+        updatedAt: updatedAt || null,
+        itemIds:   new Set((items || []).map(i => i.id)),
+    });
+}
+
+async function _kdsBackendPoll() {
+    if (!modoConectado || !apiClient || !tokenActual) return;
+    try {
+        const data    = await apiClient.getOrders({ status: 'registrado', limit: 50 });
+        const ordenes = data?.data || data?.rows || (Array.isArray(data) ? data : []);
+
+        if (!_kdsSeeded) {
+            // Primera ejecución: registrar lo que ya existe sin enviar al KDS.
+            for (const o of ordenes) {
+                _kdsTracked.set(o.id, {
+                    updatedAt: o.updatedAt,
+                    itemIds:   new Set((o.items || []).map(i => i.id)),
+                });
+            }
+            _kdsSeeded = true;
+            return;
+        }
+
+        for (const o of ordenes) {
+            const stored = _kdsTracked.get(o.id);
+
+            if (stored && stored.updatedAt === o.updatedAt) continue; // sin cambios
+
+            const currentItemIds = new Set((o.items || []).map(i => i.id));
+
+            // Determinar qué items son nuevos (no estaban en el último snapshot)
+            const itemsNuevos = (o.items || []).filter(i => !stored?.itemIds?.has(i.id));
+
+            // Actualizar tracker con estado actual
+            _kdsTracked.set(o.id, { updatedAt: o.updatedAt, itemIds: currentItemIds });
+
+            if (itemsNuevos.length === 0) continue; // cambio sin items nuevos (ej: nota editada)
+
+            const mesa = o.table?.name || null;
+            window.api.kdsNuevoPedido({
+                pedidoId: o.id,
+                tipo:     mesa ? 'mesa' : (o.order_type === 'domicilio' ? 'delivery' : 'mostrador'),
+                mesa,
+                notas:    o.notes || null,
+                items:    itemsNuevos.map(i => ({
+                    nombre:   i.product?.name || 'Producto',
+                    cantidad: i.quantity || 1,
+                    notas:    i.notes || '',
+                })),
+            }).catch(() => {});
+        }
+    } catch { /* ignorar errores de red */ }
+}
+
+function iniciarKDSPolling() {
+    if (_kdsPollingInterval) return;
+    _kdsBackendPoll(); // primera consulta inmediata (siembra)
+    _kdsPollingInterval = setInterval(_kdsBackendPoll, 8000);
+}
+
+function detenerKDSPolling() {
+    clearInterval(_kdsPollingInterval);
+    _kdsPollingInterval = null;
+    _kdsTracked.clear();
+    _kdsSeeded = false;
+}
+
 function cambiarVista(vista) {
+    // Limpiar auto-refresh de mesas al cambiar de vista
+    clearInterval(_mesasAutoRefreshInterval);
+    _mesasAutoRefreshInterval = null;
+
     // 1. Actualizar botones de la sidebar
     document.querySelectorAll('.menu-item').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.view === vista);
@@ -1195,6 +1365,7 @@ setTimeout(() => {
         cargarVistaTurno();
     } else if (vista === 'mesas') {
         cargarVistaMesas();
+        _mesasAutoRefreshInterval = setInterval(cargarVistaMesas, 20000);
         if (!turnoActivo && !ventaSinTurno) {
             setTimeout(() => {
                 const modal = document.getElementById('modal-turno-venta');
@@ -3441,6 +3612,8 @@ async function iniciarSesionZenitAjustes() {
         // Sincronizar todos los datos del backend
         sincronizarDesdeBackend().catch(e => console.warn('syncDesdeBackend:', e));
         cargarPlanInfo().catch(() => {});
+        iniciarKDSPolling();
+        iniciarSyncInventario();
 
         await cargarCuentaZenitAjustes();
         mostrarNotificacionExito('Sesión iniciada', '¡Bienvenido!');
@@ -3731,6 +3904,18 @@ function abrirKDSLocal() {
     if (url) window.open(url, '_blank');
 }
 
+function toggleKdsQr() {
+    const container = document.getElementById('kds-qr-container');
+    const btn       = document.getElementById('kds-qr-toggle');
+    if (!container) return;
+    const visible = container.style.display === 'flex';
+    container.style.display = visible ? 'none' : 'flex';
+    if (btn) {
+        const svgIcon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/></svg>';
+        btn.innerHTML = svgIcon + (visible ? ' Mostrar QR' : ' Ocultar QR');
+    }
+}
+
 function copiarUrl(elementId) {
     const texto = document.getElementById(elementId)?.textContent;
     if (!texto) return;
@@ -3821,7 +4006,16 @@ async function cargarAjustesInstalados() {
         // Permisos por rol (solo dueño)
         cargarPermisosAjustes();
 
-        // Sistema de puntos
+        // Sistema de puntos — leer del backend si hay conexión (fuente de verdad compartida con mobile)
+        if (modoConectado) {
+            try {
+                const bs = await apiClient.getSettings();
+                if (bs.puntos_activos !== undefined) ajustes.puntos_activos = bs.puntos_activos ? 'true' : 'false';
+                if (bs.puntos_por_peso  !== undefined) ajustes.puntos_por_peso     = String(bs.puntos_por_peso);
+                if (bs.puntos_bono_pedido !== undefined) ajustes.puntos_bono_pedido = String(bs.puntos_bono_pedido);
+                if (bs.puntos_valor     !== undefined) ajustes.puntos_valor        = String(bs.puntos_valor);
+            } catch { /* sin conexión: usar valores locales */ }
+        }
         const elPuntosActivos = document.getElementById('aj-puntos-activos');
         if (elPuntosActivos) elPuntosActivos.checked = (ajustes.puntos_activos === 'true');
         const elPuntosPeso = document.getElementById('aj-puntos-por-peso');
@@ -3940,23 +4134,32 @@ function agregarListenersGuardadoAjustes() {
     // Sistema de puntos
     const elPuntosActivos = document.getElementById('aj-puntos-activos');
     if (elPuntosActivos) {
-        elPuntosActivos.addEventListener('change', () =>
-            window.api.guardarAjuste('puntos_activos', elPuntosActivos.checked ? 'true' : 'false'));
+        elPuntosActivos.addEventListener('change', () => {
+            const val = elPuntosActivos.checked;
+            window.api.guardarAjuste('puntos_activos', val ? 'true' : 'false');
+            if (modoConectado) apiClient.saveSettings({ puntos_activos: val }).catch(() => {});
+        });
     }
     const elPuntosPeso = document.getElementById('aj-puntos-por-peso');
     if (elPuntosPeso) {
-        elPuntosPeso.addEventListener('change', () =>
-            window.api.guardarAjuste('puntos_por_peso', elPuntosPeso.value));
+        elPuntosPeso.addEventListener('change', () => {
+            window.api.guardarAjuste('puntos_por_peso', elPuntosPeso.value);
+            if (modoConectado) apiClient.saveSettings({ puntos_por_peso: parseFloat(elPuntosPeso.value) || 0 }).catch(() => {});
+        });
     }
     const elPuntosBono = document.getElementById('aj-puntos-bono');
     if (elPuntosBono) {
-        elPuntosBono.addEventListener('change', () =>
-            window.api.guardarAjuste('puntos_bono_pedido', elPuntosBono.value));
+        elPuntosBono.addEventListener('change', () => {
+            window.api.guardarAjuste('puntos_bono_pedido', elPuntosBono.value);
+            if (modoConectado) apiClient.saveSettings({ puntos_bono_pedido: parseInt(elPuntosBono.value, 10) || 0 }).catch(() => {});
+        });
     }
     const elPuntosValor = document.getElementById('aj-puntos-valor');
     if (elPuntosValor) {
-        elPuntosValor.addEventListener('change', () =>
-            window.api.guardarAjuste('puntos_valor', elPuntosValor.value));
+        elPuntosValor.addEventListener('change', () => {
+            window.api.guardarAjuste('puntos_valor', elPuntosValor.value);
+            if (modoConectado) apiClient.saveSettings({ puntos_valor: parseFloat(elPuntosValor.value) || 0 }).catch(() => {});
+        });
     }
 
     // PIN de descuentos
@@ -4450,7 +4653,21 @@ function abrirModalInsumo(ins = null) {
     document.getElementById('modal-insumo-titulo').innerText = ins ? 'Editar Insumo' : 'Nuevo Insumo';
     document.getElementById('ins-nombre').value = ins ? ins.nombre : '';
     document.getElementById('ins-unidad').value = ins ? ins.unidad : 'kg';
-    document.getElementById('ins-stock').value = ins ? ins.stock_actual : '';
+    const stockEl = document.getElementById('ins-stock');
+    stockEl.value = ins ? ins.stock_actual : '';
+    stockEl.disabled = !!ins; // solo lectura al editar; usa Entradas/Salidas para cambiar el stock
+    stockEl.style.background = ins ? '#f3f4f6' : '';
+    stockEl.title = ins ? 'Para modificar el stock usa los registros de Entradas y Salidas' : '';
+    let stockNota = document.getElementById('ins-stock-nota');
+    if (ins && !stockNota) {
+        stockNota = document.createElement('p');
+        stockNota.id = 'ins-stock-nota';
+        stockNota.style.cssText = 'font-size:0.78em;color:#6b7280;margin:2px 0 0;';
+        stockNota.textContent = 'Modificable solo desde Entradas / Salidas';
+        stockEl.parentNode.appendChild(stockNota);
+    } else if (!ins && stockNota) {
+        stockNota.remove();
+    }
     document.getElementById('ins-minimo').value = ins ? ins.stock_minimo : '';
 
     // Mostrar/ocultar bloque de conversión según unidad
@@ -4490,9 +4707,14 @@ async function guardarInsumo() {
     try {
         const contenido_cantidad = parseFloat(document.getElementById('ins-contenido-cantidad').value) || null;
         const contenido_unidad = document.getElementById('ins-contenido-unidad').value || null;
-        const datos = { nombre, unidad, stock_actual, stock_minimo, contenido_cantidad, contenido_unidad };
-        const datosAPI = { name: nombre, unit: unidad, stock: stock_actual, min_stock: stock_minimo,
-                           content_amount: contenido_cantidad, content_unit: contenido_unidad };
+        // Al editar, preservar el stock_actual real desde el caché (no permitir sobreescribirlo desde el form)
+        const stockActualReal = insumoEditandoId
+            ? (insumosCache.find(i => i.id === insumoEditandoId)?.stock_actual ?? 0)
+            : stock_actual;
+        const datos    = { nombre, unidad, stock_actual: stockActualReal, stock_minimo, contenido_cantidad, contenido_unidad };
+        const datosAPI = insumoEditandoId
+            ? { name: nombre, unit: unidad, min_stock: stock_minimo, content_amount: contenido_cantidad, content_unit: contenido_unidad }
+            : { name: nombre, unit: unidad, stock: stock_actual, min_stock: stock_minimo, content_amount: contenido_cantidad, content_unit: contenido_unidad };
         if (modoConectado && apiClient && tokenActual) {
             if (insumoEditandoId) {
                 await apiClient.request(`/inventory/ingredients/${insumoEditandoId}`, { method: 'PUT', body: datosAPI });
@@ -4698,10 +4920,14 @@ function renderizarTablaRecetas() {
         </td>
         <td><span class="badge-info">${p.categoria || '—'}</span></td>
         <td><span id="receta-count-${p.id}" style="color:#6b7280; font-size:0.9em;">Cargando...</span></td>
-        <td>
+        <td style="display:flex; gap:6px; align-items:center;">
             <button class="btn-secondary small" onclick="abrirModalReceta(${p.id}, '${p.nombre.replace(/'/g,'')}')" style="display:inline-flex;align-items:center;gap:4px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>
                 Editar receta
+            </button>
+            <button class="btn-danger small" id="btn-del-receta-${p.id}" onclick="eliminarReceta(${p.id}, '${p.nombre.replace(/'/g,'')}')" style="display:none; align-items:center; gap:4px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                Eliminar
             </button>
         </td>
     </tr>`).join('');
@@ -4712,6 +4938,8 @@ function renderizarTablaRecetas() {
             if (el) el.innerText = items.length > 0
                 ? `${items.length} ingrediente${items.length !== 1 ? 's' : ''}`
                 : 'Sin receta';
+            const btnDel = document.getElementById(`btn-del-receta-${p.id}`);
+            if (btnDel) btnDel.style.display = items.length > 0 ? 'inline-flex' : 'none';
         });
     });
 }
@@ -4732,6 +4960,20 @@ async function abrirModalReceta(productoId, nombre) {
 function cerrarModalReceta() {
     document.getElementById('modal-receta').classList.add('hidden');
     productoRecetaActual = null;
+}
+
+async function eliminarReceta(productoId, nombreProducto) {
+    if (!confirm(`¿Eliminar la receta de "${nombreProducto}"?\n\nPodrás crearla de nuevo cuando quieras.`)) return;
+    try {
+        await window.api.eliminarRecetaProducto(productoId);
+        if (modoConectado && apiClient && tokenActual) {
+            await apiClient.request(`/inventory/products/${productoId}/recipe`, { method: 'DELETE' })
+                .catch(e => console.warn('No se pudo eliminar receta en backend:', e.message));
+        }
+        await renderizarTablaRecetas?.();
+    } catch(e) {
+        alert('Error al eliminar la receta: ' + e.message);
+    }
 }
 
 function agregarLineaReceta(itemExistente = null) {
@@ -4857,7 +5099,7 @@ async function guardarReceta() {
     try {
         if (modoConectado && apiClient && tokenActual) {
             try {
-                const itemsAPI = items.map(i => ({ item_type: i.tipo, item_id: i.referencia_id, quantity: i.cantidad }));
+                const itemsAPI = items.map(i => ({ item_type: i.tipo === 'ingrediente' ? 'ingredient' : 'preparation', item_id: i.referencia_id, quantity: i.cantidad }));
                 await apiClient.request(`/inventory/products/${productoRecetaActual}/recipe`, { method: 'POST', body: { items: itemsAPI } });
             } catch (e) { console.warn('No se pudo guardar receta en backend:', e.message); }
         }
@@ -4881,13 +5123,25 @@ async function cargarTablaEntradas() {
     if (!tbody) return;
     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px; color:#9ca3af;">Cargando...</td></tr>';
     try {
-        const entradas = await window.api.obtenerEntradasInsumo(null);
+        let entradas;
+        if (modoConectado && apiClient && tokenActual) {
+            const movs = await apiClient.getMovements({ type: 'entrada' }).catch(() => null);
+            entradas = (movs || []).map(m => ({
+                insumo_nombre: m.ingredient?.name || '—',
+                cantidad: m.quantity,
+                unidad: m.ingredient?.unit || '',
+                notas: m.notes || '',
+                fecha: m.createdAt,
+            }));
+        } else {
+            entradas = await window.api.obtenerEntradasInsumo(null);
+        }
         if (!entradas.length) {
             tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:30px; color:#9ca3af;">Aún no hay entradas registradas. Usa "+ Registrar Entrada" para iniciar el historial.</td></tr>';
             return;
         }
         tbody.innerHTML = entradas.map(e => {
-            const fecha = new Date(e.fecha.replace(' ', 'T')).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
+            const fecha = new Date(String(e.fecha).replace(' ', 'T')).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
             return `<tr>
                 <td><strong>${e.insumo_nombre}</strong></td>
                 <td><span style="color:#10b981; font-weight:600;">+${e.cantidad} ${e.unidad}</span></td>
@@ -4917,6 +5171,10 @@ async function guardarEntrada() {
     if (!insumo_id || !cantidad || cantidad <= 0) { alert('Selecciona un insumo y escribe una cantidad válida.'); return; }
     try {
         await window.api.registrarEntradaInsumo({ insumo_id, cantidad, notas });
+        if (modoConectado && apiClient && tokenActual) {
+            await apiClient.createMovement({ ingredient_id: insumo_id, type: 'entrada', quantity: cantidad, notes: notas || undefined })
+                .catch(e => console.warn('No se pudo sincronizar entrada al backend:', e.message));
+        }
         cerrarModalEntrada();
         insumosCache = await window.api.obtenerInsumos();
         renderizarTablaInsumos();
@@ -4935,18 +5193,31 @@ async function cargarTablaSalidas() {
     if (!tbody) return;
     tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:#9ca3af;">Cargando...</td></tr>';
     try {
-        const salidas = await window.api.obtenerSalidasInsumo(null);
+        let salidas;
+        const motivos = { merma:'Merma', caducidad:'Caducidad', accidente:'Accidente', robo:'Pérdida/Robo', ajuste:'Ajuste', otro:'Otro' };
+        if (modoConectado && apiClient && tokenActual) {
+            const movs = await apiClient.getMovements({ type: 'salida' }).catch(() => null);
+            salidas = (movs || []).map(m => ({
+                insumo_nombre: m.ingredient?.name || '—',
+                cantidad: m.quantity,
+                unidad: m.ingredient?.unit || '',
+                motivo: m.reason || '',
+                notas: m.notes || '',
+                fecha: m.createdAt,
+            }));
+        } else {
+            salidas = await window.api.obtenerSalidasInsumo(null);
+        }
         if (!salidas.length) {
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:30px; color:#9ca3af;">Sin salidas registradas.</td></tr>';
             return;
         }
-        const motivos = { merma:'Merma', caducidad:'Caducidad', accidente:'Accidente', robo:'Pérdida/Robo', ajuste:'Ajuste', otro:'Otro' };
         tbody.innerHTML = salidas.map(s => {
-            const fecha = new Date(s.fecha.replace(' ','T')).toLocaleString('es-MX', { dateStyle:'short', timeStyle:'short' });
+            const fecha = new Date(String(s.fecha).replace(' ','T')).toLocaleString('es-MX', { dateStyle:'short', timeStyle:'short' });
             return `<tr>
                 <td><strong>${s.insumo_nombre}</strong></td>
                 <td><span style="color:#ef4444; font-weight:600;">−${s.cantidad} ${s.unidad}</span></td>
-                <td><span class="badge-info">${motivos[s.motivo] || s.motivo}</span></td>
+                <td><span class="badge-info">${motivos[s.motivo] || s.motivo || '—'}</span></td>
                 <td style="color:#6b7280;">${s.notas || '—'}</td>
                 <td style="color:#9ca3af; font-size:0.9em;">${fecha}</td>
             </tr>`;
@@ -4976,6 +5247,10 @@ async function guardarSalida() {
     if (!insumo_id || !cantidad || cantidad <= 0) { alert('Selecciona un insumo y escribe una cantidad válida.'); return; }
     try {
         await window.api.registrarSalidaInsumo({ insumo_id, cantidad, motivo, notas });
+        if (modoConectado && apiClient && tokenActual) {
+            await apiClient.createMovement({ ingredient_id: insumo_id, type: 'salida', quantity: cantidad, reason: motivo, notes: notas || undefined })
+                .catch(e => console.warn('No se pudo sincronizar salida al backend:', e.message));
+        }
         cerrarModalSalida();
         insumosCache = await window.api.obtenerInsumos();
         renderizarTablaInsumos();
@@ -5416,6 +5691,8 @@ async function sincronizarDesdeBackend() {
                 const recetas = await apiClient.request('/inventory/all-recipes');
                 await window.api.syncRecetas(recetas);
             }
+            // Subir recetas locales que el backend aún no tiene (creadas en modo offline)
+            _sincronizarRecetasAlBackend().catch(() => {});
         }
 
         // 7-8. Ofertas (solo Premium)
@@ -6701,6 +6978,7 @@ function _normalizarPedidoApi(order) {
     ).join(';;');
     return {
         id: order.id,
+        cliente_id: order.customer_id || null,
         total: parseFloat(order.total || 0),
         fecha_pedido: order.createdAt,
         comensales: order.guests || 0,
@@ -6898,12 +7176,6 @@ function _renderizarPanelMesa() {
         </div>
     `).join('') + `<div style="padding:8px 16px;text-align:right;font-weight:700;font-size:1em;border-top:2px solid #e5e7eb;margin-top:4px;">
         Total: ${_fmtMesa(total)}
-    </div>
-    <div style="padding:8px 16px;">
-        <button onclick="enviarMesaACocina()" style="width:100%;padding:10px;background:#f97316;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:0.95em;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 13.87A4 4 0 0 1 7.41 6a5.11 5.11 0 0 1 1.05-1.54 5 5 0 0 1 7.08 0A5.11 5.11 0 0 1 16.59 6 4 4 0 0 1 18 13.87V21H6Z"/><line x1="6" x2="18" y1="17" y2="17"/></svg>
-            Enviar a cocina
-        </button>
     </div>`;
 }
 
@@ -7035,13 +7307,39 @@ function _toggleProductoMesa(id, nombre, precio) {
     filtrarProductosMesa(document.getElementById('mesa-prod-busqueda')?.value || '');
 }
 
+function _quitarProductoMesa(id) {
+    if (!_carritoMesa[id]) return;
+    _carritoMesa[id].cantidad--;
+    if (_carritoMesa[id].cantidad <= 0) delete _carritoMesa[id];
+    _actualizarResumenCarritoMesa();
+    filtrarProductosMesa(document.getElementById('mesa-prod-busqueda')?.value || '');
+}
+
 function _actualizarResumenCarritoMesa() {
     const el = document.getElementById('mesa-carrito-resumen');
     if (!el) return;
-    const items = Object.values(_carritoMesa).filter(i => i.cantidad > 0);
-    if (items.length === 0) { el.textContent = 'Ningún producto seleccionado'; return; }
-    const total = items.reduce((s, i) => s + i.precio * i.cantidad, 0);
-    el.innerHTML = items.map(i => `${i.cantidad}× ${i.nombre}`).join(', ') + ` — <b>${_fmtMesa(total)}</b>`;
+    const items = Object.entries(_carritoMesa).filter(([,v]) => v.cantidad > 0);
+    if (items.length === 0) {
+        el.innerHTML = '<span style="color:#9ca3af;font-size:0.85em;">Ningún producto seleccionado</span>';
+        return;
+    }
+    const total = items.reduce((s, [,i]) => s + i.precio * i.cantidad, 0);
+    el.innerHTML = `
+        <div style="max-height:130px;overflow-y:auto;margin-bottom:6px;">
+            ${items.map(([id, item]) => `
+                <div style="display:flex;align-items:center;gap:5px;padding:3px 0;border-bottom:1px solid #f3f4f6;">
+                    <span style="flex:1;font-size:0.82em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${item.nombre}</span>
+                    <button onclick="_quitarProductoMesa(${id})" title="Quitar uno"
+                        style="width:22px;height:22px;border:1px solid #fca5a5;border-radius:4px;background:#fef2f2;cursor:pointer;font-size:14px;color:#ef4444;line-height:1;flex-shrink:0;">−</button>
+                    <span style="min-width:18px;text-align:center;font-weight:700;font-size:0.85em;">${item.cantidad}</span>
+                    <button onclick="_toggleProductoMesa(${id}, '${item.nombre.replace(/'/g,'&#39;')}', ${item.precio})" title="Agregar uno"
+                        style="width:22px;height:22px;border:1px solid #a5b4fc;border-radius:4px;background:#eef2ff;cursor:pointer;font-size:14px;color:#4f46e5;line-height:1;flex-shrink:0;">+</button>
+                    <span style="font-size:0.82em;color:#6b7280;min-width:52px;text-align:right;">${_fmtMesa(item.precio * item.cantidad)}</span>
+                </div>
+            `).join('')}
+        </div>
+        <div style="text-align:right;font-weight:700;font-size:0.88em;color:#374151;">Total: ${_fmtMesa(total)}</div>
+    `;
 }
 
 async function confirmarAgregarProductosMesa() {
@@ -7049,12 +7347,16 @@ async function confirmarAgregarProductosMesa() {
     const items = Object.entries(_carritoMesa).filter(([,v]) => v.cantidad > 0);
     if (items.length === 0) { cerrarModalAgregarProductosMesa(); return; }
     try {
+        // `updated` declarado aquí (fuera del if) para que esté en scope al marcar el tracker
+        let updated = null;
         if (modoConectado && apiClient && tokenActual) {
             const apiItems = items.map(([prod_id, item]) => ({
                 product_id: parseInt(prod_id),
                 quantity: item.cantidad,
             }));
-            const updated = await apiClient.addItemsToOrder(_pedidoMesaActivo.id, apiItems);
+            updated = await apiClient.addItemsToOrder(_pedidoMesaActivo.id, apiItems);
+            // Marcar inmediatamente (antes de kdsNuevoPedido) para que el polling no reenvíe
+            _kdsMarcarEnviado(updated.id, updated.updatedAt, updated.items);
             _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(updated);
         } else {
             for (const [prod_id, item] of items) {
@@ -7066,6 +7368,16 @@ async function confirmarAgregarProductosMesa() {
         _pedidoMesaActivo = _pedidosMesa[_mesaActivaId];
         if (_pedidoMesaActivo) _renderizarPanelMesa();
         _renderizarTarjetasMesas();
+        // Enviar comanda al KDS con solo los items recién agregados
+        const mesaKds = _mesasData.find(m => m.id === _mesaActivaId);
+        window.api.kdsNuevoPedido({
+            pedidoId: _pedidoMesaActivo?.id || null,
+            tipo: 'mesa',
+            mesa: mesaKds?.nombre || `Mesa ${_mesaActivaId}`,
+            notas: null,
+            items: items.map(([, item]) => ({ nombre: item.nombre, cantidad: item.cantidad, notas: '' }))
+        }).catch(() => {});
+        mostrarNotificacionExito('Comanda enviada a cocina', '🍽️');
     } catch(e) {
         console.error('Error agregando productos a mesa:', e);
         mostrarNotificacionExito('Error al agregar productos', '⚠️ Error');
@@ -7180,12 +7492,15 @@ async function confirmarCobrarMesa() {
             }
         }
 
-        // Sumar puntos si hay cliente registrado en el pedido (solo modo local)
-        if (!modoConectado && pedidoSnap.cliente_id) {
+        // Sumar puntos si hay cliente registrado en el pedido
+        if (pedidoSnap.cliente_id) {
             const puntosGanados = await calcularPuntosGanados(totalSnap);
             if (puntosGanados > 0) {
-                await window.api.actualizarPuntosCliente(pedidoSnap.cliente_id, puntosGanados).catch(() => {});
+                if (!modoConectado) {
+                    await window.api.actualizarPuntosCliente(pedidoSnap.cliente_id, puntosGanados).catch(() => {});
+                }
                 syncLoyaltyBackend(pedidoSnap.cliente_id, { points_delta: puntosGanados });
+                mostrarNotificacionExito(`+${puntosGanados} puntos acumulados`, '⭐ Puntos');
             }
         }
 

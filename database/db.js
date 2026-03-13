@@ -206,6 +206,20 @@ function inicializarTablas() {
     db.run("ALTER TABLE insumos ADD COLUMN contenido_cantidad REAL", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_unidad TEXT", () => {});
     db.run("ALTER TABLE receta_items ADD COLUMN unidad_receta TEXT", () => {});
+    db.run("ALTER TABLE mesas ADD COLUMN branch_id INTEGER", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN mesa_id INTEGER", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN comensales INTEGER DEFAULT 0", () => {});
+    db.run("ALTER TABLE clientes ADD COLUMN puntos INTEGER DEFAULT 0", () => {});
+    db.run("ALTER TABLE clientes ADD COLUMN en_fidelidad INTEGER DEFAULT 0", () => {});
+
+    db.run(`CREATE TABLE IF NOT EXISTS log_descuentos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+        cajero TEXT,
+        descuento_nombre TEXT,
+        monto_descuento REAL,
+        total_antes REAL
+    )`, () => {});
 
     db.run(`CREATE TABLE IF NOT EXISTS salidas_insumos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -220,6 +234,15 @@ function inicializarTablas() {
     columnasNuevas.forEach(sql => {
         db.run(sql, (err) => { /* Ignoramos error si la columna ya existe */ });
     });
+
+    // MESAS
+    db.run(`CREATE TABLE IF NOT EXISTS mesas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL,
+        zona TEXT DEFAULT 'General',
+        capacidad INTEGER DEFAULT 4,
+        activa INTEGER DEFAULT 1
+    )`);
 
     // TURNOS — Corte de caja
     db.run(`CREATE TABLE IF NOT EXISTS turnos (
@@ -433,11 +456,38 @@ function crearPedido(datos, items, callback) {
 }
 
 function obtenerPedidos(filtro, callback) {
+    const limite = Math.min(Math.max(parseInt((filtro && (filtro.limite || filtro.limit)) || 50), 1), 200);
+    const pagina = Math.max(parseInt((filtro && (filtro.pagina || filtro.page)) || 1), 1);
+    const offset = (pagina - 1) * limite;
+
+    const conditions = [];
+    const params = [];
+    if (filtro && filtro.status)      { conditions.push('p.estado = ?');        params.push(filtro.status); }
+    else                              { conditions.push("p.estado != 'abierto'"); } // excluir mesas abiertas
+    if (filtro && filtro.metodo_pago) { conditions.push('p.metodo_pago = ?');   params.push(filtro.metodo_pago); }
+    if (filtro && filtro.date_from)   { conditions.push("DATE(p.fecha_pedido, 'localtime') >= ?"); params.push(filtro.date_from); }
+    if (filtro && filtro.date_to)     { conditions.push("DATE(p.fecha_pedido, 'localtime') <= ?"); params.push(filtro.date_to); }
+    const whereSql = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    const countSql = `SELECT COUNT(*) as total FROM pedidos p ${whereSql}`;
+    const resumenSql = `
+        SELECT
+            COUNT(*) as total_pedidos,
+            COALESCE(SUM(p.total), 0) as total_ventas,
+            COALESCE(SUM(CASE WHEN p.metodo_pago = 'efectivo' THEN p.total ELSE 0 END), 0) as efectivo,
+            COALESCE(SUM(CASE WHEN p.metodo_pago IN ('tarjeta','debito','credito') THEN p.total ELSE 0 END), 0) as tarjeta,
+            COALESCE(SUM(CASE WHEN p.metodo_pago = 'transferencia' THEN p.total ELSE 0 END), 0) as transferencia
+        FROM pedidos p ${whereSql}
+    `;
     const sql = `
         SELECT
             p.id,
             p.cajero,
+            p.tipo_pedido,
             CASE
+                WHEN p.tipo_pedido = 'mesa' AND m.nombre IS NOT NULL THEN 'Mesa: ' || m.nombre
+                WHEN p.tipo_pedido = 'mesa' AND p.info_cliente_temp IS NOT NULL THEN p.info_cliente_temp
+                WHEN p.tipo_pedido = 'mesa' THEN 'Mesa'
                 WHEN c.nombre IS NOT NULL THEN c.nombre || ' - ' || c.telefono
                 WHEN p.info_cliente_temp IS NOT NULL THEN p.info_cliente_temp
                 ELSE 'General'
@@ -448,9 +498,31 @@ function obtenerPedidos(filtro, callback) {
             p.fecha_pedido as fecha
         FROM pedidos p
         LEFT JOIN clientes c ON p.cliente_id = c.id
+        LEFT JOIN mesas m ON p.mesa_id = m.id
+        ${whereSql}
         ORDER BY p.id DESC
+        LIMIT ? OFFSET ?
     `;
-    db.all(sql, [], callback);
+
+    db.get(countSql, params, (err, countRow) => {
+        if (err) return callback(err, null);
+        db.get(resumenSql, params, (err, resumen) => {
+            if (err) return callback(err, null);
+            db.all(sql, [...params, limite, offset], (err, rows) => {
+                if (err) return callback(err, null);
+                callback(null, {
+                    data: rows,
+                    paginacion: {
+                        total: countRow.total,
+                        pagina,
+                        limite,
+                        paginas: Math.ceil(countRow.total / limite)
+                    },
+                    resumen
+                });
+            });
+        });
+    });
 }
 
 function obtenerDetallesPedido(pedidoId, callback) {
@@ -835,6 +907,12 @@ function obtenerRecetaProducto(productoId, callback) {
         WHERE ri.producto_id = ?
     `, [productoId], callback);
 }
+function eliminarRecetaProducto(productoId) {
+    return new Promise((resolve, reject) => {
+        db.run("DELETE FROM receta_items WHERE producto_id = ?", [productoId], err => err ? reject(err) : resolve());
+    });
+}
+
 function guardarRecetaProducto(productoId, items, cb) {
     db.run("DELETE FROM receta_items WHERE producto_id = ?", [productoId], (err) => {
         if (err) return cb(err);
@@ -905,7 +983,7 @@ function registrarEntradaInsumo(datos, callback) {
     db.run("INSERT INTO entradas_insumos (insumo_id, cantidad, notas) VALUES (?, ?, ?)",
         [datos.insumo_id, datos.cantidad, datos.notas || ''], function(err) {
             if (err) return callback(err);
-            db.run("UPDATE insumos SET stock_actual = stock_actual + ? WHERE id = ?",
+            db.run("UPDATE insumos SET stock_actual = COALESCE(stock_actual, 0) + ? WHERE id = ?",
                 [datos.cantidad, datos.insumo_id], callback);
         });
 }
@@ -929,7 +1007,7 @@ function registrarSalidaInsumo(datos, callback) {
     db.run("INSERT INTO salidas_insumos (insumo_id, cantidad, motivo, notas) VALUES (?, ?, ?, ?)",
         [datos.insumo_id, datos.cantidad, datos.motivo || 'merma', datos.notas || ''], function(err) {
             if (err) return callback(err);
-            db.run("UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
+            db.run("UPDATE insumos SET stock_actual = MAX(0, COALESCE(stock_actual, 0) - ?) WHERE id = ?",
                 [datos.cantidad, datos.insumo_id], callback);
         });
 }
@@ -1030,24 +1108,42 @@ function tienePasswordApp(cb) {
     });
 }
 
+function establecerPasswordApp(password, cb) {
+    const crypto = require('crypto');
+    const salt = crypto.randomBytes(16).toString('hex');
+    // PBKDF2: algoritmo fuerte con 100,000 iteraciones (mucho más seguro que SHA-256)
+    const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+    const valor = 'pbkdf2:' + salt + ':' + hash;
+    db.run('INSERT OR REPLACE INTO ajustes (clave, valor) VALUES (?, ?)', ['app_password', valor], cb);
+}
+
 function verificarPasswordApp(password, cb) {
     const crypto = require('crypto');
     db.get('SELECT valor FROM ajustes WHERE clave = ?', ['app_password'], (err, row) => {
         if (err || !row) return cb(err, false);
-        const parts = row.valor.split(':');
-        const salt = parts[0];
-        const hash = parts[1];
-        const hashInput = crypto.createHash('sha256').update(salt + password).digest('hex');
-        cb(null, hash === hashInput);
-    });
-}
+        const valor = row.valor;
 
-function establecerPasswordApp(password, cb) {
-    const crypto = require('crypto');
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.createHash('sha256').update(salt + password).digest('hex');
-    const valor = salt + ':' + hash;
-    db.run('INSERT OR REPLACE INTO ajustes (clave, valor) VALUES (?, ?)', ['app_password', valor], cb);
+        if (valor.startsWith('pbkdf2:')) {
+            // Formato nuevo: pbkdf2:salt:hash
+            const parts = valor.split(':');
+            const salt = parts[1];
+            const hash = parts[2];
+            const hashInput = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+            cb(null, hash === hashInput);
+        } else {
+            // Formato viejo: salt:sha256hash — verificar y migrar automáticamente
+            const parts = valor.split(':');
+            const salt = parts[0];
+            const hash = parts[1];
+            const hashInput = crypto.createHash('sha256').update(salt + password).digest('hex');
+            const valido = hash === hashInput;
+            if (valido) {
+                // Migrar silenciosamente a PBKDF2 para la próxima vez
+                establecerPasswordApp(password, () => {});
+            }
+            cb(null, valido);
+        }
+    });
 }
 
 // ============================================
@@ -1118,116 +1214,132 @@ function cerrarTurno(id, efectivoContado, notas, cb) {
 // ============================================
 
 function syncClasificaciones(datos, cb) {
+    if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        db.run('DELETE FROM clasificaciones');
-        if (!datos || datos.length === 0) return cb(null);
-        const stmt = db.prepare('INSERT INTO clasificaciones (id, nombre, emoji, imagen, activa) VALUES (?, ?, ?, ?, ?)');
-        datos.forEach(d => stmt.run(
-            d.id, d.name, d.emoji || '📦', d.image || null,
-            d.active ? 1 : 0
-        ));
-        stmt.finalize(cb);
+        const stmt = db.prepare('INSERT OR REPLACE INTO clasificaciones (id, nombre, emoji, imagen, activa) VALUES (?, ?, ?, ?, ?)');
+        datos.forEach(d => stmt.run(d.id, d.name, d.emoji || '📦', d.image || null, d.active ? 1 : 0));
+        const placeholders = datos.map(() => '?').join(',');
+        const ids = datos.map(d => d.id);
+        stmt.finalize(() => db.run(`DELETE FROM clasificaciones WHERE id NOT IN (${placeholders})`, ids, cb));
     });
 }
 
 function syncProductos(datos, cb) {
+    if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        db.run('DELETE FROM productos');
-        if (!datos || datos.length === 0) return cb(null);
-        const stmt = db.prepare('INSERT INTO productos (id, nombre, descripcion, precio, stock, clasificacion_id, emoji, imagen, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        const stmt = db.prepare('INSERT OR REPLACE INTO productos (id, nombre, descripcion, precio, stock, clasificacion_id, emoji, imagen, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         datos.forEach(d => stmt.run(
             d.id, d.name, d.description || null, d.price,
-            d.stock || 0, d.category_id || null, d.emoji || null,
-            d.image || null, d.active ? 1 : 0
+            d.stock || 0, d.category_id || null, d.emoji || null, d.image || null, d.active ? 1 : 0
         ));
-        stmt.finalize(cb);
+        const placeholders = datos.map(() => '?').join(',');
+        const ids = datos.map(d => d.id);
+        stmt.finalize(() => db.run(`DELETE FROM productos WHERE id NOT IN (${placeholders})`, ids, cb));
     });
 }
 
 function syncClientes(datos, cb) {
+    if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        db.run('DELETE FROM clientes');
-        if (!datos || datos.length === 0) return cb(null);
-        const stmt = db.prepare('INSERT OR IGNORE INTO clientes (id, nombre, telefono, direccion, notas) VALUES (?, ?, ?, ?, ?)');
-        datos.forEach(d => stmt.run(
-            d.id, d.name || null, d.phone || null,
-            d.address || null, d.notes || null
-        ));
-        stmt.finalize(cb);
+        datos.forEach(d => {
+            // INSERT OR REPLACE sincroniza todos los datos del backend incluyendo puntos y fidelidad
+            db.run(
+                'INSERT OR REPLACE INTO clientes (id, nombre, telefono, direccion, notas, puntos, en_fidelidad) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [d.id, d.name || null, d.phone || null, d.address || null, d.notes || null,
+                 d.loyalty_points || 0, d.in_loyalty ? 1 : 0]
+            );
+        });
+        const placeholders = datos.map(() => '?').join(',');
+        const ids = datos.map(d => d.id);
+        // Nunca eliminar clientes inscritos en fidelidad aunque no vengan del backend
+        db.run(`DELETE FROM clientes WHERE en_fidelidad = 0 AND id NOT IN (${placeholders})`, ids, cb);
     });
 }
 
 function syncInsumos(datos, cb) {
+    if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        db.run('DELETE FROM insumos');
-        if (!datos || datos.length === 0) return cb(null);
-        const stmt = db.prepare('INSERT INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        const stmt = db.prepare('INSERT OR REPLACE INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         datos.forEach(d => stmt.run(
             d.id, d.name, d.unit, d.stock || 0, d.min_stock || 0,
-            d.active ? 1 : 0, d.type || 'ingrediente',
-            d.content_amount || null, d.content_unit || null
+            d.active ? 1 : 0, d.type || 'ingrediente', d.content_amount || null, d.content_unit || null
         ));
-        stmt.finalize(cb);
+        const placeholders = datos.map(() => '?').join(',');
+        const ids = datos.map(d => d.id);
+        stmt.finalize(() => db.run(`DELETE FROM insumos WHERE id NOT IN (${placeholders})`, ids, cb));
     });
 }
 
 function syncPreparaciones(datos, cb) {
+    if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        db.run('DELETE FROM preparacion_items');
-        db.run('DELETE FROM preparaciones');
-        if (!datos || datos.length === 0) return cb(null);
-        const stmtPrep = db.prepare('INSERT INTO preparaciones (id, nombre, activo) VALUES (?, ?, ?)');
+        const stmtPrep = db.prepare('INSERT OR REPLACE INTO preparaciones (id, nombre, activo) VALUES (?, ?, ?)');
         datos.forEach(d => stmtPrep.run(d.id, d.name, d.active ? 1 : 0));
+        const placeholders = datos.map(() => '?').join(',');
+        const ids = datos.map(d => d.id);
         stmtPrep.finalize(() => {
-            const stmtItems = db.prepare('INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad) VALUES (?, ?, ?)');
-            datos.forEach(d => {
-                if (d.items && d.items.length > 0) {
-                    d.items.forEach(item => stmtItems.run(d.id, item.ingredient_id, item.quantity));
-                }
+            // Borrar items de preparaciones que ya no existen
+            db.run(`DELETE FROM preparacion_items WHERE preparacion_id NOT IN (${placeholders})`, ids, () => {
+                // Reemplazar items de las preparaciones que sí vienen
+                datos.forEach(d => {
+                    db.run('DELETE FROM preparacion_items WHERE preparacion_id = ?', [d.id]);
+                    if (d.items && d.items.length > 0) {
+                        const stmtItems = db.prepare('INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad) VALUES (?, ?, ?)');
+                        d.items.forEach(item => stmtItems.run(d.id, item.ingredient_id, item.quantity));
+                        stmtItems.finalize();
+                    }
+                });
+                db.run(`DELETE FROM preparaciones WHERE id NOT IN (${placeholders})`, ids, cb);
             });
-            stmtItems.finalize(cb);
         });
     });
 }
 
 function syncRecetasProducto(datos, cb) {
+    if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        db.run('DELETE FROM receta_items');
-        if (!datos || datos.length === 0) return cb(null);
-        const stmt = db.prepare('INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad) VALUES (?, ?, ?, ?)');
-        datos.forEach(d => stmt.run(d.product_id, d.item_type, d.item_id, d.quantity));
-        stmt.finalize(cb);
+        // Las recetas se reemplazan completamente (son datos derivados, no originados en el app)
+        db.run('DELETE FROM receta_items', () => {
+            const stmt = db.prepare('INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad) VALUES (?, ?, ?, ?)');
+            datos.forEach(d => stmt.run(d.product_id, d.item_type, d.item_id, d.quantity));
+            stmt.finalize(cb);
+        });
     });
 }
 
 function syncDescuentos(datos, cb) {
+    if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        db.run('DELETE FROM promociones');
-        if (!datos || datos.length === 0) return cb(null);
-        const stmt = db.prepare('INSERT INTO promociones (id, nombre, tipo, valor, activa) VALUES (?, ?, ?, ?, ?)');
+        const stmt = db.prepare('INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa) VALUES (?, ?, ?, ?, ?)');
         datos.forEach(d => {
             const tipo = d.type === 'percentage' ? 'porcentaje' : 'monto_fijo';
             stmt.run(d.id, d.name, tipo, d.value, d.active ? 1 : 0);
         });
-        stmt.finalize(cb);
+        const placeholders = datos.map(() => '?').join(',');
+        const ids = datos.map(d => d.id);
+        stmt.finalize(() => db.run(`DELETE FROM promociones WHERE id NOT IN (${placeholders})`, ids, cb));
     });
 }
 
 function syncCombos(datos, cb) {
+    if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        db.run('DELETE FROM combo_items');
-        db.run('DELETE FROM combos');
-        if (!datos || datos.length === 0) return cb(null);
-        const stmtCombo = db.prepare('INSERT INTO combos (id, nombre, descripcion, precio_especial, activo) VALUES (?, ?, ?, ?, ?)');
+        const stmtCombo = db.prepare('INSERT OR REPLACE INTO combos (id, nombre, descripcion, precio_especial, activo) VALUES (?, ?, ?, ?, ?)');
         datos.forEach(d => stmtCombo.run(d.id, d.name, d.description || null, d.price, d.active ? 1 : 0));
+        const placeholders = datos.map(() => '?').join(',');
+        const ids = datos.map(d => d.id);
         stmtCombo.finalize(() => {
-            const stmtItems = db.prepare('INSERT INTO combo_items (combo_id, producto_id, cantidad) VALUES (?, ?, ?)');
-            datos.forEach(d => {
-                if (d.items && d.items.length > 0) {
-                    d.items.forEach(item => stmtItems.run(d.id, item.product_id, item.quantity || 1));
-                }
+            db.run(`DELETE FROM combo_items WHERE combo_id NOT IN (${placeholders})`, ids, () => {
+                datos.forEach(d => {
+                    db.run('DELETE FROM combo_items WHERE combo_id = ?', [d.id]);
+                    if (d.items && d.items.length > 0) {
+                        const stmtItems = db.prepare('INSERT INTO combo_items (combo_id, producto_id, cantidad) VALUES (?, ?, ?)');
+                        d.items.forEach(item => stmtItems.run(d.id, item.product_id, item.quantity || 1));
+                        stmtItems.finalize();
+                    }
+                });
+                db.run(`DELETE FROM combos WHERE id NOT IN (${placeholders})`, ids, cb);
             });
-            stmtItems.finalize(cb);
         });
     });
 }
@@ -1247,6 +1359,143 @@ function agregarPreparacionConId(id, datos, cb) {
         [id, datos.nombre, datos.descripcion || null],
         cb
     );
+}
+
+function agregarDescuentoConId(id, datos, cb) {
+    db.run(
+        `INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa) VALUES (?, ?, ?, ?, 1)`,
+        [id, datos.nombre, datos.tipo, datos.valor],
+        cb
+    );
+}
+
+function agregarComboConId(id, datos, cb) {
+    db.run(
+        `INSERT OR REPLACE INTO combos (id, nombre, descripcion, precio_especial, activo) VALUES (?, ?, ?, ?, 1)`,
+        [id, datos.nombre, datos.descripcion || null, datos.precio_especial],
+        cb
+    );
+}
+
+// ============================================
+// SISTEMA DE MESAS
+// ============================================
+
+function obtenerMesas(branchId, cb) {
+    if (branchId) {
+        db.all("SELECT * FROM mesas WHERE activa=1 AND (branch_id=? OR branch_id IS NULL) ORDER BY zona, nombre", [branchId], cb);
+    } else {
+        db.all("SELECT * FROM mesas WHERE activa=1 ORDER BY zona, nombre", cb);
+    }
+}
+
+function crearMesa(nombre, zona, capacidad, branchId, cb) {
+    db.run("INSERT INTO mesas (nombre, zona, capacidad, branch_id) VALUES (?, ?, ?, ?)",
+        [nombre, zona || 'General', capacidad || 4, branchId || null], cb);
+}
+
+function actualizarMesa(id, nombre, zona, capacidad, cb) {
+    db.run("UPDATE mesas SET nombre=?, zona=?, capacidad=? WHERE id=?",
+        [nombre, zona, capacidad, id], cb);
+}
+
+function eliminarMesa(id, cb) {
+    db.run("UPDATE mesas SET activa=0 WHERE id=?", [id], cb);
+}
+
+function obtenerPedidoAbiertoPorMesa(mesa_id, cb) {
+    db.get(
+        `SELECT p.*,
+            GROUP_CONCAT(
+                pi.id || '|' || pi.producto_id || '|' || pi.cantidad || '|' ||
+                pi.precio_unitario || '|' || pi.subtotal || '|' || COALESCE(pi.nota_item, '') ||
+                '|' || COALESCE(pr.nombre, 'Producto')
+            , ';;') as items_raw
+         FROM pedidos p
+         LEFT JOIN pedido_items pi ON pi.pedido_id = p.id
+         LEFT JOIN productos pr ON pr.id = pi.producto_id
+         WHERE p.mesa_id=? AND p.estado='abierto'
+         GROUP BY p.id`,
+        [mesa_id], cb
+    );
+}
+
+function abrirPedidoMesa(mesa_id, mesa_nombre, cajero, comensales, notas, cb) {
+    const infoCliente = mesa_nombre ? `Mesa: ${mesa_nombre}` : null;
+    db.run(
+        `INSERT INTO pedidos (mesa_id, total, estado, tipo_pedido, cajero, comensales, notas_generales, pendiente_sync, info_cliente_temp)
+         VALUES (?, 0, 'abierto', 'mesa', ?, ?, ?, 0, ?)`,
+        [mesa_id, cajero, comensales || 0, notas || null, infoCliente],
+        function(err) { cb(err, this?.lastID); }
+    );
+}
+
+function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb) {
+    db.run(
+        `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [pedido_id, producto_id, cantidad, precio, precio * cantidad, nota || null],
+        function(err) {
+            if (err) return cb(err);
+            db.run(
+                "UPDATE pedidos SET total=(SELECT COALESCE(SUM(subtotal),0) FROM pedido_items WHERE pedido_id=?) WHERE id=?",
+                [pedido_id, pedido_id], cb
+            );
+        }
+    );
+}
+
+function eliminarItemMesa(item_id, pedido_id, cb) {
+    db.run("DELETE FROM pedido_items WHERE id=?", [item_id], (err) => {
+        if (err) return cb(err);
+        db.run(
+            "UPDATE pedidos SET total=(SELECT COALESCE(SUM(subtotal),0) FROM pedido_items WHERE pedido_id=?) WHERE id=?",
+            [pedido_id, pedido_id], cb
+        );
+    });
+}
+
+function cerrarPedidoMesa(pedido_id, metodo_pago, cb) {
+    db.run(
+        "UPDATE pedidos SET estado='completado', metodo_pago=?, pendiente_sync=1, fecha_pedido=CURRENT_TIMESTAMP WHERE id=?",
+        [metodo_pago, pedido_id], cb
+    );
+}
+
+function transferirMesa(pedido_id, nueva_mesa_id, cb) {
+    db.run("UPDATE pedidos SET mesa_id=? WHERE id=?", [nueva_mesa_id, pedido_id], cb);
+}
+
+function actualizarNotasMesa(pedido_id, notas, cb) {
+    db.run("UPDATE pedidos SET notas_generales=? WHERE id=?", [notas, pedido_id], cb);
+}
+
+function actualizarPuntosCliente(cliente_id, puntos_delta, cb) {
+    db.run(
+        "UPDATE clientes SET puntos = MAX(0, COALESCE(puntos, 0) + ?) WHERE id = ?",
+        [puntos_delta, cliente_id],
+        cb
+    );
+}
+
+function toggleFidelidad(cliente_id, valor, cb) {
+    db.run("UPDATE clientes SET en_fidelidad = ? WHERE id = ?", [valor, cliente_id], cb);
+}
+
+function obtenerClientesFidelidad(cb) {
+    db.all("SELECT * FROM clientes WHERE en_fidelidad = 1 ORDER BY nombre ASC", [], cb);
+}
+
+function registrarLogDescuento(datos, cb) {
+    db.run(
+        "INSERT INTO log_descuentos (cajero, descuento_nombre, monto_descuento, total_antes) VALUES (?, ?, ?, ?)",
+        [datos.cajero, datos.descuento_nombre, datos.monto_descuento, datos.total_antes],
+        cb
+    );
+}
+
+function obtenerLogDescuentos(limit, cb) {
+    db.all("SELECT * FROM log_descuentos ORDER BY id DESC LIMIT ?", [limit || 50], cb);
 }
 
 function obtenerPedidosPendientes(cb) {
@@ -1298,6 +1547,7 @@ module.exports = {
     obtenerItemsPreparacion,
     guardarItemsPreparacion,
     obtenerRecetaProducto,
+    eliminarRecetaProducto,
     guardarRecetaProducto,
     calcularStockPreparacion,
     calcularStockProducto,
@@ -1327,6 +1577,8 @@ module.exports = {
     limpiarDatosLocales,
     agregarInsumoConId,
     agregarPreparacionConId,
+    agregarDescuentoConId,
+    agregarComboConId,
     syncClasificaciones,
     syncProductos,
     syncClientes,
@@ -1338,6 +1590,148 @@ module.exports = {
     obtenerPedidosPendientes,
     obtenerItemsPedido,
     marcarPedidoSincronizado,
+    calcularAlertas,
+    syncPedidos,
+    obtenerMesas,
+    crearMesa,
+    actualizarMesa,
+    eliminarMesa,
+    obtenerPedidoAbiertoPorMesa,
+    abrirPedidoMesa,
+    agregarItemMesa,
+    eliminarItemMesa,
+    cerrarPedidoMesa,
+    transferirMesa,
+    actualizarNotasMesa,
+    actualizarPuntosCliente,
+    toggleFidelidad,
+    obtenerClientesFidelidad,
+    registrarLogDescuento,
+    obtenerLogDescuentos,
+}
+
+function syncPedidos(datos, cb) {
+    // Si no hay datos, limpiar pedidos ya sincronizados (sucursal nueva sin historial)
+    if (!datos || datos.length === 0) {
+        return db.run(`DELETE FROM pedidos WHERE pendiente_sync = 0`, cb);
+    }
+    db.serialize(() => {
+        const stmtPedido = db.prepare(
+            `INSERT OR IGNORE INTO pedidos
+             (id, cliente_id, total, estado, metodo_pago, tipo_pedido, referencia,
+              direccion_domicilio, link_maps, notas_generales, info_cliente_temp,
+              cajero, pendiente_sync, fecha_pedido)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+        );
+        const stmtItem = db.prepare(
+            `INSERT OR IGNORE INTO pedido_items
+             (id, pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+        );
+        datos.forEach(d => {
+            stmtPedido.run(
+                d.id, d.customer_id || null, d.total, d.status || 'completado',
+                d.payment_method || null, d.order_type || 'comer', d.reference || null,
+                d.delivery_address || null, d.maps_link || null, d.notes || null,
+                d.customer_temp_info || null, null,
+                d.createdAt || null
+            );
+            if (d.items && d.items.length > 0) {
+                d.items.forEach(item => {
+                    stmtItem.run(
+                        item.id, item.order_id, item.product_id,
+                        item.quantity, item.unit_price, item.subtotal, item.notes || null
+                    );
+                });
+            }
+        });
+        stmtPedido.finalize(() => stmtItem.finalize(() => {
+            // Borrar pedidos viejos (ya sincronizados) que no vienen en los datos nuevos
+            // pendiente_sync=1 = aún no subido, no borrar
+            const ids = datos.map(d => d.id);
+            const placeholders = ids.map(() => '?').join(',');
+            db.run(`DELETE FROM pedidos WHERE pendiente_sync = 0 AND id NOT IN (${placeholders})`, ids, cb);
+        }));
+    });
+}
+
+function calcularAlertas(callback) {
+    const alertas = [];
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    const hoyStr = hoy.toISOString().slice(0, 10);
+    let pendientes = 5;
+
+    function terminar() {
+        pendientes--;
+        if (pendientes === 0) callback(null, alertas);
+    }
+
+    // 1. Stock crítico
+    db.all(`SELECT nombre, stock FROM productos WHERE activo = 1 AND stock <= 5`, [], (err, rows) => {
+        if (!err && rows) {
+            rows.forEach(p => {
+                if (p.stock <= 0) {
+                    alertas.push({ tipo: 'stock', nivel: 'peligro', icono: '🔴', mensaje: `Sin stock: "${p.nombre}"` });
+                } else {
+                    alertas.push({ tipo: 'stock', nivel: 'advertencia', icono: '🟡', mensaje: `Stock bajo (${p.stock} ud.): "${p.nombre}"` });
+                }
+            });
+        }
+        terminar();
+    });
+
+    // 2. Cancelaciones hoy
+    db.all(`SELECT estado, COUNT(*) as cnt FROM pedidos WHERE fecha_pedido >= ? GROUP BY estado`, [hoyStr], (err, rows) => {
+        if (!err && rows && rows.length > 0) {
+            const total = rows.reduce((s, r) => s + r.cnt, 0);
+            const cancelados = (rows.find(r => r.estado === 'cancelado') || {}).cnt || 0;
+            const ratio = total > 0 ? cancelados / total : 0;
+            if (ratio > 0.4) {
+                alertas.push({ tipo: 'cancelaciones', nivel: 'peligro', icono: '🔴', mensaje: `Alta tasa de cancelaciones hoy: ${cancelados} de ${total} pedidos (${Math.round(ratio * 100)}%)` });
+            } else if (ratio > 0.2) {
+                alertas.push({ tipo: 'cancelaciones', nivel: 'advertencia', icono: '🟡', mensaje: `Cancelaciones elevadas hoy: ${cancelados} de ${total} pedidos (${Math.round(ratio * 100)}%)` });
+            }
+        }
+        terminar();
+    });
+
+    // 3. Diferencia de caja en último turno cerrado
+    db.get(`SELECT diferencia, cajero_nombre FROM turnos WHERE estado = 'cerrado' ORDER BY cierre DESC LIMIT 1`, [], (err, row) => {
+        if (!err && row && row.diferencia != null) {
+            const dif = parseFloat(row.diferencia);
+            if (dif < -500) {
+                alertas.push({ tipo: 'caja', nivel: 'peligro', icono: '🔴', mensaje: `Diferencia de caja alta: $${Math.abs(dif).toFixed(2)} faltante en turno de ${row.cajero_nombre || 'cajero'}` });
+            } else if (dif < -100) {
+                alertas.push({ tipo: 'caja', nivel: 'advertencia', icono: '🟡', mensaje: `Diferencia de caja: $${Math.abs(dif).toFixed(2)} faltante en turno de ${row.cajero_nombre || 'cajero'}` });
+            }
+        }
+        terminar();
+    });
+
+    // 4. Ventas fuera de horario hoy (11pm–6am)
+    db.get(`
+        SELECT COUNT(*) as cnt FROM pedidos
+        WHERE fecha_pedido >= ? AND (
+            CAST(strftime('%H', fecha_pedido) AS INTEGER) >= 23 OR
+            CAST(strftime('%H', fecha_pedido) AS INTEGER) < 6
+        )
+    `, [hoyStr], (err, row) => {
+        if (!err && row && row.cnt > 0) {
+            alertas.push({ tipo: 'horario', nivel: 'info', icono: '🔵', mensaje: `${row.cnt} venta(s) registradas fuera de horario habitual (11pm–6am)` });
+        }
+        terminar();
+    });
+
+    // 5. Descuentos aplicados hoy
+    db.all(`SELECT cajero, descuento_nombre, monto_descuento FROM log_descuentos WHERE fecha >= ?`, [hoyStr], (err, rows) => {
+        if (!err && rows && rows.length > 0) {
+            rows.forEach(r => {
+                alertas.push({ tipo: 'descuento', nivel: 'advertencia', icono: '🏷️', mensaje: `Descuento "${r.descuento_nombre}" (-$${parseFloat(r.monto_descuento || 0).toFixed(2)}) aplicado por ${r.cajero || 'cajero'}` });
+            });
+        }
+        terminar();
+    });
 }
 
 function limpiarDatosLocales(cb) {
