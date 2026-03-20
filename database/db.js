@@ -451,12 +451,7 @@ function crearPedido(datos, items, callback, opciones) {
         items.forEach(item => {
             stmt.run(pedidoId, item.id, item.cantidad, item.precio, item.subtotal, item.nota || '');
             if (!skipStock) {
-                // Solo descontar product.stock si NO tiene receta
-                db.get("SELECT COUNT(*) as total FROM receta_items WHERE producto_id = ?", [item.id], (err, row) => {
-                    if (!err && row && row.total === 0) {
-                        db.run('UPDATE productos SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
-                    }
-                });
+                // Descontar insumos según la receta del producto (si tiene receta)
                 descontarInsumosDeVenta(item.id, item.cantidad);
             }
         });
