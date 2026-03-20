@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('api', {
     crearPedido: (telefono, items, total, metodo) => 
         ipcRenderer.invoke('crear-pedido', telefono, items, total, metodo),
     actualizarEstadoPedido: (id, estado) => ipcRenderer.invoke('actualizar-estado-pedido', id, estado),
-    crearPedidoDirecto: (datosPedido, items) => ipcRenderer.invoke('crear-pedido-directo', datosPedido, items),
+    crearPedidoDirecto: (datosPedido, items, opciones) => ipcRenderer.invoke('crear-pedido-directo', datosPedido, items, opciones),
 
     // PRODUCTOS Y CLASIFICACIONES
     obtenerProductosAgrupados: () => ipcRenderer.invoke('obtener-productos-agrupados'),

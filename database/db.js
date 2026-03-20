@@ -147,6 +147,7 @@ function inicializarTablas() {
         preparacion_id INTEGER NOT NULL,
         insumo_id INTEGER NOT NULL,
         cantidad REAL NOT NULL,
+        unidad_receta TEXT,
         FOREIGN KEY (preparacion_id) REFERENCES preparaciones(id),
         FOREIGN KEY (insumo_id) REFERENCES insumos(id)
     )`);
@@ -206,11 +207,13 @@ function inicializarTablas() {
     db.run("ALTER TABLE insumos ADD COLUMN contenido_cantidad REAL", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_unidad TEXT", () => {});
     db.run("ALTER TABLE receta_items ADD COLUMN unidad_receta TEXT", () => {});
+    db.run("ALTER TABLE preparacion_items ADD COLUMN unidad_receta TEXT", () => {});
     db.run("ALTER TABLE mesas ADD COLUMN branch_id INTEGER", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN mesa_id INTEGER", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN comensales INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN puntos INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN en_fidelidad INTEGER DEFAULT 0", () => {});
+    db.run("ALTER TABLE promociones ADD COLUMN requires_pin INTEGER DEFAULT 0", () => {});
 
     db.run(`CREATE TABLE IF NOT EXISTS log_descuentos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -406,7 +409,7 @@ function descontarInsumosDeVenta(productoId, cantidadVendida) {
 
 // --- VENTAS Y PEDIDOS ---
 
-function crearPedido(datos, items, callback) {
+function crearPedido(datos, items, callback, opciones) {
     const sqlPedido = `
         INSERT INTO pedidos (
             cliente_id,
@@ -444,10 +447,18 @@ function crearPedido(datos, items, callback) {
         const pedidoId = this.lastID;
         const stmt = db.prepare('INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item) VALUES (?, ?, ?, ?, ?, ?)');
         
+        const skipStock = opciones && opciones.skipStock;
         items.forEach(item => {
             stmt.run(pedidoId, item.id, item.cantidad, item.precio, item.subtotal, item.nota || '');
-            db.run('UPDATE productos SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
-            descontarInsumosDeVenta(item.id, item.cantidad);
+            if (!skipStock) {
+                // Solo descontar product.stock si NO tiene receta
+                db.get("SELECT COUNT(*) as total FROM receta_items WHERE producto_id = ?", [item.id], (err, row) => {
+                    if (!err && row && row.total === 0) {
+                        db.run('UPDATE productos SET stock = stock - ? WHERE id = ?', [item.cantidad, item.id]);
+                    }
+                });
+                descontarInsumosDeVenta(item.id, item.cantidad);
+            }
         });
         
         stmt.finalize();
@@ -619,8 +630,10 @@ function obtenerEstadisticasDashboard(callback) {
                     // 5. PRODUCTOS CON STOCK BAJO (menos de 10)
                     db.get(`
                         SELECT COUNT(*) as total
-                        FROM productos 
-                        WHERE stock < 10 AND activo = 1
+                        FROM insumos
+                        WHERE activo = 1
+                          AND stock_actual <= stock_minimo
+                          AND COALESCE(stock_minimo, 0) > 0
                     `, (err, stockBajo) => {
                         if (err) return callback(err);
                         stats.productosStockBajo = stockBajo.total;
@@ -880,8 +893,8 @@ function guardarItemsPreparacion(preparacionId, items, cb) {
     db.run("DELETE FROM preparacion_items WHERE preparacion_id = ?", [preparacionId], (err) => {
         if (err) return cb(err);
         if (!items || items.length === 0) return cb(null);
-        const stmt = db.prepare("INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad) VALUES (?, ?, ?)");
-        items.forEach(item => stmt.run(preparacionId, item.insumo_id, item.cantidad));
+        const stmt = db.prepare("INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad, unidad_receta) VALUES (?, ?, ?, ?)");
+        items.forEach(item => stmt.run(preparacionId, item.insumo_id, item.cantidad, item.unidad_receta || null));
         stmt.finalize(cb);
     });
 }
@@ -925,14 +938,15 @@ function guardarRecetaProducto(productoId, items, cb) {
 
 // Calcula cuántas "porciones" de una preparación se pueden hacer con el stock actual
 function calcularStockPreparacion(preparacionId, callback) {
-    db.all(`SELECT pi.cantidad, i.stock_actual 
+    db.all(`SELECT pi.cantidad, pi.unidad_receta, i.stock_actual, i.unidad, i.contenido_cantidad, i.contenido_unidad
             FROM preparacion_items pi 
             JOIN insumos i ON pi.insumo_id = i.id 
             WHERE pi.preparacion_id = ?`, [preparacionId], (err, items) => {
         if (err || !items || items.length === 0) return callback(null, null);
         let min = Infinity;
         items.forEach(item => {
-            const posible = item.stock_actual / item.cantidad;
+            const req = convertirUnidad(item.cantidad, item.unidad_receta, item);
+            const posible = item.stock_actual / req;
             if (posible < min) min = posible;
         });
         callback(null, min === Infinity ? 0 : Math.floor(min * 100) / 100);
@@ -957,14 +971,15 @@ function calcularStockProducto(productoId, callback) {
                     if (pendientes === 0) callback(null, min === Infinity ? 0 : min);
                 });
             } else if (ri.tipo === 'preparacion') {
-                db.all(`SELECT pi.cantidad, i.stock_actual 
+                db.all(`SELECT pi.cantidad, pi.unidad_receta, i.stock_actual, i.unidad, i.contenido_cantidad, i.contenido_unidad
                         FROM preparacion_items pi 
                         JOIN insumos i ON pi.insumo_id = i.id 
                         WHERE pi.preparacion_id = ?`, [ri.referencia_id], (err, prepItems) => {
                     if (!err && prepItems && prepItems.length > 0) {
                         let minPrep = Infinity;
                         prepItems.forEach(pi => {
-                            const dp = pi.stock_actual / pi.cantidad;
+                            const req = convertirUnidad(pi.cantidad, pi.unidad_receta, pi);
+                            const dp = pi.stock_actual / req;
                             if (dp < minPrep) minPrep = dp;
                         });
                         const posible = Math.floor(minPrep / ri.cantidad);
@@ -1026,12 +1041,12 @@ function obtenerDescuentos(callback) {
     db.all("SELECT * FROM promociones WHERE activa = 1 ORDER BY nombre ASC", [], callback);
 }
 function agregarDescuento(d, cb) {
-    db.run("INSERT INTO promociones (nombre, tipo, valor) VALUES (?, ?, ?)",
-        [d.nombre, d.tipo, d.valor], cb);
+    db.run("INSERT INTO promociones (nombre, tipo, valor, requires_pin) VALUES (?, ?, ?, ?)",
+        [d.nombre, d.tipo, d.valor, d.requires_pin ? 1 : 0], cb);
 }
 function actualizarDescuento(id, d, cb) {
-    db.run("UPDATE promociones SET nombre=?, tipo=?, valor=? WHERE id=?",
-        [d.nombre, d.tipo, d.valor, id], cb);
+    db.run("UPDATE promociones SET nombre=?, tipo=?, valor=?, requires_pin=? WHERE id=?",
+        [d.nombre, d.tipo, d.valor, d.requires_pin ? 1 : 0, id], cb);
 }
 function eliminarDescuento(id, cb) {
     db.run("UPDATE promociones SET activa = 0 WHERE id = ?", [id], cb);
@@ -1278,18 +1293,29 @@ function syncPreparaciones(datos, cb) {
         const placeholders = datos.map(() => '?').join(',');
         const ids = datos.map(d => d.id);
         stmtPrep.finalize(() => {
-            // Borrar items de preparaciones que ya no existen
-            db.run(`DELETE FROM preparacion_items WHERE preparacion_id NOT IN (${placeholders})`, ids, () => {
-                // Reemplazar items de las preparaciones que sí vienen
-                datos.forEach(d => {
-                    db.run('DELETE FROM preparacion_items WHERE preparacion_id = ?', [d.id]);
-                    if (d.items && d.items.length > 0) {
-                        const stmtItems = db.prepare('INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad) VALUES (?, ?, ?)');
-                        d.items.forEach(item => stmtItems.run(d.id, item.ingredient_id, item.quantity));
-                        stmtItems.finalize();
-                    }
+            // Cache de unidades previas para no perderlas si backend no trae unit_recipe
+            db.all('SELECT preparacion_id, insumo_id, unidad_receta FROM preparacion_items', [], (err, rows) => {
+                const prevMap = new Map();
+                if (!err && rows) {
+                    rows.forEach(r => prevMap.set(`${r.preparacion_id}:${r.insumo_id}`, r.unidad_receta));
+                }
+                // Borrar items de preparaciones que ya no existen
+                db.run(`DELETE FROM preparacion_items WHERE preparacion_id NOT IN (${placeholders})`, ids, () => {
+                    // Reemplazar items de las preparaciones que sí vienen
+                    datos.forEach(d => {
+                        db.run('DELETE FROM preparacion_items WHERE preparacion_id = ?', [d.id]);
+                        if (d.items && d.items.length > 0) {
+                            const stmtItems = db.prepare('INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad, unidad_receta) VALUES (?, ?, ?, ?)');
+                            d.items.forEach(item => {
+                                const fallbackUnit = prevMap.get(`${d.id}:${item.ingredient_id}`) || null;
+                                const unit = item.unit_recipe || fallbackUnit;
+                                stmtItems.run(d.id, item.ingredient_id, item.quantity, unit);
+                            });
+                            stmtItems.finalize();
+                        }
+                    });
+                    db.run(`DELETE FROM preparaciones WHERE id NOT IN (${placeholders})`, ids, cb);
                 });
-                db.run(`DELETE FROM preparaciones WHERE id NOT IN (${placeholders})`, ids, cb);
             });
         });
     });
@@ -1300,8 +1326,11 @@ function syncRecetasProducto(datos, cb) {
     db.serialize(() => {
         // Las recetas se reemplazan completamente (son datos derivados, no originados en el app)
         db.run('DELETE FROM receta_items', () => {
-            const stmt = db.prepare('INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad) VALUES (?, ?, ?, ?)');
-            datos.forEach(d => stmt.run(d.product_id, d.item_type, d.item_id, d.quantity));
+            const stmt = db.prepare('INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad, unidad_receta) VALUES (?, ?, ?, ?, ?)');
+            datos.forEach(d => {
+                const tipoLocal = d.item_type === 'ingredient' ? 'insumo' : 'preparacion';
+                stmt.run(d.product_id, tipoLocal, d.item_id, d.quantity, d.unit_recipe || null);
+            });
             stmt.finalize(cb);
         });
     });
@@ -1310,10 +1339,10 @@ function syncRecetasProducto(datos, cb) {
 function syncDescuentos(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        const stmt = db.prepare('INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa) VALUES (?, ?, ?, ?, ?)');
+        const stmt = db.prepare('INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa, requires_pin) VALUES (?, ?, ?, ?, ?, ?)');
         datos.forEach(d => {
             const tipo = d.type === 'percentage' ? 'porcentaje' : 'monto_fijo';
-            stmt.run(d.id, d.name, tipo, d.value, d.active ? 1 : 0);
+            stmt.run(d.id, d.name, tipo, d.value, d.active ? 1 : 0, d.requires_pin ? 1 : 0);
         });
         const placeholders = datos.map(() => '?').join(',');
         const ids = datos.map(d => d.id);
@@ -1363,8 +1392,8 @@ function agregarPreparacionConId(id, datos, cb) {
 
 function agregarDescuentoConId(id, datos, cb) {
     db.run(
-        `INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa) VALUES (?, ?, ?, ?, 1)`,
-        [id, datos.nombre, datos.tipo, datos.valor],
+        `INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa, requires_pin) VALUES (?, ?, ?, ?, 1, ?)`,
+        [id, datos.nombre, datos.tipo, datos.valor, datos.requires_pin ? 1 : 0],
         cb
     );
 }
@@ -1668,13 +1697,13 @@ function calcularAlertas(callback) {
     }
 
     // 1. Stock crítico
-    db.all(`SELECT nombre, stock FROM productos WHERE activo = 1 AND stock <= 5`, [], (err, rows) => {
+    db.all(`SELECT nombre, stock_actual as stock, stock_minimo FROM insumos WHERE activo = 1 AND stock_actual <= stock_minimo AND COALESCE(stock_minimo,0) > 0`, [], (err, rows) => {
         if (!err && rows) {
             rows.forEach(p => {
                 if (p.stock <= 0) {
                     alertas.push({ tipo: 'stock', nivel: 'peligro', icono: '🔴', mensaje: `Sin stock: "${p.nombre}"` });
                 } else {
-                    alertas.push({ tipo: 'stock', nivel: 'advertencia', icono: '🟡', mensaje: `Stock bajo (${p.stock} ud.): "${p.nombre}"` });
+                    alertas.push({ tipo: 'stock', nivel: 'advertencia', icono: '🟡', mensaje: `Stock bajo (${p.stock}): "${p.nombre}"` });
                 }
             });
         }

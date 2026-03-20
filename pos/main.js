@@ -229,12 +229,12 @@ ipcMain.handle('crear-pedido', async (_, telefono, items, total, metodoPago) => 
 });
 
 // Nueva versiÃ³n que NO crea clientes automÃ¡ticamente
-ipcMain.handle('crear-pedido-directo', async (_, datosPedido, items) => {
+ipcMain.handle('crear-pedido-directo', async (_, datosPedido, items, opciones) => {
     return new Promise((resolve, reject) => {
         db.crearPedido(datosPedido, items, (err, pedidoId) => {
             if (err) reject(err);
             else resolve(pedidoId);
-        });
+        }, opciones);
     });
 });
 

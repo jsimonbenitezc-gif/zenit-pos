@@ -674,7 +674,9 @@ async function crearPedidoWrapper(datosPedido, items) {
                 notes: i.nota || ''
             }));
             const resultado = await apiClient.createOrder(datosAPI, itemsAPI);
-            await window.api.crearPedidoDirecto(datosPedido, items);
+            // skipStock: el backend ya descontó ingredientes en PostgreSQL;
+            // no descontar localmente para evitar doble deducción.
+            await window.api.crearPedidoDirecto(datosPedido, items, { skipStock: true });
             return resultado; // retorna objeto completo para que el caller pueda marcar KDS
         } catch (error) {
             console.error('Error al crear pedido en backend:', error);
