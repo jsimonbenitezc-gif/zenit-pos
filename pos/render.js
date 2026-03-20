@@ -1821,7 +1821,7 @@ function renderizarGridVenta(listaProductos) {
                 if (!el) return;
                 if (stock === null) {
                     el.innerHTML = '';
-                } else if (stock === 0) {
+                } else if (stock <= 0) {
                     el.innerHTML = '<span style="color:#ef4444; font-weight:600;">Sin stock</span>';
                     document.getElementById(`pcard-${p.id}`)?.style.setProperty('opacity', '0.5');
                 } else if (stock <= 3) {
@@ -7970,7 +7970,7 @@ function _renderizarProductoresMesa(lista) {
                 if (!el) return;
                 if (stock === null) {
                     el.innerHTML = '';
-                } else if (stock === 0) {
+                } else if (stock <= 0) {
                     el.innerHTML = '<span style="color:#ef4444;font-weight:600;">Sin stock</span>';
                     document.getElementById(`mesa-pcard-${p.id}`)?.style.setProperty('opacity', '0.5');
                 } else if (stock <= 3) {
