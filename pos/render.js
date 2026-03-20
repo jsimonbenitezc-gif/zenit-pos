@@ -1183,6 +1183,8 @@ let _inventarioSyncEnCurso = false;
               renderizarTablaPreparaciones?.();
               renderizarTablaRecetas?.();
           }
+          // Refrescar badges de stock en Nueva Venta y Mesas si están visibles
+          _refrescarStockBadges();
       } catch(e) {
           console.warn('Sync inventario backend→local:', e.message);
       } finally {
@@ -1792,6 +1794,54 @@ function filtrarCategoria(catId, btnElement) {
 function filtrarProductosVenta(texto) {
     const filtrados = productosGlobales.filter(p => p.nombre.toLowerCase().includes(texto.toLowerCase()));
     renderizarGridVenta(filtrados);
+}
+
+// Refresca los badges de stock en Nueva Venta y Mesas sin re-renderizar todo el grid
+function _refrescarStockBadges() {
+    const mostrarStock = document.getElementById('adj-mostrar-stock')?.checked;
+    if (!mostrarStock) return;
+
+    // Nueva Venta: actualizar badges stock-badge-{id}
+    if (!document.getElementById('view-nueva-venta')?.classList.contains('hidden')) {
+        document.querySelectorAll('[id^="stock-badge-"]').forEach(el => {
+            const pid = parseInt(el.id.replace('stock-badge-', ''));
+            if (!pid) return;
+            window.api.calcularStockProducto(pid).then(stock => {
+                if (stock === null) { el.innerHTML = ''; return; }
+                const card = document.getElementById(`pcard-${pid}`);
+                if (stock === 0) {
+                    el.innerHTML = '<span style="color:#ef4444; font-weight:600;">Sin stock</span>';
+                    card?.style.setProperty('opacity', '0.5');
+                } else if (stock <= 3) {
+                    el.innerHTML = `<span style="color:#f59e0b; font-weight:600;">⚠ ${stock} disponibles</span>`;
+                    card?.style.removeProperty('opacity');
+                } else {
+                    el.innerHTML = `<span style="color:#10b981;">${stock} disponibles</span>`;
+                    card?.style.removeProperty('opacity');
+                }
+            }).catch(() => {});
+        });
+    }
+
+    // Mesas: actualizar badges mesa-stock-{id}
+    document.querySelectorAll('[id^="mesa-stock-"]').forEach(el => {
+        const pid = parseInt(el.id.replace('mesa-stock-', ''));
+        if (!pid) return;
+        window.api.calcularStockProducto(pid).then(stock => {
+            if (stock === null) { el.innerHTML = ''; return; }
+            const card = document.getElementById(`mesa-pcard-${pid}`);
+            if (stock === 0) {
+                el.innerHTML = '<span style="color:#ef4444;font-weight:600;">Sin stock</span>';
+                card?.style.setProperty('opacity', '0.5');
+            } else if (stock <= 3) {
+                el.innerHTML = `<span style="color:#f59e0b;font-weight:600;">⚠ ${stock} disponibles</span>`;
+                card?.style.removeProperty('opacity');
+            } else {
+                el.innerHTML = `<span style="color:#10b981;">${stock} disponibles</span>`;
+                card?.style.removeProperty('opacity');
+            }
+        }).catch(() => {});
+    });
 }
 
 function renderizarGridVenta(listaProductos) {
