@@ -2203,7 +2203,9 @@ async function ejecutarVenta() {
         const elPanelPuntos = document.getElementById('panel-puntos-venta');
         if (elPanelPuntos) elPanelPuntos.style.display = 'none';
         renderizarCarrito();
-        
+        // Refrescar badges de stock inmediatamente (sin esperar SSE)
+        _refrescarStockBadges();
+
     } catch (e) {
         console.error(e);
         alert("Error al guardar: " + e);
@@ -7821,7 +7823,7 @@ async function confirmarAbrirMesa() {
     try {
         const mesaAbrir = _mesasData.find(m => m.id === _mesaActivaId);
         if (modoConectado && apiClient && tokenActual) {
-            const order = await apiClient.openTableOrder(_mesaActivaId, comensales, notas || null);
+            const order = await apiClient.openTableOrder(_mesaActivaId, comensales, notas || null, sucursalIdActual);
             _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(order);
         } else {
             await window.api.abrirPedidoMesa(_mesaActivaId, mesaAbrir?.nombre || '', nombreActivo || 'Cajero', comensales, notas || null);
@@ -8113,6 +8115,8 @@ async function confirmarAgregarProductosMesa() {
             items: items.map(([, item]) => ({ nombre: item.nombre, cantidad: item.cantidad, notas: '' }))
         }).catch(() => {});
         mostrarNotificacionExito('Comanda enviada a cocina', '🍽️');
+        // Refrescar badges de stock tras descontar insumos (local e inmediato, sin esperar SSE)
+        _refrescarStockBadges();
     } catch(e) {
         console.error('Error agregando productos a mesa:', e);
         mostrarNotificacionExito('Error al agregar productos', '⚠️ Error');

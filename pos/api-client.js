@@ -299,10 +299,10 @@ class APIClient {
         return await this.request(`/tables/${id}`, { method: 'DELETE' });
     }
 
-    async openTableOrder(tableId, guests, notes) {
+    async openTableOrder(tableId, guests, notes, branchId) {
         return await this.request('/orders', {
             method: 'POST',
-            body: { table_id: tableId, guests: guests || null, notes: notes || null, items: [] }
+            body: { table_id: tableId, guests: guests || null, notes: notes || null, items: [], branch_id: branchId || null }
         });
     }
 
@@ -319,6 +319,83 @@ class APIClient {
             method: 'PUT',
             body: { status: 'completado', payment_method: paymentMethod || 'efectivo' }
         });
+    }
+
+    // TURNOS
+    async getTurnoActivo(branchId) {
+        const q = branchId ? `?branch_id=${branchId}` : '';
+        return await this.request(`/turnos/activo${q}`, { method: 'GET' });
+    }
+
+    async abrirTurno(cajeroNombre, rol, fondoInicial, branchId) {
+        return await this.request('/turnos', {
+            method: 'POST',
+            body: { cajero_nombre: cajeroNombre, rol, fondo_inicial: fondoInicial, branch_id: branchId || null }
+        });
+    }
+
+    async cerrarTurno(id, efectivoContado, notas) {
+        return await this.request(`/turnos/${id}/cerrar`, {
+            method: 'PUT',
+            body: { efectivo_contado: efectivoContado, notas: notas || null }
+        });
+    }
+
+    async getHistorialTurnos(branchId) {
+        const q = branchId ? `?branch_id=${branchId}` : '';
+        return await this.request(`/turnos/historial${q}`, { method: 'GET' });
+    }
+
+    async getTurnoTotales(turnoId) {
+        return await this.request(`/turnos/${turnoId}/totales`, { method: 'GET' });
+    }
+
+    getTurnoEventsUrl() {
+        if (!this.token) return null;
+        return `${this.baseURL}/turnos/events?token=${this.token}`;
+    }
+
+    // SUCURSALES
+    async getBranches() {
+        return await this.request('/branches', { method: 'GET' });
+    }
+
+    async updateBranch(id, data) {
+        return await this.request(`/branches/${id}`, { method: 'PUT', body: data });
+    }
+
+    // AUDITORÍA / PIN DE EMPLEADO
+    async verifyEmployeePin(employeeId, pin) {
+        return await this.request('/staff/verify-pin', {
+            method: 'POST',
+            body: { employee_id: employeeId, pin }
+        });
+    }
+
+    async cancelOrder(orderId, employeeId, pin, employeeName) {
+        return await this.request(`/orders/${orderId}/status`, {
+            method: 'PUT',
+            body: { status: 'cancelado', employee_id: employeeId, pin, employee_name: employeeName }
+        });
+    }
+
+    async updateCustomerWithPin(id, data, employeeId, pin, employeeName) {
+        return await this.request(`/customers/${id}`, {
+            method: 'PUT',
+            body: { ...data, employee_id: employeeId, pin, employee_name: employeeName }
+        });
+    }
+
+    async createMovementWithPin(data, employeeId, pin, employeeName) {
+        return await this.request('/inventory/movements', {
+            method: 'POST',
+            body: { ...data, employee_id: employeeId, pin, employee_name: employeeName }
+        });
+    }
+
+    async getAuditLogs(params = {}) {
+        const q = new URLSearchParams(params).toString();
+        return await this.request(`/audit${q ? '?' + q : ''}`, { method: 'GET' });
     }
 }
 

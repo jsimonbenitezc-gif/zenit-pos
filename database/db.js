@@ -1461,6 +1461,8 @@ function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb) {
         [pedido_id, producto_id, cantidad, precio, precio * cantidad, nota || null],
         function(err) {
             if (err) return cb(err);
+            // Descontar insumos según la receta del producto (igual que en Nueva Venta)
+            descontarInsumosDeVenta(producto_id, cantidad);
             db.run(
                 "UPDATE pedidos SET total=(SELECT COALESCE(SUM(subtotal),0) FROM pedido_items WHERE pedido_id=?) WHERE id=?",
                 [pedido_id, pedido_id], cb
