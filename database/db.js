@@ -1320,6 +1320,7 @@ function syncRecetasProducto(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
         // Las recetas se reemplazan completamente (son datos derivados, no originados en el app)
+        // Seguro: sincronizarDesdeBackend() ya descargó todos los datos antes de llegar aquí
         db.run('DELETE FROM receta_items', () => {
             const stmt = db.prepare('INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad, unidad_receta) VALUES (?, ?, ?, ?, ?)');
             datos.forEach(d => {

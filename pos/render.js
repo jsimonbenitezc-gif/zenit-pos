@@ -6142,66 +6142,73 @@ async function sincronizarDesdeBackend() {
     if (modoSoloOnline) return; // En modo solo online no se descarga nada localmente
     console.log('🔄 Sincronizando datos del backend...');
     try {
-        // 1. Categorías
-        const cats = await apiClient.getCategories();
-        await window.api.syncClasificaciones(cats);
-
-        // 2. Productos (lista plana)
-        const prods = await apiClient.getProducts();
-        await window.api.syncProductos(prods);
-
-        // 3. Clientes
-        const clientes = await apiClient.getCustomers();
-        await window.api.syncClientes(clientes);
-
-        // 4-6. Inventario (solo Premium)
+        // ── FASE 1: Subir datos locales al backend (antes de descargar) ──
         if (puedeAccederPremium()) {
             await subirInventarioLocalAlBackend();
-            const branchQ = sucursalIdActual ? `?branch_id=${sucursalIdActual}` : '';
-            const insumosBackend = await apiClient.request(`/inventory/ingredients${branchQ}`);
-            if (insumosBackend && insumosBackend.length > 0) {
-                await window.api.syncInsumos(insumosBackend);
-                const preps = await apiClient.request('/inventory/preparations');
-                await window.api.syncPreparaciones(preps);
-                // Subir recetas al backend ANTES de descargarlas,
-                // para que la data local (con tipos 'insumo'/'preparacion') no sea sobreescrita primero.
-                await _sincronizarRecetasAlBackend();
-                const recetas = await apiClient.request('/inventory/all-recipes');
-                await window.api.syncRecetas(recetas);
-            }
-        }
-
-        // 7-8. Ofertas (solo Premium)
-        if (puedeAccederPremium()) {
+            await _sincronizarRecetasAlBackend();
             await subirOfertasLocalesAlBackend();
-            const descuentos = await apiClient.request('/offers/discounts');
-            await window.api.syncDescuentos(descuentos);
-            const combos = await apiClient.request('/offers/combos');
-            await window.api.syncCombos(combos);
         }
 
-        // 9. Ajustes del negocio (PINs y permisos)
-        try {
-            const ajustesNegocio = await apiClient.request('/settings');
-            if (ajustesNegocio.permisos_roles) {
-                await window.api.guardarAjuste('permisos_roles', JSON.stringify(ajustesNegocio.permisos_roles));
+        // ── FASE 2: Descargar TODO en memoria (sin tocar SQLite) ──
+        const cats = await apiClient.getCategories();
+        const prods = await apiClient.getProducts();
+        const clientes = await apiClient.getCustomers();
+
+        // Datos premium (inventario + ofertas) — opcionales
+        let insumosBackend = null, preps = null, recetas = null;
+        let descuentos = null, combos = null;
+        if (puedeAccederPremium()) {
+            const branchQ = sucursalIdActual ? `?branch_id=${sucursalIdActual}` : '';
+            insumosBackend = await apiClient.request(`/inventory/ingredients${branchQ}`);
+            if (insumosBackend && insumosBackend.length > 0) {
+                preps = await apiClient.request('/inventory/preparations');
+                recetas = await apiClient.request('/inventory/all-recipes');
             }
-        } catch (e) {
-            console.warn('No se pudieron sincronizar ajustes de negocio:', e.message);
+            descuentos = await apiClient.request('/offers/discounts');
+            combos = await apiClient.request('/offers/combos');
         }
 
-        // 10. Pedidos recientes (para consulta offline)
+        // Ajustes — no crítico, falla silenciosamente
+        let ajustesNegocio = null;
+        try { ajustesNegocio = await apiClient.request('/settings'); } catch (e) {
+            console.warn('No se pudieron descargar ajustes de negocio:', e.message);
+        }
+
+        // Pedidos — no crítico, falla silenciosamente
+        let pedidosBackend = null;
         try {
             const branchQuery = sucursalIdActual ? `&branch_id=${sucursalIdActual}` : '';
-            const pedidosBackend = await apiClient.request(`/orders?limit=200&page=1${branchQuery}`);
-            // Siempre sincronizar (incluso con 0 resultados limpia pedidos de otra sucursal)
-            await window.api.syncPedidos((pedidosBackend && pedidosBackend.data) ? pedidosBackend.data : []);
+            pedidosBackend = await apiClient.request(`/orders?limit=200&page=1${branchQuery}`);
         } catch (e) {
-            console.warn('No se pudieron sincronizar pedidos:', e.message);
+            console.warn('No se pudieron descargar pedidos:', e.message);
+        }
+
+        // ── FASE 3: Todo descargado OK → guardar en SQLite ──
+        await window.api.syncClasificaciones(cats);
+        await window.api.syncProductos(prods);
+        await window.api.syncClientes(clientes);
+
+        if (puedeAccederPremium()) {
+            if (insumosBackend && insumosBackend.length > 0) {
+                await window.api.syncInsumos(insumosBackend);
+                if (preps) await window.api.syncPreparaciones(preps);
+                if (recetas) await window.api.syncRecetas(recetas);
+            }
+            if (descuentos) await window.api.syncDescuentos(descuentos);
+            if (combos) await window.api.syncCombos(combos);
+        }
+
+        if (ajustesNegocio && ajustesNegocio.permisos_roles) {
+            await window.api.guardarAjuste('permisos_roles', JSON.stringify(ajustesNegocio.permisos_roles));
+        }
+
+        if (pedidosBackend) {
+            await window.api.syncPedidos((pedidosBackend && pedidosBackend.data) ? pedidosBackend.data : []);
         }
 
         console.log('✅ Sincronización desde backend completada');
     } catch (error) {
+        // Si falla en FASE 2 (descarga), los datos locales quedan intactos
         console.error('⚠️ Error en sincronización desde backend:', error);
     }
 }
