@@ -1319,15 +1319,26 @@ function syncPreparaciones(datos, cb) {
 function syncRecetasProducto(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        // Las recetas se reemplazan completamente (son datos derivados, no originados en el app)
-        // Seguro: sincronizarDesdeBackend() ya descargó todos los datos antes de llegar aquí
-        db.run('DELETE FROM receta_items', () => {
+        // Transacción: si la inserción falla, el DELETE se deshace automáticamente
+        db.run('BEGIN TRANSACTION');
+        db.run('DELETE FROM receta_items', (err) => {
+            if (err) {
+                return db.run('ROLLBACK', () => cb(err));
+            }
             const stmt = db.prepare('INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad, unidad_receta) VALUES (?, ?, ?, ?, ?)');
+            let insertError = null;
             datos.forEach(d => {
                 const tipoLocal = d.item_type === 'ingredient' ? 'insumo' : 'preparacion';
-                stmt.run(d.product_id, tipoLocal, d.item_id, d.quantity, d.unit_recipe || null);
+                stmt.run(d.product_id, tipoLocal, d.item_id, d.quantity, d.unit_recipe || null, (e) => {
+                    if (e && !insertError) insertError = e;
+                });
             });
-            stmt.finalize(cb);
+            stmt.finalize((err2) => {
+                if (err2 || insertError) {
+                    return db.run('ROLLBACK', () => cb(err2 || insertError));
+                }
+                db.run('COMMIT', cb);
+            });
         });
     });
 }
