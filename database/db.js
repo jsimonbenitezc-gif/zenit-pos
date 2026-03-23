@@ -1223,103 +1223,132 @@ function cerrarTurno(id, efectivoContado, notas, cb) {
 // SYNC — Funciones para sincronización con backend
 // ============================================
 
+// Wrapper: envuelve una operación de sync en una transacción SQLite.
+// Si la operación falla, ROLLBACK deshace todos los cambios (DELETE + INSERT).
+// Esto evita pérdida de datos si la inserción falla a mitad del proceso.
+function syncConTransaccion(operacion, cb) {
+    db.run('BEGIN TRANSACTION', (err) => {
+        if (err) return cb(err);
+        operacion((error) => {
+            if (error) {
+                db.run('ROLLBACK', () => cb(error));
+            } else {
+                db.run('COMMIT', cb);
+            }
+        });
+    });
+}
+
 function syncClasificaciones(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
-    db.serialize(() => {
-        const stmt = db.prepare('INSERT OR REPLACE INTO clasificaciones (id, nombre, emoji, imagen, activa) VALUES (?, ?, ?, ?, ?)');
-        datos.forEach(d => stmt.run(d.id, d.name, d.emoji || '📦', d.image || null, d.active ? 1 : 0));
-        const placeholders = datos.map(() => '?').join(',');
-        const ids = datos.map(d => d.id);
-        stmt.finalize(() => db.run(`DELETE FROM clasificaciones WHERE id NOT IN (${placeholders})`, ids, cb));
-    });
+    syncConTransaccion((done) => {
+        db.serialize(() => {
+            const stmt = db.prepare('INSERT OR REPLACE INTO clasificaciones (id, nombre, emoji, imagen, activa) VALUES (?, ?, ?, ?, ?)');
+            datos.forEach(d => stmt.run(d.id, d.name, d.emoji || '📦', d.image || null, d.active ? 1 : 0));
+            const placeholders = datos.map(() => '?').join(',');
+            const ids = datos.map(d => d.id);
+            stmt.finalize(() => db.run(`DELETE FROM clasificaciones WHERE id NOT IN (${placeholders})`, ids, done));
+        });
+    }, cb);
 }
 
 function syncProductos(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
-    db.serialize(() => {
-        const stmt = db.prepare('INSERT OR REPLACE INTO productos (id, nombre, descripcion, precio, stock, clasificacion_id, emoji, imagen, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        datos.forEach(d => stmt.run(
-            d.id, d.name, d.description || null, d.price,
-            d.stock || 0, d.category_id || null, d.emoji || null, d.image || null, d.active ? 1 : 0
-        ));
-        const placeholders = datos.map(() => '?').join(',');
-        const ids = datos.map(d => d.id);
-        stmt.finalize(() => db.run(`DELETE FROM productos WHERE id NOT IN (${placeholders})`, ids, cb));
-    });
+    syncConTransaccion((done) => {
+        db.serialize(() => {
+            const stmt = db.prepare('INSERT OR REPLACE INTO productos (id, nombre, descripcion, precio, stock, clasificacion_id, emoji, imagen, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            datos.forEach(d => stmt.run(
+                d.id, d.name, d.description || null, d.price,
+                d.stock || 0, d.category_id || null, d.emoji || null, d.image || null, d.active ? 1 : 0
+            ));
+            const placeholders = datos.map(() => '?').join(',');
+            const ids = datos.map(d => d.id);
+            stmt.finalize(() => db.run(`DELETE FROM productos WHERE id NOT IN (${placeholders})`, ids, done));
+        });
+    }, cb);
 }
 
 function syncClientes(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
-    db.serialize(() => {
-        datos.forEach(d => {
-            // INSERT OR REPLACE sincroniza todos los datos del backend incluyendo puntos y fidelidad
-            db.run(
-                'INSERT OR REPLACE INTO clientes (id, nombre, telefono, direccion, notas, puntos, en_fidelidad) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [d.id, d.name || null, d.phone || null, d.address || null, d.notes || null,
-                 d.loyalty_points || 0, d.in_loyalty ? 1 : 0]
-            );
+    syncConTransaccion((done) => {
+        db.serialize(() => {
+            datos.forEach(d => {
+                // INSERT OR REPLACE sincroniza todos los datos del backend incluyendo puntos y fidelidad
+                db.run(
+                    'INSERT OR REPLACE INTO clientes (id, nombre, telefono, direccion, notas, puntos, en_fidelidad) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [d.id, d.name || null, d.phone || null, d.address || null, d.notes || null,
+                     d.loyalty_points || 0, d.in_loyalty ? 1 : 0]
+                );
+            });
+            const placeholders = datos.map(() => '?').join(',');
+            const ids = datos.map(d => d.id);
+            // Nunca eliminar clientes inscritos en fidelidad aunque no vengan del backend
+            db.run(`DELETE FROM clientes WHERE en_fidelidad = 0 AND id NOT IN (${placeholders})`, ids, done);
         });
-        const placeholders = datos.map(() => '?').join(',');
-        const ids = datos.map(d => d.id);
-        // Nunca eliminar clientes inscritos en fidelidad aunque no vengan del backend
-        db.run(`DELETE FROM clientes WHERE en_fidelidad = 0 AND id NOT IN (${placeholders})`, ids, cb);
-    });
+    }, cb);
 }
 
 function syncInsumos(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
-    db.serialize(() => {
-        const stmt = db.prepare('INSERT OR REPLACE INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        datos.forEach(d => stmt.run(
-            d.id, d.name, d.unit, d.stock || 0, d.min_stock || 0,
-            d.active ? 1 : 0, d.type || 'ingrediente', d.content_amount || null, d.content_unit || null
-        ));
-        const placeholders = datos.map(() => '?').join(',');
-        const ids = datos.map(d => d.id);
-        stmt.finalize(() => db.run(`DELETE FROM insumos WHERE id NOT IN (${placeholders})`, ids, cb));
-    });
+    syncConTransaccion((done) => {
+        db.serialize(() => {
+            const stmt = db.prepare('INSERT OR REPLACE INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            datos.forEach(d => stmt.run(
+                d.id, d.name, d.unit, d.stock || 0, d.min_stock || 0,
+                d.active ? 1 : 0, d.type || 'ingrediente', d.content_amount || null, d.content_unit || null
+            ));
+            const placeholders = datos.map(() => '?').join(',');
+            const ids = datos.map(d => d.id);
+            stmt.finalize(() => db.run(`DELETE FROM insumos WHERE id NOT IN (${placeholders})`, ids, done));
+        });
+    }, cb);
 }
 
 function syncPreparaciones(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
-    db.serialize(() => {
-        const stmtPrep = db.prepare('INSERT OR REPLACE INTO preparaciones (id, nombre, activo) VALUES (?, ?, ?)');
-        datos.forEach(d => stmtPrep.run(d.id, d.name, d.active ? 1 : 0));
-        const placeholders = datos.map(() => '?').join(',');
-        const ids = datos.map(d => d.id);
-        stmtPrep.finalize(() => {
-            // Cache de unidades previas para no perderlas si backend no trae unit_recipe
-            db.all('SELECT preparacion_id, insumo_id, unidad_receta FROM preparacion_items', [], (err, rows) => {
-                const prevMap = new Map();
-                if (!err && rows) {
-                    rows.forEach(r => prevMap.set(`${r.preparacion_id}:${r.insumo_id}`, r.unidad_receta));
-                }
-                // Borrar items de preparaciones que ya no existen
-                db.run(`DELETE FROM preparacion_items WHERE preparacion_id NOT IN (${placeholders})`, ids, () => {
-                    // Reemplazar items de las preparaciones que sí vienen
-                    datos.forEach(d => {
-                        db.run('DELETE FROM preparacion_items WHERE preparacion_id = ?', [d.id]);
-                        if (d.items && d.items.length > 0) {
-                            const stmtItems = db.prepare('INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad, unidad_receta) VALUES (?, ?, ?, ?)');
-                            d.items.forEach(item => {
-                                const fallbackUnit = prevMap.get(`${d.id}:${item.ingredient_id}`) || null;
-                                const unit = item.unit_recipe || fallbackUnit;
-                                stmtItems.run(d.id, item.ingredient_id, item.quantity, unit);
-                            });
-                            stmtItems.finalize();
-                        }
+    syncConTransaccion((done) => {
+        db.serialize(() => {
+            const stmtPrep = db.prepare('INSERT OR REPLACE INTO preparaciones (id, nombre, activo) VALUES (?, ?, ?)');
+            datos.forEach(d => stmtPrep.run(d.id, d.name, d.active ? 1 : 0));
+            const placeholders = datos.map(() => '?').join(',');
+            const ids = datos.map(d => d.id);
+            stmtPrep.finalize(() => {
+                // Cache de unidades previas para no perderlas si backend no trae unit_recipe
+                db.all('SELECT preparacion_id, insumo_id, unidad_receta FROM preparacion_items', [], (err, rows) => {
+                    const prevMap = new Map();
+                    if (!err && rows) {
+                        rows.forEach(r => prevMap.set(`${r.preparacion_id}:${r.insumo_id}`, r.unidad_receta));
+                    }
+                    // Borrar items de preparaciones que ya no existen
+                    db.run(`DELETE FROM preparacion_items WHERE preparacion_id NOT IN (${placeholders})`, ids, () => {
+                        // Reemplazar items de las preparaciones que sí vienen
+                        datos.forEach(d => {
+                            db.run('DELETE FROM preparacion_items WHERE preparacion_id = ?', [d.id]);
+                            if (d.items && d.items.length > 0) {
+                                const stmtItems = db.prepare('INSERT INTO preparacion_items (preparacion_id, insumo_id, cantidad, unidad_receta) VALUES (?, ?, ?, ?)');
+                                d.items.forEach(item => {
+                                    const fallbackUnit = prevMap.get(`${d.id}:${item.ingredient_id}`) || null;
+                                    const unit = item.unit_recipe || fallbackUnit;
+                                    stmtItems.run(d.id, item.ingredient_id, item.quantity, unit);
+                                });
+                                stmtItems.finalize();
+                            }
+                        });
+                        db.run(`DELETE FROM preparaciones WHERE id NOT IN (${placeholders})`, ids, done);
                     });
-                    db.run(`DELETE FROM preparaciones WHERE id NOT IN (${placeholders})`, ids, cb);
                 });
             });
         });
-    });
+    }, cb);
 }
 
 function syncRecetasProducto(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     db.serialize(() => {
-        // Transacción: si la inserción falla, el DELETE se deshace automáticamente
+        // Transacción: si la inserción falla, el DELETE se deshace automáticamente.
+        // A diferencia de las otras funciones sync que usan DELETE WHERE id NOT IN (...),
+        // aquí se usa DELETE sin WHERE porque las recetas son datos derivados del backend
+        // (no se crean localmente), así que siempre se reemplazan por completo.
         db.run('BEGIN TRANSACTION');
         db.run('DELETE FROM receta_items', (err) => {
             if (err) {
@@ -1345,39 +1374,43 @@ function syncRecetasProducto(datos, cb) {
 
 function syncDescuentos(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
-    db.serialize(() => {
-        const stmt = db.prepare('INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa, requires_pin) VALUES (?, ?, ?, ?, ?, ?)');
-        datos.forEach(d => {
-            const tipo = d.type === 'percentage' ? 'porcentaje' : 'monto_fijo';
-            stmt.run(d.id, d.name, tipo, d.value, d.active ? 1 : 0, d.requires_pin ? 1 : 0);
+    syncConTransaccion((done) => {
+        db.serialize(() => {
+            const stmt = db.prepare('INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa, requires_pin) VALUES (?, ?, ?, ?, ?, ?)');
+            datos.forEach(d => {
+                const tipo = d.type === 'percentage' ? 'porcentaje' : 'monto_fijo';
+                stmt.run(d.id, d.name, tipo, d.value, d.active ? 1 : 0, d.requires_pin ? 1 : 0);
+            });
+            const placeholders = datos.map(() => '?').join(',');
+            const ids = datos.map(d => d.id);
+            stmt.finalize(() => db.run(`DELETE FROM promociones WHERE id NOT IN (${placeholders})`, ids, done));
         });
-        const placeholders = datos.map(() => '?').join(',');
-        const ids = datos.map(d => d.id);
-        stmt.finalize(() => db.run(`DELETE FROM promociones WHERE id NOT IN (${placeholders})`, ids, cb));
-    });
+    }, cb);
 }
 
 function syncCombos(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
-    db.serialize(() => {
-        const stmtCombo = db.prepare('INSERT OR REPLACE INTO combos (id, nombre, descripcion, precio_especial, activo) VALUES (?, ?, ?, ?, ?)');
-        datos.forEach(d => stmtCombo.run(d.id, d.name, d.description || null, d.price, d.active ? 1 : 0));
-        const placeholders = datos.map(() => '?').join(',');
-        const ids = datos.map(d => d.id);
-        stmtCombo.finalize(() => {
-            db.run(`DELETE FROM combo_items WHERE combo_id NOT IN (${placeholders})`, ids, () => {
-                datos.forEach(d => {
-                    db.run('DELETE FROM combo_items WHERE combo_id = ?', [d.id]);
-                    if (d.items && d.items.length > 0) {
-                        const stmtItems = db.prepare('INSERT INTO combo_items (combo_id, producto_id, cantidad) VALUES (?, ?, ?)');
-                        d.items.forEach(item => stmtItems.run(d.id, item.product_id, item.quantity || 1));
-                        stmtItems.finalize();
-                    }
+    syncConTransaccion((done) => {
+        db.serialize(() => {
+            const stmtCombo = db.prepare('INSERT OR REPLACE INTO combos (id, nombre, descripcion, precio_especial, activo) VALUES (?, ?, ?, ?, ?)');
+            datos.forEach(d => stmtCombo.run(d.id, d.name, d.description || null, d.price, d.active ? 1 : 0));
+            const placeholders = datos.map(() => '?').join(',');
+            const ids = datos.map(d => d.id);
+            stmtCombo.finalize(() => {
+                db.run(`DELETE FROM combo_items WHERE combo_id NOT IN (${placeholders})`, ids, () => {
+                    datos.forEach(d => {
+                        db.run('DELETE FROM combo_items WHERE combo_id = ?', [d.id]);
+                        if (d.items && d.items.length > 0) {
+                            const stmtItems = db.prepare('INSERT INTO combo_items (combo_id, producto_id, cantidad) VALUES (?, ?, ?)');
+                            d.items.forEach(item => stmtItems.run(d.id, item.product_id, item.quantity || 1));
+                            stmtItems.finalize();
+                        }
+                    });
+                    db.run(`DELETE FROM combos WHERE id NOT IN (${placeholders})`, ids, done);
                 });
-                db.run(`DELETE FROM combos WHERE id NOT IN (${placeholders})`, ids, cb);
             });
         });
-    });
+    }, cb);
 }
 
 function agregarInsumoConId(id, datos, cb) {
@@ -1653,44 +1686,46 @@ function syncPedidos(datos, cb) {
     if (!datos || datos.length === 0) {
         return db.run(`DELETE FROM pedidos WHERE pendiente_sync = 0`, cb);
     }
-    db.serialize(() => {
-        const stmtPedido = db.prepare(
-            `INSERT OR IGNORE INTO pedidos
-             (id, cliente_id, total, estado, metodo_pago, tipo_pedido, referencia,
-              direccion_domicilio, link_maps, notas_generales, info_cliente_temp,
-              cajero, pendiente_sync, fecha_pedido)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
-        );
-        const stmtItem = db.prepare(
-            `INSERT OR IGNORE INTO pedido_items
-             (id, pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`
-        );
-        datos.forEach(d => {
-            stmtPedido.run(
-                d.id, d.customer_id || null, d.total, d.status || 'completado',
-                d.payment_method || null, d.order_type || 'comer', d.reference || null,
-                d.delivery_address || null, d.maps_link || null, d.notes || null,
-                d.customer_temp_info || null, null,
-                d.createdAt || null
+    syncConTransaccion((done) => {
+        db.serialize(() => {
+            const stmtPedido = db.prepare(
+                `INSERT OR IGNORE INTO pedidos
+                 (id, cliente_id, total, estado, metodo_pago, tipo_pedido, referencia,
+                  direccion_domicilio, link_maps, notas_generales, info_cliente_temp,
+                  cajero, pendiente_sync, fecha_pedido)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
             );
-            if (d.items && d.items.length > 0) {
-                d.items.forEach(item => {
-                    stmtItem.run(
-                        item.id, item.order_id, item.product_id,
-                        item.quantity, item.unit_price, item.subtotal, item.notes || null
-                    );
-                });
-            }
+            const stmtItem = db.prepare(
+                `INSERT OR IGNORE INTO pedido_items
+                 (id, pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`
+            );
+            datos.forEach(d => {
+                stmtPedido.run(
+                    d.id, d.customer_id || null, d.total, d.status || 'completado',
+                    d.payment_method || null, d.order_type || 'comer', d.reference || null,
+                    d.delivery_address || null, d.maps_link || null, d.notes || null,
+                    d.customer_temp_info || null, null,
+                    d.createdAt || null
+                );
+                if (d.items && d.items.length > 0) {
+                    d.items.forEach(item => {
+                        stmtItem.run(
+                            item.id, item.order_id, item.product_id,
+                            item.quantity, item.unit_price, item.subtotal, item.notes || null
+                        );
+                    });
+                }
+            });
+            stmtPedido.finalize(() => stmtItem.finalize(() => {
+                // Borrar pedidos viejos (ya sincronizados) que no vienen en los datos nuevos
+                // pendiente_sync=1 = aún no subido, no borrar
+                const ids = datos.map(d => d.id);
+                const placeholders = ids.map(() => '?').join(',');
+                db.run(`DELETE FROM pedidos WHERE pendiente_sync = 0 AND id NOT IN (${placeholders})`, ids, done);
+            }));
         });
-        stmtPedido.finalize(() => stmtItem.finalize(() => {
-            // Borrar pedidos viejos (ya sincronizados) que no vienen en los datos nuevos
-            // pendiente_sync=1 = aún no subido, no borrar
-            const ids = datos.map(d => d.id);
-            const placeholders = ids.map(() => '?').join(',');
-            db.run(`DELETE FROM pedidos WHERE pendiente_sync = 0 AND id NOT IN (${placeholders})`, ids, cb);
-        }));
-    });
+    }, cb);
 }
 
 function calcularAlertas(callback) {
