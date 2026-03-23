@@ -364,6 +364,14 @@ class APIClient {
         return await this.request(`/branches/${id}`, { method: 'PUT', body: data });
     }
 
+    // SETTINGS — PIN hashing
+    async hashPin(pin) {
+        return await this.request('/settings/hash-pin', {
+            method: 'POST',
+            body: { pin }
+        });
+    }
+
     // AUDITORÍA / PIN DE EMPLEADO
     async verifyEmployeePin(employeeId, pin) {
         return await this.request('/staff/verify-pin', {

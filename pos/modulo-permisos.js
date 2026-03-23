@@ -347,7 +347,20 @@ async function guardarPinPerfil(rol) {
     }
 
     if (!permisos[rol]) permisos[rol] = {};
-    permisos[rol].pin     = await hashPin(pin);
+
+    // Intentar hash bcrypt vía backend (más seguro); fallback a SHA-256 local si no hay conexión
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            const { hash } = await apiClient.hashPin(pin);
+            permisos[rol].pin_bcrypt = hash;
+            permisos[rol].pin = hash; // también guardar en pin para compatibilidad
+        } catch (e) {
+            // Sin conexión: fallback a SHA-256 local
+            permisos[rol].pin = await hashPin(pin);
+        }
+    } else {
+        permisos[rol].pin = await hashPin(pin);
+    }
     permisos[rol].pin_set = true;
 
     const toSave = _buildFullPermisosDesktop(permisos);
