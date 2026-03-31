@@ -265,6 +265,16 @@ function inicializarTablas() {
         estado TEXT DEFAULT 'abierto',
         notas TEXT
     )`);
+
+    // KDS — Dispositivos de confianza
+    db.run(`CREATE TABLE IF NOT EXISTS kds_trusted_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ip TEXT NOT NULL,
+        user_agent TEXT,
+        nombre TEXT,
+        confianza INTEGER DEFAULT 1,
+        fecha_conexion DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
 }
 
 function crearDatosEjemplo() {
@@ -1679,6 +1689,11 @@ module.exports = {
     obtenerClientesFidelidad,
     registrarLogDescuento,
     obtenerLogDescuentos,
+    obtenerDispositivosKDS,
+    buscarDispositivoKDS,
+    agregarDispositivoKDS,
+    eliminarDispositivoKDS,
+    bloquearDispositivoKDS,
 }
 
 function syncPedidos(datos, cb) {
@@ -1805,6 +1820,38 @@ function calcularAlertas(callback) {
         }
         terminar();
     });
+}
+
+// ============================================
+// KDS — DISPOSITIVOS DE CONFIANZA
+// ============================================
+
+function obtenerDispositivosKDS(cb) {
+    db.all('SELECT * FROM kds_trusted_devices ORDER BY fecha_conexion DESC', cb);
+}
+
+function buscarDispositivoKDS(ip, cb) {
+    db.get('SELECT * FROM kds_trusted_devices WHERE ip = ?', [ip], cb);
+}
+
+function agregarDispositivoKDS(ip, userAgent, nombre, cb) {
+    db.run(
+        'INSERT INTO kds_trusted_devices (ip, user_agent, nombre, confianza) VALUES (?, ?, ?, 1)',
+        [ip, userAgent || '', nombre || ip],
+        function(err) { cb(err, this ? this.lastID : null); }
+    );
+}
+
+function eliminarDispositivoKDS(id, cb) {
+    db.run('DELETE FROM kds_trusted_devices WHERE id = ?', [id], cb);
+}
+
+function bloquearDispositivoKDS(ip, userAgent, cb) {
+    db.run(
+        'INSERT INTO kds_trusted_devices (ip, user_agent, nombre, confianza) VALUES (?, ?, ?, 0)',
+        [ip, userAgent || '', ip],
+        function(err) { cb(err); }
+    );
 }
 
 function limpiarDatosLocales(cb) {

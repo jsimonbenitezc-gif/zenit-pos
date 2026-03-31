@@ -34,3 +34,11 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Claude Code
+.claude/
+
+# Archivos temporales de desarrollo
+PLAN_*.md
+*.backup
+pos/render_core.js

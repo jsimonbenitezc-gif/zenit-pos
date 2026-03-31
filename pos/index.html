@@ -366,7 +366,10 @@
                                     Alertas
                                 </h4>
                                 <div id="alertas-dashboard" class="alertas-list">
-                                    <p style="color: #9ca3af; font-size: 0.85em;">Todo en orden</p>
+                                    <div id="alertas-stock-list">
+                                        <p style="color: #9ca3af; font-size: 0.85em;">Todo en orden</p>
+                                    </div>
+                                    <div id="alertas-audit-list"></div>
                                 </div>
                             </div>
                         </div>
@@ -921,6 +924,47 @@
                 <input type="text" id="adj-telefono-negocio" placeholder="Ej: (555) 123-4567">
             </div>
             <div class="input-group">
+                <label>Correo Electrónico</label>
+                <input type="email" id="adj-email-negocio" placeholder="Ej: contacto@minegocio.com">
+            </div>
+            <div class="input-group">
+                <label>Sitio Web</label>
+                <input type="text" id="adj-website-negocio" placeholder="Ej: www.minegocio.com">
+            </div>
+            <div class="input-group">
+                <label>RFC / ID Fiscal</label>
+                <input type="text" id="adj-rfc-negocio" placeholder="Ej: XAXX010101000">
+            </div>
+            <div class="input-group">
+                <label>Instagram</label>
+                <input type="text" id="adj-instagram-negocio" placeholder="Ej: @minegocio">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="input-group" style="margin-bottom:0;">
+                    <label>Ciudad</label>
+                    <input type="text" id="adj-ciudad-negocio" placeholder="Ej: Guadalajara">
+                </div>
+                <div class="input-group" style="margin-bottom:0;">
+                    <label>Estado / Provincia</label>
+                    <input type="text" id="adj-estado-negocio" placeholder="Ej: Jalisco">
+                </div>
+            </div>
+            <div class="input-group">
+                <label>Tipo de Negocio</label>
+                <select id="adj-tipo-negocio">
+                    <option value="">— Seleccionar —</option>
+                    <option value="restaurante">Restaurante / Cafetería</option>
+                    <option value="tienda">Tienda / Abarrotes</option>
+                    <option value="ropa">Ropa y Accesorios</option>
+                    <option value="salon">Salón de Belleza / Estética</option>
+                    <option value="farmacia">Farmacia</option>
+                    <option value="ferreteria">Ferretería / Materiales</option>
+                    <option value="electronica">Electrónica</option>
+                    <option value="panaderia">Panadería / Pastelería</option>
+                    <option value="otro">Otro</option>
+                </select>
+            </div>
+            <div class="input-group">
                 <label>Dirección</label>
                 <textarea id="adj-direccion-negocio" rows="2" placeholder="Ej: Av. Principal #123, Col. Centro"></textarea>
             </div>
@@ -1053,8 +1097,27 @@
                 <span>Mostrar Dirección en Ticket</span>
                 <input type="checkbox" id="adj-show-direccion" checked>
             </div>
-
-                        <div class="input-group">
+            <div class="setting-item">
+                <span>Mostrar Correo en Ticket</span>
+                <input type="checkbox" id="adj-show-email">
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Sitio Web en Ticket</span>
+                <input type="checkbox" id="adj-show-website">
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Instagram en Ticket</span>
+                <input type="checkbox" id="adj-show-instagram">
+            </div>
+            <div class="setting-item">
+                <span>Mostrar RFC en Ticket</span>
+                <input type="checkbox" id="adj-show-rfc">
+            </div>
+            <div class="input-group" style="margin-top:12px;">
+                <label>Mensaje de cierre del ticket</label>
+                <textarea id="adj-ticket-footer" rows="2" placeholder="Ej: ¡Gracias por su compra! Vuelva pronto."></textarea>
+            </div>
+            <div class="input-group">
                 <label>Símbolo de Moneda</label>
                 <select id="adj-moneda">
                     <option value="$">$ (Peso/Dólar)</option>
@@ -1149,9 +1212,12 @@
                                     Copiar
                                 </button>
                             </div>
-                            <p style="font-size:0.78em;color:#9ca3af;margin:0;">Escanea el QR con la cámara del teléfono →</p>
+                            <button id="kds-qr-toggle" onclick="toggleKdsQr()" style="margin-top:6px;display:inline-flex;align-items:center;gap:5px;background:#f3f4f6;color:#374151;border:1px solid #e5e7eb;padding:6px 12px;border-radius:8px;font-size:0.82em;font-weight:600;cursor:pointer;">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/></svg>
+                                Mostrar QR
+                            </button>
                         </div>
-                        <div id="kds-qr-container" style="flex-shrink:0;width:104px;height:104px;background:#f3f4f6;border-radius:10px;border:1px solid #e5e7eb;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                        <div id="kds-qr-container" style="display:none;flex-shrink:0;width:104px;height:104px;background:#f3f4f6;border-radius:10px;border:1px solid #e5e7eb;align-items:center;justify-content:center;overflow:hidden;">
                             <img id="kds-qr-img" src="" alt="QR" style="width:100px;height:100px;display:none;" onerror="this.style.display='none';document.getElementById('kds-qr-fallback').style.display='flex'">
                             <div id="kds-qr-fallback" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:8px;color:#9ca3af;font-size:0.7em;">Sin red para QR</div>
                         </div>
@@ -1159,6 +1225,38 @@
                 </div>
             </div>
             <p id="kds-no-disponible" style="font-size:0.85em;color:#9ca3af;">Iniciando servidor de cocina...</p>
+
+            <!-- Dispositivos KDS de confianza -->
+            <div style="margin-top:18px;border-top:1px solid #e5e7eb;padding-top:14px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                    <h4 style="margin:0;font-size:0.92em;">Dispositivos KDS</h4>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:0.78em;color:#6b7280;cursor:pointer;">
+                        <input type="checkbox" id="kds-notif-toggle" checked onchange="toggleKdsNotificaciones(this.checked)" style="accent-color:#2563eb;">
+                        Notificar nuevos
+                    </label>
+                </div>
+                <div id="kds-dispositivos-lista" style="font-size:0.85em;color:#6b7280;">Cargando dispositivos...</div>
+            </div>
+        </div>
+
+        <!-- Modal: Aprobar/Rechazar dispositivo KDS -->
+        <div id="modal-kds-dispositivo" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#fff;border-radius:14px;padding:24px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                <h3 style="margin:0 0 8px;font-size:1em;">Nuevo dispositivo KDS</h3>
+                <p style="margin:0 0 14px;font-size:0.85em;color:#6b7280;">Un dispositivo quiere conectarse a la pantalla de cocina.</p>
+                <div style="background:#f3f4f6;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:0.82em;">
+                    <div><strong>IP:</strong> <span id="kds-nuevo-ip"></span></div>
+                    <div><strong>Navegador:</strong> <span id="kds-nuevo-ua" style="word-break:break-all;"></span></div>
+                </div>
+                <div style="margin-bottom:14px;">
+                    <label style="font-size:0.82em;color:#374151;display:block;margin-bottom:4px;">Nombre (opcional)</label>
+                    <input type="text" id="kds-nuevo-nombre" placeholder="Ej: Tablet Cocina" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;box-sizing:border-box;">
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button onclick="rechazarDispositivoKDS()" style="flex:1;padding:10px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Rechazar</button>
+                    <button onclick="aprobarDispositivoKDS()" style="flex:1;padding:10px;border:none;background:#2563eb;color:#fff;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Aceptar</button>
+                </div>
+            </div>
         </div>
 
         <!-- Administrar Puestos/Roles (solo visible para Administrador) -->
@@ -2005,6 +2103,26 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
 <script src="api-client.js"></script>
+
+<!-- Módulos (se cargan antes de render.js) -->
+<script src="modulo-plan.js"></script>
+<script src="modulo-wrappers.js"></script>
+<script src="modulo-dashboard.js"></script>
+<script src="modulo-productos.js"></script>
+<script src="modulo-venta.js"></script>
+<script src="modulo-pedidos.js"></script>
+<script src="modulo-clientes.js"></script>
+<script src="modulo-ofertas.js"></script>
+<script src="modulo-inventario.js"></script>
+<script src="modulo-sync.js"></script>
+<script src="modulo-perfiles.js"></script>
+<script src="modulo-turno.js"></script>
+<script src="modulo-permisos.js"></script>
+<script src="modulo-mesas.js"></script>
+<script src="modulo-pin-audit.js"></script>
+<script src="modulo-ajustes.js"></script>
+
+<!-- Núcleo: globals, init, SSE, navegación -->
 <script src="render.js"></script>
 </body>
 </html>
@@ -2240,6 +2358,29 @@
     </div>
 </div>
 
+<!-- MODAL: PIN de empleado (autorización de acciones sensibles) -->
+<div id="modal-pin-empleado" class="modal hidden">
+    <div class="modal-content" style="max-width:320px;">
+        <div class="modal-header">
+            <h3>Autorización requerida</h3>
+        </div>
+        <div class="modal-body" style="text-align:center;">
+            <p id="modal-pin-empleado-msg" style="color:#6b7280;margin-bottom:16px;">
+                Esta acción requiere autorización. Ingresa tu PIN de empleado.
+            </p>
+            <input type="password" id="input-pin-empleado" maxlength="20"
+                   placeholder="••••"
+                   style="text-align:center;font-size:1.4em;letter-spacing:0.3em;width:140px;padding:8px;border:1px solid #d1d5db;border-radius:6px;"
+                   onkeydown="if(event.key==='Enter') confirmarPinEmpleado()">
+            <p id="pin-empleado-error" style="color:#ef4444;font-size:0.82em;margin-top:8px;display:none;">PIN incorrecto o empleado no encontrado</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="cancelarPinEmpleado()">Cancelar</button>
+            <button class="btn-primary" id="btn-confirmar-pin-empleado" onclick="confirmarPinEmpleado()">Confirmar</button>
+        </div>
+    </div>
+</div>
+
 <!-- MODAL: Nuevo/Editar Descuento -->
 <div id="modal-nuevo-descuento" class="modal hidden">
     <div class="modal-content" style="max-width:420px;">
@@ -2262,6 +2403,13 @@
             <div class="input-group">
                 <label id="ndesc-valor-label">Valor (%)</label>
                 <input type="number" id="ndesc-valor" placeholder="Ej: 10" min="0" step="0.01">
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; padding:10px; background:#f8fafc; border-radius:8px; border:1px solid #e5e7eb;">
+                <input type="checkbox" id="ndesc-requires-pin" style="width:16px;height:16px;cursor:pointer;">
+                <div>
+                    <label for="ndesc-requires-pin" style="cursor:pointer;font-weight:500;font-size:0.9em;">Requiere autorización con PIN</label>
+                    <p style="color:#9ca3af;font-size:0.78em;margin:0;">Al aplicar este descuento, se pedirá el PIN de un empleado autorizado</p>
+                </div>
             </div>
         </div>
         <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end; margin-top:15px;">

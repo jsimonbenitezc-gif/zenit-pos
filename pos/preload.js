@@ -168,4 +168,10 @@ contextBridge.exposeInMainWorld('api', {
     kdsNuevoPedido:          (orden)              => ipcRenderer.invoke('kds-nuevo-pedido', orden),
     kdsGetUrl:               ()                   => ipcRenderer.invoke('kds-get-url'),
     onKdsEstadoCambio:       (cb)                 => ipcRenderer.on('kds-estado-cambio', (_, data) => cb(data)),
+    // KDS — Dispositivos de confianza
+    onKdsDispositivoNuevo:   (cb)                 => ipcRenderer.on('kds-dispositivo-nuevo', (_, data) => cb(data)),
+    kdsAprobarDispositivo:   (data)               => ipcRenderer.invoke('kds-aprobar-dispositivo', data),
+    kdsRechazarDispositivo:  (data)               => ipcRenderer.invoke('kds-rechazar-dispositivo', data),
+    kdsObtenerDispositivos:  ()                   => ipcRenderer.invoke('kds-obtener-dispositivos'),
+    kdsEliminarDispositivo:  (id)                 => ipcRenderer.invoke('kds-eliminar-dispositivo', id),
 });

@@ -1282,6 +1282,18 @@ select.estado-pedido:hover {
     padding: 12px 0;
     border-bottom: 1px solid #f3f4f6;
     font-size: 0.95em;
+    gap: 16px;
+}
+
+.setting-item > div,
+.setting-item > span:first-child {
+    flex: 1;
+    min-width: 0;
+}
+
+.setting-item > .switch,
+.setting-item > label.switch {
+    flex-shrink: 0;
 }
 
 .setting-item:last-child {

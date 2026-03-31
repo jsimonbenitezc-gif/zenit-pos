@@ -776,18 +776,65 @@ function broadcastKDS(data) {
     kdsClients.forEach(c => { try { c.write(msg); } catch(e) {} });
 }
 
+// Pendientes de aprobación: IP → { res, userAgent, timeout }
+const kdsPendingApprovals = new Map();
+
+function getClientIP(req) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) return forwarded.split(',')[0].trim();
+    return req.socket.remoteAddress?.replace('::ffff:', '') || '127.0.0.1';
+}
+
+// Verifica si un dispositivo está autorizado (promesa)
+function checkDeviceTrust(ip) {
+    return new Promise((resolve) => {
+        db.buscarDispositivoKDS(ip, (err, row) => {
+            if (err || !row) return resolve(null);
+            resolve(row);
+        });
+    });
+}
+
 const KDS_PORT = 3001;
-const kdsServer = http.createServer((req, res) => {
+const kdsServer = http.createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
 
+    const clientIP = getClientIP(req);
+    const isLocal = clientIP === '127.0.0.1' || clientIP === '::1' || clientIP === 'localhost';
+
     if (req.method === 'GET' && (req.url === '/' || req.url === '/kds')) {
+        // Servir kds.html: los dispositivos no confiables también ven la página
+        // (pero no podrán conectarse a /events)
         fs.readFile(path.join(__dirname, 'kds.html'), (err, data) => {
             if (err) { res.writeHead(500); res.end('Error'); return; }
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(data);
         });
     } else if (req.method === 'GET' && req.url === '/events') {
+        // Verificar confianza del dispositivo (localhost siempre permitido)
+        if (!isLocal) {
+            const device = await checkDeviceTrust(clientIP);
+            if (device && device.confianza === 0) {
+                // Dispositivo bloqueado
+                res.writeHead(403); res.end('Dispositivo bloqueado');
+                return;
+            }
+            if (!device) {
+                // Dispositivo nuevo: pedir aprobación al usuario desktop
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('kds-dispositivo-nuevo', {
+                        ip: clientIP,
+                        userAgent: req.headers['user-agent'] || 'Desconocido'
+                    });
+                }
+                // Mientras tanto, no conectar al SSE — responder con 403 pending
+                res.writeHead(403, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'pending_approval', message: 'Esperando aprobación del administrador' }));
+                return;
+            }
+            // Dispositivo confiable → continuar
+        }
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
@@ -839,3 +886,40 @@ ipcMain.handle('kds-get-url', () => ({
     ip:    getLocalIP(),
     port:  KDS_PORT
 }));
+
+// ── KDS: Gestión de dispositivos de confianza ──────────────────────────
+ipcMain.handle('kds-aprobar-dispositivo', (_, { ip, userAgent, nombre }) => {
+    return new Promise((resolve, reject) => {
+        db.agregarDispositivoKDS(ip, userAgent, nombre || ip, (err, id) => {
+            if (err) return reject(err);
+            resolve({ id, ip, nombre: nombre || ip });
+        });
+    });
+});
+
+ipcMain.handle('kds-rechazar-dispositivo', (_, { ip, userAgent }) => {
+    return new Promise((resolve, reject) => {
+        db.bloquearDispositivoKDS(ip, userAgent, (err) => {
+            if (err) return reject(err);
+            resolve(true);
+        });
+    });
+});
+
+ipcMain.handle('kds-obtener-dispositivos', () => {
+    return new Promise((resolve, reject) => {
+        db.obtenerDispositivosKDS((err, rows) => {
+            if (err) return reject(err);
+            resolve(rows || []);
+        });
+    });
+});
+
+ipcMain.handle('kds-eliminar-dispositivo', (_, id) => {
+    return new Promise((resolve, reject) => {
+        db.eliminarDispositivoKDS(id, (err) => {
+            if (err) return reject(err);
+            resolve(true);
+        });
+    });
+});

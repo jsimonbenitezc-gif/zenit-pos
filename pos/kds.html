@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cocina — Zenit KDS</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #111827;
+            color: #f9fafb;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            min-height: 100vh;
+        }
+        header {
+            background: #1f2937;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 2px solid #374151;
+            position: sticky; top: 0; z-index: 10;
+        }
+        .logo { font-size: 1.2em; font-weight: 700; }
+        .logo span { color: #818cf8; }
+        .status { display: flex; align-items: center; gap: 8px; font-size: 0.85em; color: #d1d5db; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; background: #10b981; flex-shrink: 0; }
+        .dot.offline { background: #ef4444; animation: parpadeo 1s infinite; }
+        @keyframes parpadeo { 0%,100%{opacity:1} 50%{opacity:0.3} }
+        .reloj { color: #9ca3af; font-size: 0.9em; font-variant-numeric: tabular-nums; }
+
+        #grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+            gap: 14px;
+            padding: 16px;
+        }
+
+        .card {
+            background: #1f2937;
+            border-radius: 12px;
+            border: 2px solid #374151;
+            overflow: hidden;
+            animation: entrar 0.25s ease;
+        }
+        .card.nueva      { border-color: #818cf8; }
+        .card.preparando { border-color: #f59e0b; background: #1c1a10; }
+        .card.urgente    { border-color: #ef4444; }
+        @keyframes entrar {
+            from { opacity: 0; transform: translateY(-8px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .card-header {
+            background: #374151;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .card-num { font-size: 1.4em; font-weight: 800; }
+        .badge {
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.78em;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        .badge-mesa     { background: #4f46e5; color: #fff; }
+        .badge-mostrador{ background: #059669; color: #fff; }
+        .badge-delivery { background: #d97706; color: #fff; }
+
+        .card-tiempo { font-size: 0.8em; color: #9ca3af; white-space: nowrap; }
+        .card-tiempo.tarde   { color: #f59e0b; font-weight: 600; }
+        .card-tiempo.urgente { color: #ef4444; font-weight: 700; }
+
+        .card-items { padding: 10px 14px; }
+        .item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 7px 0;
+            border-bottom: 1px solid #374151;
+        }
+        .item:last-child { border-bottom: none; }
+        .item-qty {
+            background: #4b5563;
+            color: #f9fafb;
+            font-weight: 700;
+            min-width: 30px;
+            height: 30px;
+            border-radius: 6px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 0.95em;
+            flex-shrink: 0;
+        }
+        .item-nombre { font-weight: 600; font-size: 1em; line-height: 1.3; }
+        .item-nota   { font-size: 0.8em; color: #fbbf24; margin-top: 3px; }
+
+        .card-nota-general {
+            margin: 0 14px 8px;
+            padding: 6px 10px;
+            background: #2d2009;
+            border-left: 3px solid #f59e0b;
+            border-radius: 0 6px 6px 0;
+            font-size: 0.82em;
+            color: #fcd34d;
+        }
+
+        .card-footer { padding: 10px 14px; display: flex; gap: 8px; }
+        .btn-prep, .btn-listo {
+            flex: 1;
+            padding: 11px 6px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95em;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.15s, transform 0.1s;
+            color: #fff;
+        }
+        .btn-prep  { background: #d97706; }
+        .btn-prep:hover  { background: #b45309; }
+        .btn-prep:active { transform: scale(0.97); }
+        .btn-prep.activo { background: #92400e; opacity: 0.6; cursor: default; }
+        .btn-listo { background: #10b981; }
+        .btn-listo:hover  { background: #059669; }
+        .btn-listo:active { transform: scale(0.97); }
+
+        /* Volumen en header */
+        .vol-control { display: flex; align-items: center; gap: 6px; font-size: 0.82em; color: #9ca3af; }
+        .vol-control input[type=range] {
+            width: 80px; accent-color: #818cf8; cursor: pointer;
+        }
+
+        .empty {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 80px 20px;
+            color: #374151;
+        }
+        .empty svg { width: 64px; height: 64px; margin-bottom: 16px; opacity: 0.4; }
+        .empty p { font-size: 1.2em; color: #4b5563; }
+    </style>
+</head>
+<body>
+<header>
+    <div class="logo">Zenit <span>Cocina</span></div>
+    <div class="status">
+        <div class="dot" id="dot"></div>
+        <span id="status-text">Conectando...</span>
+    </div>
+    <div class="vol-control">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+        <input type="range" id="vol-slider" min="0" max="100" value="60" oninput="guardarVolumen(this.value)">
+    </div>
+    <div class="reloj" id="reloj"></div>
+</header>
+<div id="grid"></div>
+
+<script>
+    let orders = [];
+    let es = null;
+    let volumen = parseFloat(localStorage.getItem('kds-vol') ?? '0.6');
+
+    // Inicializar slider con valor guardado
+    window.addEventListener('DOMContentLoaded', () => {
+        const slider = document.getElementById('vol-slider');
+        if (slider) slider.value = Math.round(volumen * 100);
+    });
+
+    function guardarVolumen(val) {
+        volumen = parseInt(val) / 100;
+        localStorage.setItem('kds-vol', String(volumen));
+    }
+
+    function conectar() {
+        if (es) es.close();
+        es = new EventSource('/events');
+        es.onopen = () => {
+            document.getElementById('dot').className = 'dot';
+            document.getElementById('status-text').textContent = 'Conectado';
+        };
+        es.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            if (data.type === 'init') {
+                orders = data.orders || [];
+                renderAll();
+            } else if (data.type === 'nuevo') {
+                orders.push(data.order);
+                renderAll();
+                beep();
+            } else if (data.type === 'status') {
+                const o = orders.find(x => String(x.kdsId) === String(data.kdsId));
+                if (o) {
+                    o.estado = data.status;
+                    const card = document.getElementById(`card-${data.kdsId}`);
+                    if (card) {
+                        card.className = `card preparando`;
+                        const btnPrep = card.querySelector('.btn-prep');
+                        if (btnPrep) { btnPrep.classList.add('activo'); btnPrep.disabled = true; }
+                    }
+                }
+            } else if (data.type === 'done') {
+                orders = orders.filter(o => String(o.kdsId) !== String(data.kdsId));
+                const card = document.getElementById(`card-${data.kdsId}`);
+                if (card) {
+                    card.style.transition = 'opacity 0.2s, transform 0.2s';
+                    card.style.opacity = '0';
+                    card.style.transform = 'scale(0.9)';
+                    setTimeout(() => { card.remove(); if (orders.length === 0) renderAll(); }, 200);
+                }
+            }
+        };
+        es.onerror = () => {
+            document.getElementById('dot').className = 'dot offline';
+            document.getElementById('status-text').textContent = 'Sin conexión — reconectando...';
+            es.close();
+            setTimeout(conectar, 4000);
+        };
+    }
+
+    function renderAll() {
+        const grid = document.getElementById('grid');
+        if (orders.length === 0) {
+            grid.innerHTML = `
+                <div class="empty">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <p>Todo al día — sin comandas pendientes</p>
+                </div>`;
+            return;
+        }
+        grid.innerHTML = orders.map(renderCard).join('');
+    }
+
+    function renderCard(o) {
+        const mins = Math.floor((Date.now() - o.hora) / 60000);
+        const tiempoText = mins < 1 ? 'Ahora mismo' : `${mins} min`;
+        const tiempoClass = mins >= 20 ? 'urgente' : mins >= 10 ? 'tarde' : '';
+
+        const preparando = o.estado === 'preparando';
+        const cardClass = preparando ? 'preparando' : (mins >= 20 ? 'urgente' : 'nueva');
+
+        const tipo = o.tipo || 'mostrador';
+        const badgeClass = tipo === 'mesa' ? 'badge-mesa' : tipo === 'delivery' ? 'badge-delivery' : 'badge-mostrador';
+        const badgeText = o.mesa || (tipo === 'delivery' ? 'Delivery' : 'Mostrador');
+
+        const itemsHtml = (o.items || []).map(i => `
+            <div class="item">
+                <div class="item-qty">${i.cantidad}</div>
+                <div>
+                    <div class="item-nombre">${esc(i.nombre)}</div>
+                    ${i.notas ? `<div class="item-nota">⚠ ${esc(i.notas)}</div>` : ''}
+                </div>
+            </div>`).join('');
+
+        const notaHtml = o.notas
+            ? `<div class="card-nota-general">Nota: ${esc(o.notas)}</div>`
+            : '';
+
+        return `
+            <div class="card ${cardClass}" id="card-${o.kdsId}">
+                <div class="card-header">
+                    <div class="card-num">#${o.kdsId}</div>
+                    <div class="badge ${badgeClass}">${esc(badgeText)}</div>
+                    <div class="card-tiempo ${tiempoClass}">${tiempoText}</div>
+                </div>
+                <div class="card-items">${itemsHtml}</div>
+                ${notaHtml}
+                <div class="card-footer">
+                    <button class="btn-prep${preparando ? ' activo' : ''}" onclick="marcarPreparando('${o.kdsId}')" ${preparando ? 'disabled' : ''}>
+                        En preparación
+                    </button>
+                    <button class="btn-listo" onclick="marcarListo('${o.kdsId}')">
+                        ✓ Completado
+                    </button>
+                </div>
+            </div>`;
+    }
+
+    function esc(s) {
+        if (!s) return '';
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function marcarPreparando(kdsId) {
+        fetch(`/status/${kdsId}`, { method: 'POST' }).catch(() => {});
+        const o = orders.find(x => String(x.kdsId) === String(kdsId));
+        if (o) o.estado = 'preparando';
+        const card = document.getElementById(`card-${kdsId}`);
+        if (card) {
+            card.className = 'card preparando';
+            const btn = card.querySelector('.btn-prep');
+            if (btn) { btn.classList.add('activo'); btn.disabled = true; }
+        }
+    }
+
+    function marcarListo(kdsId) {
+        fetch(`/done/${kdsId}`, { method: 'POST' }).catch(() => {});
+        orders = orders.filter(o => String(o.kdsId) !== String(kdsId));
+        const card = document.getElementById(`card-${kdsId}`);
+        if (card) {
+            card.style.transition = 'opacity 0.2s, transform 0.2s';
+            card.style.opacity = '0';
+            card.style.transform = 'scale(0.9)';
+            setTimeout(() => { card.remove(); if (orders.length === 0) renderAll(); }, 200);
+        }
+    }
+
+    function beep() {
+        if (volumen === 0) return;
+        try {
+            const ctx = new AudioContext();
+            [0, 0.15].forEach(t => {
+                const o = ctx.createOscillator();
+                const g = ctx.createGain();
+                o.connect(g); g.connect(ctx.destination);
+                o.frequency.value = 880;
+                g.gain.setValueAtTime(volumen * 0.4, ctx.currentTime + t);
+                g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.3);
+                o.start(ctx.currentTime + t);
+                o.stop(ctx.currentTime + t + 0.3);
+            });
+        } catch(e) {}
+    }
+
+    function actualizarReloj() {
+        const now = new Date();
+        document.getElementById('reloj').textContent =
+            now.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
+    }
+    actualizarReloj();
+    setInterval(actualizarReloj, 10000);
+
+    // Actualizar tiempos de espera cada minuto
+    setInterval(() => { if (orders.length > 0) renderAll(); }, 60000);
+
+    conectar();
+</script>
+</body>
+</html>
