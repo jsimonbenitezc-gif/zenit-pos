@@ -113,6 +113,25 @@ body { background: #eef1f5; height: 100vh; overflow: hidden; }
 /* Tarjetas de Producto */
 .product-card { background: #fff; border: 1px solid #e5e7eb; padding: 12px; border-radius: 12px; cursor: pointer; transition: all 0.2s; text-align: center; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
 .product-card:hover { transform: translateY(-5px); border-color: #2563eb; box-shadow: 0 8px 15px rgba(0,0,0,0.1); }
+.btn-delete-prod {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: #fff;
+    border: 1px solid #fecaca;
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #ef4444;
+    cursor: pointer;
+    z-index: 10;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+.product-card:hover .btn-delete-prod { display: flex; }
+.btn-delete-prod:hover { background: #fee2e2; transform: scale(1.1); }
 .product-card h4 { font-size: 0.9em; margin: 8px 0; color: #374151; height: 40px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .product-card .precio { color: #2563eb; font-weight: bold; font-size: 1.1em; }
 .product-visual { height: 50px; display: flex; align-items: center; justify-content: center; }
@@ -479,6 +498,73 @@ input[type="number"] {
 .emoji-btn:hover {
     background: #e5e7eb;
     transform: scale(1.2);
+}
+
+/* Dual icon/emoji picker tabs */
+.icon-picker-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+    border-bottom: 2px solid #e5e7eb;
+    padding-bottom: 4px;
+}
+
+.icon-picker-tab {
+    padding: 6px 16px;
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 6px 6px 0 0;
+    transition: 0.2s;
+}
+
+.icon-picker-tab:hover {
+    background: #f3f4f6;
+    color: #374151;
+}
+
+.icon-picker-tab.active {
+    background: #2563eb;
+    color: #fff;
+}
+
+.icon-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 5px;
+    padding: 8px;
+    background: #f9fafb;
+    border-radius: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.icon-picker-category {
+    grid-column: 1 / -1;
+    font-size: 0.75em;
+    font-weight: 700;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 6px 2px 2px;
+    border-bottom: 1px solid #e5e7eb;
+    margin-top: 4px;
+}
+
+.icon-svg-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1em;
+    border: 1px solid transparent;
+}
+
+.icon-svg-btn:hover {
+    border-color: #2563eb;
+    background: #eff6ff;
 }
 
 .label-input {
@@ -2251,6 +2337,25 @@ body.dark .receta-linea { background: #020617; border-color: #1e293b; }
     border-bottom: 1px solid #f3f4f6;
 }
 .puesto-funcion-item:last-child { border-bottom: none; }
+
+.permisos-collapsible { margin-bottom: 2px; }
+.permisos-collapsible-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    padding: 8px 4px;
+    border-radius: 6px;
+    transition: background 0.15s;
+    user-select: none;
+}
+.permisos-collapsible-header:hover { background: #f3f4f6; }
+.permisos-chevron {
+    color: var(--text-muted, #9ca3af);
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+.permisos-chevron-open { transform: rotate(180deg); }
 
 .puesto-pin-section {
     margin-top: 14px;

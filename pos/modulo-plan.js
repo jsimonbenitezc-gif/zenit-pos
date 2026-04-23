@@ -374,8 +374,8 @@ async function cargarProgramaFidelidad() {
         tbody.innerHTML = inscritos.map(c => `
             <tr>
                 <td><strong>${esc(c.nombre)}</strong></td>
-                <td style="color:#6b7280;">📱 ${esc(c.telefono)}</td>
-                <td style="color:#7c3aed;font-weight:600;">⭐ ${c.puntos || 0} pts</td>
+                <td style="color:#6b7280;">${svgIconHTML('smartphone', 14, '#6b7280')} ${esc(c.telefono)}</td>
+                <td style="color:#7c3aed;font-weight:600;">${svgIconHTML('star', 14, '#7c3aed')} ${c.puntos || 0} pts</td>
                 <td>
                     <button class="btn-secondary small" style="color:#ef4444;font-size:0.82em;"
                         onclick="toggleClienteFidelidad(${c.id}, '${esc(c.nombre)}', 1)">
@@ -437,7 +437,7 @@ async function toggleClienteFidelidad(id, nombre, enFidelidad) {
     await window.api.toggleFidelidad(id, nuevoValor).catch(() => {});
     syncLoyaltyBackend(id, { in_loyalty: nuevoValor === 1 });
     if (nuevoValor === 1) {
-        mostrarNotificacionExito(`${nombre} inscrito al programa de fidelidad`, '⭐ Fidelidad');
+        mostrarNotificacionExito(`${nombre} inscrito al programa de fidelidad`, 'Fidelidad');
     }
     // Limpiar búsqueda y recargar lista
     const inputBuscar = document.getElementById('buscar-inscribir-fidelidad');

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
+const { db } = require('../database/db');
 
 const MAX_BACKUPS = 50;
 
@@ -13,17 +14,27 @@ if (!fs.existsSync(backupDir)) {
 }
 
 function crearBackup() {
-    if (!fs.existsSync(dbPath)) return;
+    return new Promise((resolve, reject) => {
+        if (!fs.existsSync(dbPath)) return resolve(null);
 
-    const timestamp = new Date()
-        .toISOString()
-        .replace(/[:.]/g, '-');
+        const timestamp = new Date()
+            .toISOString()
+            .replace(/[:.]/g, '-');
 
-    const backupName = `backup-${timestamp}.db`;
-    const backupPath = path.join(backupDir, backupName);
+        const backupName = `backup-${timestamp}.db`;
+        const backupPath = path.join(backupDir, backupName);
 
-    fs.copyFileSync(dbPath, backupPath);
-    limpiarBackupsAntiguos();
+        // VACUUM INTO es la forma segura de respaldar SQLite mientras la
+        // base está abierta: copia transaccionalmente sin bloquear escrituras.
+        // La ruta debe ir como literal en el SQL (escapamos la comilla simple).
+        const rutaEscapada = backupPath.replace(/'/g, "''");
+
+        db.run(`VACUUM INTO '${rutaEscapada}'`, (err) => {
+            if (err) return reject(err);
+            try { limpiarBackupsAntiguos(); } catch (_) { /* ignorar */ }
+            resolve(backupPath);
+        });
+    });
 }
 
 function listarBackups() {

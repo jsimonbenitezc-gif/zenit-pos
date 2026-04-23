@@ -23,6 +23,26 @@ const db = new sqlite3.Database(dbPath, (err) => {
     }
 });
 
+// Wrappers basados en Promesas para poder encadenar operaciones
+// dentro de transacciones sin perder el orden de ejecución.
+function runAsync(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, function(err) {
+            if (err) return reject(err);
+            resolve(this);
+        });
+    });
+}
+
+function allAsync(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.all(sql, params, (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows);
+        });
+    });
+}
+
 // ============================================
 // TABLAS Y ESTRUCTURA
 // ============================================
@@ -393,33 +413,40 @@ function convertirUnidad(cantidad, unidadReceta, insumo) {
     return cantidad;
 }
 
-function descontarInsumosDeVenta(productoId, cantidadVendida) {
-    db.all("SELECT ri.*, i.unidad, i.contenido_cantidad, i.contenido_unidad FROM receta_items ri LEFT JOIN insumos i ON ri.tipo='insumo' AND ri.referencia_id=i.id WHERE ri.producto_id = ?", [productoId], (err, recetaItems) => {
-        if (err || !recetaItems || recetaItems.length === 0) return;
-        recetaItems.forEach(ri => {
-            if (ri.tipo === 'insumo') {
-                const cantConvertida = convertirUnidad(ri.cantidad, ri.unidad_receta, ri) * cantidadVendida;
-                db.run("UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
-                    [cantConvertida, ri.referencia_id]);
-            } else if (ri.tipo === 'preparacion') {
-                const cantPrep = ri.cantidad * cantidadVendida;
-                db.all("SELECT pi.*, i.unidad, i.contenido_cantidad, i.contenido_unidad FROM preparacion_items pi JOIN insumos i ON pi.insumo_id=i.id WHERE pi.preparacion_id = ?",
-                    [ri.referencia_id], (err, prepItems) => {
-                        if (err || !prepItems) return;
-                        prepItems.forEach(pi => {
-                            const cantConvertida = convertirUnidad(pi.cantidad, pi.unidad_receta, pi) * cantPrep;
-                            db.run("UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
-                                [cantConvertida, pi.insumo_id]);
-                        });
-                    });
+async function descontarInsumosDeVenta(productoId, cantidadVendida) {
+    const recetaItems = await allAsync(
+        "SELECT ri.*, i.unidad, i.contenido_cantidad, i.contenido_unidad FROM receta_items ri LEFT JOIN insumos i ON ri.tipo='insumo' AND ri.referencia_id=i.id WHERE ri.producto_id = ?",
+        [productoId]
+    );
+    if (!recetaItems || recetaItems.length === 0) return;
+    for (const ri of recetaItems) {
+        if (ri.tipo === 'insumo') {
+            const cantConvertida = convertirUnidad(ri.cantidad, ri.unidad_receta, ri) * cantidadVendida;
+            await runAsync(
+                "UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
+                [cantConvertida, ri.referencia_id]
+            );
+        } else if (ri.tipo === 'preparacion') {
+            const cantPrep = ri.cantidad * cantidadVendida;
+            const prepItems = await allAsync(
+                "SELECT pi.*, i.unidad, i.contenido_cantidad, i.contenido_unidad FROM preparacion_items pi JOIN insumos i ON pi.insumo_id=i.id WHERE pi.preparacion_id = ?",
+                [ri.referencia_id]
+            );
+            if (!prepItems) continue;
+            for (const pi of prepItems) {
+                const cantConvertida = convertirUnidad(pi.cantidad, pi.unidad_receta, pi) * cantPrep;
+                await runAsync(
+                    "UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
+                    [cantConvertida, pi.insumo_id]
+                );
             }
-        });
-    });
+        }
+    }
 }
 
 // --- VENTAS Y PEDIDOS ---
 
-function crearPedido(datos, items, callback, opciones) {
+async function crearPedido(datos, items, callback, opciones) {
     const sqlPedido = `
         INSERT INTO pedidos (
             cliente_id,
@@ -439,36 +466,48 @@ function crearPedido(datos, items, callback, opciones) {
         VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
     `;
 
-    db.run(sqlPedido, [
-        datos.cliente_id,
-        datos.total,
-        datos.metodo_pago,
-        datos.tipo_pedido,
-        datos.referencia,
-        datos.direccion_domicilio,
-        datos.link_maps,
-        datos.notas_generales,
-        datos.info_cliente_temp || null,
-        datos.cajero || null,
-        datos.pendiente_sync || 0
-    ], function(err) {
-        if (err) return callback(err);
-        
-        const pedidoId = this.lastID;
-        const stmt = db.prepare('INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item) VALUES (?, ?, ?, ?, ?, ?)');
-        
-        const skipStock = opciones && opciones.skipStock;
-        items.forEach(item => {
-            stmt.run(pedidoId, item.id, item.cantidad, item.precio, item.subtotal, item.nota || '');
+    const skipStock = opciones && opciones.skipStock;
+    let enTransaccion = false;
+
+    try {
+        await runAsync('BEGIN');
+        enTransaccion = true;
+
+        const resultadoPedido = await runAsync(sqlPedido, [
+            datos.cliente_id,
+            datos.total,
+            datos.metodo_pago,
+            datos.tipo_pedido,
+            datos.referencia,
+            datos.direccion_domicilio,
+            datos.link_maps,
+            datos.notas_generales,
+            datos.info_cliente_temp || null,
+            datos.cajero || null,
+            datos.pendiente_sync || 0
+        ]);
+        const pedidoId = resultadoPedido.lastID;
+
+        for (const item of items) {
+            await runAsync(
+                'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item) VALUES (?, ?, ?, ?, ?, ?)',
+                [pedidoId, item.id, item.cantidad, item.precio, item.subtotal, item.nota || '']
+            );
             if (!skipStock) {
                 // Descontar insumos según la receta del producto (si tiene receta)
-                descontarInsumosDeVenta(item.id, item.cantidad);
+                await descontarInsumosDeVenta(item.id, item.cantidad);
             }
-        });
-        
-        stmt.finalize();
+        }
+
+        await runAsync('COMMIT');
+        enTransaccion = false;
         callback(null, pedidoId);
-    });
+    } catch (err) {
+        if (enTransaccion) {
+            try { await runAsync('ROLLBACK'); } catch (_) { /* ignorar */ }
+        }
+        callback(err);
+    }
 }
 
 function obtenerPedidos(filtro, callback) {
@@ -1517,7 +1556,7 @@ function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb) {
         function(err) {
             if (err) return cb(err);
             // Descontar insumos según la receta del producto (igual que en Nueva Venta)
-            descontarInsumosDeVenta(producto_id, cantidad);
+            descontarInsumosDeVenta(producto_id, cantidad).catch(() => { /* ignorar: mantiene comportamiento fire-and-forget */ });
             db.run(
                 "UPDATE pedidos SET total=(SELECT COALESCE(SUM(subtotal),0) FROM pedido_items WHERE pedido_id=?) WHERE id=?",
                 [pedido_id, pedido_id], cb

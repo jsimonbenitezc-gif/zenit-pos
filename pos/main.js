@@ -53,7 +53,7 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1300,
         height: 850,
-        icon: path.join(__dirname, 'graficos', 'zenitMontaÃ±a.ico'),
+        icon: path.join(__dirname, 'graficos', 'zenitMontaña.ico'),
         webPreferences: {
             // Buscamos preload.js en la misma carpeta que main.js
             preload: path.join(__dirname, 'preload.js'),
@@ -61,7 +61,7 @@ function createWindow() {
             nodeIntegration: false
         }
     });
-    // FIX AQUÃ: Forzamos a que busque index.html en la carpeta del script
+    // FIX AQUÍ: Forzamos a que busque index.html en la carpeta del script
     mainWindow.loadFile(path.join(__dirname, 'index.html'));
     mainWindow.maximize(); // Abre la ventana maximizada por defecto
 
@@ -78,7 +78,7 @@ app.whenReady().then(() => {
     createWindow();
 
 // Backup automático al iniciar la app
-    crearBackup();
+    crearBackup().catch(err => console.error('Error en backup automático:', err));
     
     if (app.isPackaged) {
         setTimeout(() => {
@@ -121,7 +121,7 @@ ipcMain.handle('obtener-productos-agrupados', async () => {
 
 ipcMain.handle('obtener-pedidos', async (event, filtro) => {
     return new Promise((resolve, reject) => {
-        // Llamamos a la funciÃ³n de la base de datos que ya tienes configurada
+        // Llamamos a la función de la base de datos que ya tienes configurada
         db.obtenerPedidos(filtro, (err, rows) => {
             if (err) {
                 console.error("Error en DB al obtener pedidos:", err);
@@ -135,7 +135,7 @@ ipcMain.handle('obtener-pedidos', async (event, filtro) => {
 
 ipcMain.handle('obtener-detalle-pedido', async (event, pedidoId) => {
     return new Promise((resolve, reject) => {
-        // Esta funciÃ³n busca los productos asociados al ID del pedido
+        // Esta función busca los productos asociados al ID del pedido
         db.obtenerDetallesPedido(pedidoId, (err, rows) => {
             if (err) reject(err);
             else resolve(rows);
@@ -199,7 +199,7 @@ ipcMain.handle('eliminar-clasificacion', async (_, id) => {
     });
 });
 
-// âœ… VERSIÃ“N CORREGIDA - Solo una vez, con el parÃ¡metro metodoPago
+// ✅ VERSIÓN CORREGIDA - Solo una vez, con el parámetro metodoPago
 ipcMain.handle('crear-pedido', async (_, telefono, items, total, metodoPago) => {
     return new Promise((resolve, reject) => {
         db.obtenerOCrearCliente(telefono, (err, cliente) => {
@@ -228,7 +228,7 @@ ipcMain.handle('crear-pedido', async (_, telefono, items, total, metodoPago) => 
     });
 });
 
-// Nueva versiÃ³n que NO crea clientes automÃ¡ticamente
+// Nueva versión que NO crea clientes automáticamente
 ipcMain.handle('crear-pedido-directo', async (_, datosPedido, items, opciones) => {
     return new Promise((resolve, reject) => {
         db.crearPedido(datosPedido, items, (err, pedidoId) => {
@@ -256,7 +256,7 @@ ipcMain.handle('seleccionar-imagen', async () => {
     const extension = path.extname(rutaOriginal);
     const nombreUnico = `img_${Date.now()}${extension}`;
     
-    // Crear carpeta de imÃ¡genes si no existe
+    // Crear carpeta de imágenes si no existe
     const userDataPath = app.getPath('userData');
     const carpetaImagenes = path.join(userDataPath, 'imagenes');
     
@@ -461,7 +461,7 @@ ipcMain.handle('guardar-items-combo', async (_, id, items) => {
 
 ipcMain.handle('crear-backup-manual', async () => {
     try {
-        crearBackup();
+        await crearBackup();
         const backups = listarBackups();
         return { ok: true, total: backups.length, ultimo: backups[0] || null };
     } catch(e) {
@@ -692,7 +692,20 @@ ipcMain.handle('obtener-token-seguro', () => {
 
 ipcMain.handle('abrir-en-navegador', async (event, url) => {
     const { shell } = require('electron');
-    await shell.openExternal(url);
+    // Validar que la URL sea http o https para evitar esquemas peligrosos (file:, javascript:, etc.)
+    if (typeof url !== 'string') {
+        throw new Error('URL inválida');
+    }
+    let parsed;
+    try {
+        parsed = new URL(url);
+    } catch (e) {
+        throw new Error('URL inválida');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('Protocolo no permitido');
+    }
+    await shell.openExternal(parsed.toString());
     return true;
 });
 
@@ -702,11 +715,54 @@ ipcMain.handle('abrir-en-navegador', async (event, url) => {
 
 let rolActivoEnMain = 'dueno'; // Cache del rol actual
 
-ipcMain.handle('establecer-rol-activo', (event, rol) => {
+// Lee y decodifica el payload del JWT almacenado (sin verificar firma — sólo para leer claims locales).
+// Se usa para validar que el rol solicitado desde el renderer corresponda a la sesión real del servidor.
+async function obtenerRolDelTokenAlmacenado() {
+    return new Promise((resolve) => {
+        const leerToken = (cb) => {
+            db.db.get("SELECT valor FROM ajustes WHERE clave = 'api_token_enc'", [], (err, row) => {
+                if (!err && row && row.valor && safeStorage.isEncryptionAvailable()) {
+                    try {
+                        const buffer = Buffer.from(row.valor, 'base64');
+                        return cb(safeStorage.decryptString(buffer));
+                    } catch (e) { /* cae al fallback */ }
+                }
+                db.db.get("SELECT valor FROM ajustes WHERE clave = 'api_token'", [], (err2, row2) => {
+                    cb(row2?.valor || null);
+                });
+            });
+        };
+        leerToken((token) => {
+            if (!token || typeof token !== 'string') return resolve(null);
+            const partes = token.split('.');
+            if (partes.length !== 3) return resolve(null);
+            try {
+                const payloadB64 = partes[1].replace(/-/g, '+').replace(/_/g, '/');
+                const padded = payloadB64 + '='.repeat((4 - payloadB64.length % 4) % 4);
+                const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+                resolve(payload?.role || null);
+            } catch (e) {
+                resolve(null);
+            }
+        });
+    });
+}
+
+ipcMain.handle('establecer-rol-activo', async (event, rol) => {
     const rolesValidos = ['cajero', 'encargado', 'dueno'];
-    if (rolesValidos.includes(rol)) {
-        rolActivoEnMain = rol;
+    if (!rolesValidos.includes(rol)) {
+        return false;
     }
+    // El rol 'dueno' (admin) sólo se acepta si el JWT almacenado corresponde a un owner.
+    // Si no hay token (modo offline inicial), se permite por compatibilidad.
+    // Para los demás roles (cajero/encargado) la validación se hace con PIN en el flujo de perfiles.
+    if (rol === 'dueno') {
+        const rolToken = await obtenerRolDelTokenAlmacenado();
+        if (rolToken !== null && rolToken !== 'owner') {
+            throw new Error('Permiso denegado: la sesión actual no corresponde al dueño del negocio.');
+        }
+    }
+    rolActivoEnMain = rol;
     return true;
 });
 
@@ -796,12 +852,54 @@ function checkDeviceTrust(ip) {
 }
 
 const KDS_PORT = 3001;
-const kdsServer = http.createServer(async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
 
+// Verifica si una dirección IP pertenece a redes locales/privadas (loopback, RFC1918, link-local).
+function esIPPrivada(ip) {
+    if (!ip) return false;
+    if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true;
+    if (ip.startsWith('10.')) return true;
+    if (ip.startsWith('192.168.')) return true;
+    if (ip.startsWith('169.254.')) return true;
+    const m172 = ip.match(/^172\.(\d+)\./);
+    if (m172) {
+        const seg = parseInt(m172[1], 10);
+        if (seg >= 16 && seg <= 31) return true;
+    }
+    // IPv6 privada (fc00::/7) o link-local (fe80::/10)
+    if (/^(fc|fd)[0-9a-f]{2}:/i.test(ip)) return true;
+    if (/^fe80:/i.test(ip)) return true;
+    return false;
+}
+
+// Devuelve el origen permitido para CORS a partir del header Origin,
+// sólo si corresponde a una IP/hostname de la red local.
+function origenPermitidoKDS(originHeader) {
+    if (!originHeader) return null;
+    try {
+        const u = new URL(originHeader);
+        const host = u.hostname;
+        if (host === 'localhost' || esIPPrivada(host)) return originHeader;
+    } catch (e) { /* origen inválido */ }
+    return null;
+}
+
+const kdsServer = http.createServer(async (req, res) => {
     const clientIP = getClientIP(req);
     const isLocal = clientIP === '127.0.0.1' || clientIP === '::1' || clientIP === 'localhost';
+
+    // CORS restringido: sólo se refleja el Origin si proviene de la red local/privada.
+    const origenPermitido = origenPermitidoKDS(req.headers.origin);
+    if (origenPermitido) {
+        res.setHeader('Access-Control-Allow-Origin', origenPermitido);
+        res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+
+    // Rechazar conexiones desde IPs públicas (defensa en profundidad aunque escuche en 0.0.0.0).
+    if (!isLocal && !esIPPrivada(clientIP)) {
+        res.writeHead(403); res.end('Origen no permitido');
+        return;
+    }
 
     if (req.method === 'GET' && (req.url === '/' || req.url === '/kds')) {
         // Servir kds.html: los dispositivos no confiables también ven la página

@@ -175,6 +175,10 @@ async function iniciarSesionZenitAjustes() {
 async function cerrarSesionZenit() {
     if (!confirm('¿Cerrar sesión? Los datos se sincronizarán con tu cuenta antes de salir.')) return;
 
+    // Detener SSE y polling para evitar fugas y requests huérfanos durante el cierre de sesión
+    try { detenerSyncInventario(); } catch {}
+    try { detenerKDSPolling(); } catch {}
+
     // 1. Subir pedidos pendientes ANTES de limpiar local
     try {
         const pendientes = await window.api.obtenerPedidosPendientes();
@@ -365,7 +369,7 @@ async function recargarListaSucursales() {
             const esEsteDispositivo = sucursalIdActual === b.id;
             const tr = document.createElement('tr');
             const badge = esEsteDispositivo
-                ? ' <span style="background:#ede9fe;color:#7c3aed;font-size:0.75em;padding:2px 6px;border-radius:10px;font-weight:600;">📍 Este dispositivo</span>'
+                ? ` <span style="background:#ede9fe;color:#7c3aed;font-size:0.75em;padding:2px 6px;border-radius:10px;font-weight:600;">${svgIconHTML('map-pin', 12)} Este dispositivo</span>`
                 : '';
             const btnEliminar = esEsteDispositivo ? '' : `<button class="btn-danger small" onclick="desactivarSucursal(${b.id}, '${(b.name||'').replace(/'/g,"\\'")}')">Eliminar</button>`;
             const svgLapiz = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:middle;"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>';
@@ -1245,7 +1249,7 @@ async function imprimirTicket(pedidoId) {
                     ${(ajustes.puntos_activos === 'true' && nombreClienteTicket) ? `
                     <div class="separator"></div>
                     <div style="text-align:center;font-size:11px;margin:6px 0;">
-                        <div>⭐ Puntos ganados: <b>+${Math.floor(pedido.total * parseFloat(ajustes.puntos_por_peso || '0')) + parseInt(ajustes.puntos_bono_pedido || '0')}</b></div>
+                        <div>${svgIconHTML('star', 14, '#f59e0b')} Puntos ganados: <b>+${Math.floor(pedido.total * parseFloat(ajustes.puntos_por_peso || '0')) + parseInt(ajustes.puntos_bono_pedido || '0')}</b></div>
                     </div>` : ''}
 
                     <div class="footer">
@@ -1289,7 +1293,7 @@ async function seleccionarLogoNegocio() {
 
             // Guardar en ajustes
             await window.api.guardarAjuste('logo_path', ruta);
-            alert('✅ Logo actualizado correctamente');
+            alert('Logo actualizado correctamente');
         }
     } catch (error) {
         console.error('Error al seleccionar logo:', error);
@@ -1306,20 +1310,34 @@ async function verificarActualizacionManual() {
     const textOriginal = btn.innerText;
 
     try {
-        btn.innerText = '⏳ Verificando...';
+        btn.innerText = 'Verificando...';
         btn.disabled = true;
 
         const result = await window.api.checkForUpdates();
 
-        if (result && result.updateInfo) {
-            alert(`✅ Actualización disponible: v${result.updateInfo.version}\n\nLa descarga comenzará automáticamente.`);
+        // En desarrollo, checkForUpdates devuelve { available: false }
+        if (result && result.available === false) {
+            alert('Las actualizaciones automáticas no están disponibles en modo desarrollo.');
+            return;
+        }
+
+        const versionActual = await window.api.getAppVersion();
+        const versionDisponible = result && result.updateInfo && result.updateInfo.version;
+
+        if (versionDisponible && versionDisponible !== versionActual) {
+            const descargar = confirm(`Nueva versión disponible: v${versionDisponible}\nTienes instalada: v${versionActual}\n\n¿Descargar ahora? La app se reiniciará al terminar.`);
+            if (descargar) {
+                btn.innerText = 'Descargando...';
+                await window.api.downloadUpdate();
+                // El evento update-downloaded en render.js mostrará el modal de instalación
+            }
         } else {
-            alert('✅ Ya estás usando la versión más reciente');
+            alert(`Ya tienes la versión más reciente (v${versionActual})`);
         }
 
     } catch (error) {
         console.error('Error al verificar actualizaciones:', error);
-        alert('❌ No se pudo verificar actualizaciones. Verifica tu conexión a internet.');
+        alert('No se pudo verificar actualizaciones. Verifica tu conexión a internet.');
     } finally {
         btn.innerText = textOriginal;
         btn.disabled = false;

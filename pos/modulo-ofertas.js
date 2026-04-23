@@ -193,7 +193,7 @@ function agregarLineaCombo(itemExistente = null) {
     const div = document.createElement('div');
     div.className = 'receta-linea';
     const opciones = productosGlobales.map(p =>
-        `<option value="${p.id}" data-precio="${p.precio}" ${itemExistente && itemExistente.producto_id === p.id ? 'selected' : ''}>${p.emoji || '📦'} ${p.nombre} — $${p.precio.toFixed(2)}</option>`
+        `<option value="${p.id}" data-precio="${p.precio}" ${itemExistente && itemExistente.producto_id === p.id ? 'selected' : ''}>${p.nombre} — $${p.precio.toFixed(2)}</option>`
     ).join('');
     div.innerHTML = `
         <select style="flex:3;" onchange="calcularPrecioReferenciaCombo()">

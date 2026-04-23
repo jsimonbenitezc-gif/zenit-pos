@@ -105,9 +105,9 @@ async function cargarAuditLog() {
 
         const TIPOS = {
             cancel_order:         { icon: '🔴', label: 'Pedido cancelado' },
-            edit_customer:        { icon: '✏️', label: 'Cliente editado' },
-            inventory_adjustment: { icon: '📦', label: 'Ajuste de inventario' },
-            apply_discount:       { icon: '🏷️', label: 'Descuento aplicado' }
+            edit_customer:        { icon: svgIconHTML('document-text', 16), label: 'Cliente editado' },
+            inventory_adjustment: { icon: svgIconHTML('package', 16), label: 'Ajuste de inventario' },
+            apply_discount:       { icon: svgIconHTML('tag', 16), label: 'Descuento aplicado' }
         };
 
         // Guardar logs en cache para modal de reporte
@@ -149,9 +149,9 @@ function abrirReporteAudit(idx) {
 
     const TIPOS = {
         cancel_order:         { icon: '🔴', label: 'Pedido cancelado' },
-        edit_customer:        { icon: '✏️', label: 'Cliente editado' },
-        inventory_adjustment: { icon: '📦', label: 'Ajuste de inventario' },
-        apply_discount:       { icon: '🏷️', label: 'Descuento aplicado' }
+        edit_customer:        { icon: svgIconHTML('document-text', 16), label: 'Cliente editado' },
+        inventory_adjustment: { icon: svgIconHTML('package', 16), label: 'Ajuste de inventario' },
+        apply_discount:       { icon: svgIconHTML('tag', 16), label: 'Descuento aplicado' }
     };
     const tipo    = TIPOS[log.action_type] || { icon: '🔒', label: log.action_type };
     const sucursal = log.branch?.name || 'Sucursal principal';
@@ -198,7 +198,7 @@ function abrirReporteAudit(idx) {
                 </div>
                 <div style="background:#f9fafb;border-radius:8px;padding:12px;">
                     <div style="font-size:0.75em;color:#9ca3af;margin-bottom:6px;font-weight:600;">SUCURSAL</div>
-                    <div style="font-weight:600;">📍 ${esc(sucursal)}</div>
+                    <div style="font-weight:600;">${svgIconHTML('map-pin', 14)} ${esc(sucursal)}</div>
                 </div>
             </div>
 

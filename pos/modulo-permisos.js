@@ -185,8 +185,15 @@ async function cargarPermisosAjustes(preloadedSettings = null) {
                            onblur="guardarNombrePuesto('${r.key}', this.value)">
                     <p style="font-size:12px;color:var(--text-muted);margin:4px 0 0;">Se usa para identificar el turno y la pantalla de selección de perfil.</p>
                 </div>
-                <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Secciones visibles para este puesto:</p>
-                ${funcs}
+                <div class="permisos-collapsible">
+                    <div class="permisos-collapsible-header" onclick="togglePermisosCollapsible(this)">
+                        <span style="font-size:12px;color:var(--text-muted);">Secciones visibles para este puesto</span>
+                        <svg class="permisos-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    </div>
+                    <div class="permisos-collapsible-body" style="display:none;">
+                        ${funcs}
+                    </div>
+                </div>
                 <div class="puesto-pin-section">
                     <strong style="font-size:13px;">PIN de acceso</strong>
                     <p style="font-size:12px;color:var(--text-muted);margin:3px 0 10px;display:flex;align-items:center;gap:5px;">
@@ -268,6 +275,14 @@ function togglePuestoEnabled(rol, activo) {
     actualizarVisibilidadBtnCambiarPerfil();
 }
 
+function togglePermisosCollapsible(header) {
+    const body = header.nextElementSibling;
+    const chevron = header.querySelector('.permisos-chevron');
+    const abierto = body.style.display !== 'none';
+    body.style.display = abierto ? 'none' : '';
+    chevron.classList.toggle('permisos-chevron-open', !abierto);
+}
+
 async function guardarPermisosRol() {
     // Usar cache en memoria (cargado desde nube/local en cargarPermisosAjustes)
     // para no perder datos de otra plataforma por leer SQLite obsoleto
@@ -311,7 +326,7 @@ async function guardarPermisosRol() {
         }
         if (turnoActivo) aplicarPermisos();
     } catch(e) {
-        mostrarNotificacionExito('Error guardando configuración', '⚠️ Error');
+        mostrarNotificacionExito('Error guardando configuración', 'Error');
     }
 }
 
@@ -320,11 +335,11 @@ async function guardarPinPerfil(rol) {
     const pin = input?.value?.trim();
 
     if (!pin || pin.length < 4) {
-        mostrarNotificacionExito('El PIN debe tener al menos 4 dígitos', '⚠️ Error');
+        mostrarNotificacionExito('El PIN debe tener al menos 4 dígitos', 'Error');
         return;
     }
     if (!/^\d+$/.test(pin)) {
-        mostrarNotificacionExito('El PIN solo puede contener números', '⚠️ Error');
+        mostrarNotificacionExito('El PIN solo puede contener números', 'Error');
         return;
     }
 
@@ -374,7 +389,7 @@ async function guardarPinPerfil(rol) {
         mostrarNotificacionExito(`PIN de ${rol} configurado`, '¡Listo!');
         cargarPermisosAjustes();
     } catch(e) {
-        mostrarNotificacionExito('Error guardando PIN', '⚠️ Error');
+        mostrarNotificacionExito('Error guardando PIN', 'Error');
     }
 }
 
@@ -410,7 +425,7 @@ async function quitarPinPerfil(rol) {
         mostrarNotificacionExito(`PIN de ${rol} eliminado`, '¡Listo!');
         cargarPermisosAjustes();
     } catch(e) {
-        mostrarNotificacionExito('Error guardando cambios', '⚠️ Error');
+        mostrarNotificacionExito('Error guardando cambios', 'Error');
     }
 }
 
@@ -444,7 +459,7 @@ async function guardarNombrePuesto(rol, nombre) {
             apiClient.saveSettings({ permisos_roles: toSave }).catch(() => {});
         }
     } catch(e) {
-        mostrarNotificacionExito('Error guardando nombre', '⚠️ Error');
+        mostrarNotificacionExito('Error guardando nombre', 'Error');
     }
 }
 
@@ -495,7 +510,7 @@ function seleccionarIconoPuesto(key) {
 async function crearNuevoPuesto() {
     const nombre = document.getElementById('nuevo-puesto-nombre').value.trim();
     if (!nombre) {
-        mostrarNotificacionExito('Escribe un nombre para el puesto', '⚠️ Error');
+        mostrarNotificacionExito('Escribe un nombre para el puesto', 'Error');
         return;
     }
     const key = 'custom_' + Date.now();
@@ -531,7 +546,7 @@ async function crearNuevoPuesto() {
         mostrarNotificacionExito(`Puesto "${nombre}" creado`, '¡Listo!');
         cargarPermisosAjustes();
     } catch(e) {
-        mostrarNotificacionExito('Error al crear el puesto', '⚠️ Error');
+        mostrarNotificacionExito('Error al crear el puesto', 'Error');
     }
 }
 
@@ -554,6 +569,6 @@ async function eliminarPuestoCustom(key, label) {
         mostrarNotificacionExito(`Puesto "${label}" eliminado`, '');
         cargarPermisosAjustes();
     } catch(e) {
-        mostrarNotificacionExito('Error al eliminar el puesto', '⚠️ Error');
+        mostrarNotificacionExito('Error al eliminar el puesto', 'Error');
     }
 }

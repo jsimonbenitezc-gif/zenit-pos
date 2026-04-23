@@ -1,6 +1,6 @@
 {
   "name": "zenit-pos",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Sistema de registros y punto de venta digital.",
   "main": "pos/main.js",
   "author": "Zenit Software",
@@ -40,7 +40,8 @@
       "provider": "github",
       "owner": "jsimonbenitezc-gif",
       "repo": "zenit-pos",
-      "private": false
+      "private": false,
+      "releaseType": "release"
     }
   },
   "dependencies": {

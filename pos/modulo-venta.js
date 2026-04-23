@@ -73,9 +73,9 @@ async function buscarClientesVenta(e, tipo) {
                 data-direccion="${esc(c.direccion || '')}"
                 data-puntos="${c.puntos || 0}"
                 data-fidelidad="${c.en_fidelidad || 0}">
-                <div class="sugerencia-nombre">${esc(c.nombre)}${c.en_fidelidad ? ' ⭐' : ''}</div>
-                <div class="sugerencia-tel">📱 ${esc(c.telefono)}</div>
-                ${c.direccion ? `<div class="sugerencia-direccion">📍 ${esc(c.direccion)}</div>` : ''}
+                <div class="sugerencia-nombre">${esc(c.nombre)}${c.en_fidelidad ? ' ' + svgIconHTML('star', 14, '#f59e0b') : ''}</div>
+                <div class="sugerencia-tel" style="display:flex;align-items:center;gap:4px;">${svgIconHTML('smartphone', 13, '#6b7280')} ${esc(c.telefono)}</div>
+                ${c.direccion ? `<div class="sugerencia-direccion" style="display:flex;align-items:center;gap:4px;">${svgIconHTML('map-pin', 13, '#6b7280')} ${esc(c.direccion)}</div>` : ''}
             </div>
         `).join('');
         // Registrar click usando data attributes (evita inyección en onclick)
@@ -208,7 +208,7 @@ function _refrescarStockBadges() {
                     el.innerHTML = '<span style="color:#ef4444; font-weight:600;">Sin stock</span>';
                     card?.style.setProperty('opacity', '0.5');
                 } else if (stock <= 3) {
-                    el.innerHTML = `<span style="color:#f59e0b; font-weight:600;">⚠ ${stock} disponibles</span>`;
+                    el.innerHTML = `<span style="color:#f59e0b; font-weight:600;">${svgIconHTML('triangle-alert', 14, '#f59e0b')} ${stock} disponibles</span>`;
                     card?.style.removeProperty('opacity');
                 } else {
                     el.innerHTML = `<span style="color:#10b981;">${stock} disponibles</span>`;
@@ -229,7 +229,7 @@ function _refrescarStockBadges() {
                 el.innerHTML = '<span style="color:#ef4444;font-weight:600;">Sin stock</span>';
                 card?.style.setProperty('opacity', '0.5');
             } else if (stock <= 3) {
-                el.innerHTML = `<span style="color:#f59e0b;font-weight:600;">⚠ ${stock} disponibles</span>`;
+                el.innerHTML = `<span style="color:#f59e0b;font-weight:600;">${svgIconHTML('triangle-alert', 14, '#f59e0b')} ${stock} disponibles</span>`;
                 card?.style.removeProperty('opacity');
             } else {
                 el.innerHTML = `<span style="color:#10b981;">${stock} disponibles</span>`;
@@ -250,8 +250,8 @@ function renderizarGridVenta(listaProductos) {
     grid.innerHTML = listaProductos.map(p => {
         const imgUrl = urlImagenSegura(p.imagen);
         const visual = imgUrl
-            ? `<img src="${imgUrl}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${esc(p.emoji || '📦')}</span>`
-            : `<span class="product-emoji">${esc(p.emoji || '📦')}</span>`;
+            ? `<img src="${imgUrl}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${renderIcono(p.emoji || 'svg:package', 35)}</span>`
+            : `<span class="product-emoji">${renderIcono(p.emoji || 'svg:package', 35)}</span>`;
         return `
         <div class="product-card" onclick="agregarAlCarrito(${p.id})" id="pcard-${p.id}">
             <div class="product-visual">${visual}</div>
@@ -272,7 +272,7 @@ function renderizarGridVenta(listaProductos) {
                     el.innerHTML = '<span style="color:#ef4444; font-weight:600;">Sin stock</span>';
                     document.getElementById(`pcard-${p.id}`)?.style.setProperty('opacity', '0.5');
                 } else if (stock <= 3) {
-                    el.innerHTML = `<span style="color:#f59e0b; font-weight:600;">⚠ ${stock} disponibles</span>`;
+                    el.innerHTML = `<span style="color:#f59e0b; font-weight:600;">${svgIconHTML('triangle-alert', 14, '#f59e0b')} ${stock} disponibles</span>`;
                 } else {
                     el.innerHTML = `<span style="color:#10b981;">${stock} disponibles</span>`;
                 }
@@ -575,7 +575,7 @@ async function ejecutarVenta() {
                 if (puntosGanados > 0) {
                     await window.api.actualizarPuntosCliente(clienteSeleccionadoVenta.id, puntosGanados).catch(() => {});
                     syncLoyaltyBackend(clienteSeleccionadoVenta.id, { points_delta: puntosGanados });
-                    mostrarNotificacionExito(`+${puntosGanados} puntos acumulados`, '⭐ Puntos');
+                    mostrarNotificacionExito(`+${puntosGanados} puntos acumulados`, 'Puntos');
                 }
             }
         }

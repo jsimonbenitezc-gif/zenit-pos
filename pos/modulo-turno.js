@@ -376,7 +376,7 @@ async function abrirTurno() {
     const fondo      = parseFloat(document.getElementById('turno-fondo')?.value) || 0;
 
     if (!nombre) {
-        mostrarNotificacionExito('Ingresa el nombre del cajero', '⚠️ Error');
+        mostrarNotificacionExito('Ingresa el nombre del cajero', 'Error');
         return;
     }
 
@@ -397,16 +397,17 @@ async function abrirTurno() {
         // Switch completo de sesión
         rolActivo = rolDeseado;
         await window.api.establecerRolActivo(rolDeseado);
-        const labels = { cajero: '🧑‍💼 Cajero', encargado: '👔 Encargado', dueno: '🔑 Admin' };
+        const labels = { cajero: 'Cajero', encargado: 'Encargado', dueno: 'Admin' };
+        const labelIcons = { cajero: 'user', encargado: 'briefcase', dueno: 'key-round' };
         const textoBtn = document.getElementById('texto-perfil-activo');
-        if (textoBtn) textoBtn.textContent = labels[rolDeseado] || rolDeseado;
+        if (textoBtn) textoBtn.innerHTML = `${svgIconHTML(labelIcons[rolDeseado] || 'user', 14)} ${labels[rolDeseado] || rolDeseado}`;
 
         aplicarPermisos();
         actualizarIndicadorTurnoSidebar();
         cargarVistaTurno();
         mostrarNotificacionExito(`Turno abierto — ${nombre}`, '¡Turno Abierto!');
     } catch(e) {
-        mostrarNotificacionExito('Error al abrir turno', '⚠️ Error');
+        mostrarNotificacionExito('Error al abrir turno', 'Error');
         console.error(e);
     }
 }
@@ -446,7 +447,7 @@ async function abrirModalCierre() {
 
         document.getElementById('modal-cierre-turno').classList.remove('hidden');
     } catch(e) {
-        mostrarNotificacionExito('Error al cargar datos de cierre', '⚠️ Error');
+        mostrarNotificacionExito('Error al cargar datos de cierre', 'Error');
     }
 }
 
@@ -463,7 +464,7 @@ async function confirmarCierreTurno() {
     if (!turnoActivo) return;
     const contado = parseFloat(document.getElementById('cierre-efectivo-contado')?.value);
     if (isNaN(contado) || contado < 0) {
-        mostrarNotificacionExito('Ingresa el efectivo contado', '⚠️ Error');
+        mostrarNotificacionExito('Ingresa el efectivo contado', 'Error');
         return;
     }
     const notas = document.getElementById('cierre-notas')?.value || '';
@@ -477,7 +478,7 @@ async function confirmarCierreTurno() {
         cargarVistaTurno();
         mostrarNotificacionExito('Turno cerrado correctamente', '¡Turno Cerrado!');
     } catch(e) {
-        mostrarNotificacionExito('Error al cerrar turno', '⚠️ Error');
+        mostrarNotificacionExito('Error al cerrar turno', 'Error');
         console.error(e);
     }
 }
@@ -502,7 +503,7 @@ async function abrirTurnoDesdeVenta() {
     const fondo  = parseFloat(document.getElementById('tv-fondo')?.value) || 0;
 
     if (!nombre) {
-        mostrarNotificacionExito('Ingresa tu nombre para abrir el turno', '⚠️ Error');
+        mostrarNotificacionExito('Ingresa tu nombre para abrir el turno', 'Error');
         return;
     }
 
@@ -514,7 +515,7 @@ async function abrirTurnoDesdeVenta() {
         document.getElementById('modal-turno-venta').classList.add('hidden');
         mostrarNotificacionExito(`Turno abierto — ${nombre}`, '¡Turno Abierto!');
     } catch(e) {
-        mostrarNotificacionExito('Error al abrir turno', '⚠️ Error');
+        mostrarNotificacionExito('Error al abrir turno', 'Error');
         console.error(e);
     }
 }

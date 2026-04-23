@@ -26,13 +26,13 @@ async function cargarDashboard() {
             const cambio = ((ventasHoy - ventasAyer) / ventasAyer * 100).toFixed(1);
             const badge = document.getElementById('dash-ventas-comp');
             if (cambio > 0) {
-                badge.innerText = `↗️ +${cambio}%`;
+                badge.innerHTML = `${svgIconHTML('trending-up', 14, '#10b981')} +${cambio}%`;
                 badge.className = 'kpi-badge positive';
             } else if (cambio < 0) {
-                badge.innerText = `↘️ ${cambio}%`;
+                badge.innerHTML = `${svgIconHTML('trending-down', 14, '#ef4444')} ${cambio}%`;
                 badge.className = 'kpi-badge negative';
             } else {
-                badge.innerText = '→ 0%';
+                badge.innerHTML = `${svgIconHTML('minus', 14)} 0%`;
                 badge.className = 'kpi-badge';
             }
         } else {
@@ -50,10 +50,10 @@ async function cargarDashboard() {
         const stockBajo = stats.productosStockBajo || 0;
         const stockAlerta = document.getElementById('dash-stock-alerta');
         if (stockBajo > 0) {
-            stockAlerta.innerText = `⚠️ ${stockBajo} con stock bajo`;
+            stockAlerta.innerHTML = `${svgIconHTML('triangle-alert', 16, '#ef4444')} ${stockBajo} con stock bajo`;
             stockAlerta.style.color = '#ef4444';
         } else {
-            stockAlerta.innerText = '✅ Stock normal';
+            stockAlerta.innerHTML = `${svgIconHTML('circle-check', 16, '#10b981')} Stock normal`;
             stockAlerta.style.color = '#10b981';
         }
 
@@ -74,13 +74,12 @@ async function cargarDashboard() {
         if (!stats.topProductos || stats.topProductos.length === 0) {
             topContainer.innerHTML = '<p style="text-align: center; color: #9ca3af; padding: 40px;">Sin datos aún</p>';
         } else {
-            const medallas = ['🥇', '🥈', '🥉'];
             const clases = ['gold', 'silver', 'bronze'];
 
             topContainer.innerHTML = stats.topProductos.map((prod, index) => `
                 <div class="top-producto-item">
                     <div class="top-producto-rank ${clases[index] || ''}">${index + 1}</div>
-                    <div class="top-producto-emoji">${esc(prod.emoji || '📦')}</div>
+                    <div class="top-producto-emoji">${renderIcono(prod.emoji || 'svg:package', 28)}</div>
                     <div class="top-producto-info">
                         <div class="top-producto-nombre">${esc(prod.nombre)}</div>
                         <div class="top-producto-cantidad">Últimos 7 días</div>
@@ -118,7 +117,7 @@ async function cargarDashboard() {
         } else {
             vipContainer.innerHTML = stats.clientesVIPHoy.map(cliente => `
                 <div class="vip-item">
-                    <div class="vip-item-icon">⭐</div>
+                    <div class="vip-item-icon">${svgIconHTML('star', 18, '#f59e0b')}</div>
                     <div class="vip-item-info">
                         <div class="vip-item-nombre">${esc(cliente.nombre)}</div>
                         <div class="vip-item-tel">${esc(cliente.telefono)}</div>
@@ -321,20 +320,76 @@ function renderizarGrafica24Horas(datos) {
 }
 
 // --- MODALES ADMIN ---
-function cargarSelectorEmojis(tipo) {
+function cargarSelectorIconos(tipo) {
     const cont = document.getElementById(`${tipo}EmojiPicker`);
-    if (cont) {
-        cont.innerHTML = EMOJIS_DISPONIBLES.map(e =>
-            `<div class="emoji-btn" onclick="seleccionarEmoji('${tipo}','${e}')">${e}</div>`
-        ).join('');
+    if (!cont) return;
+
+    // Tabs: Iconos (default) | Emojis
+    const tabsHTML = `
+        <div class="icon-picker-tabs">
+            <button class="icon-picker-tab active" onclick="cambiarTabPicker('${tipo}','svg',this)">Iconos</button>
+            <button class="icon-picker-tab" onclick="cambiarTabPicker('${tipo}','emoji',this)">Emojis</button>
+        </div>
+    `;
+
+    // SVG icons grid
+    const svgGrid = Object.entries(SVG_ICON_CATEGORIES).map(([catName, icons]) =>
+        `<div class="icon-picker-category">${catName}</div>` +
+        icons.map(name =>
+            `<div class="emoji-btn icon-svg-btn" onclick="seleccionarIcono('${tipo}','svg:${name}')" title="${SVG_ICON_LABELS[name] || name}">
+                ${svgIconHTML(name, 22)}
+            </div>`
+        ).join('')
+    ).join('');
+
+    // Emoji grid (organized by category like SVG)
+    const emojiCats = {
+        'Comida': ['🍔','🍕','🍟','🌭','🌮','🌯','🫔','🥙','🥪','🥗','🥩','🍖','🍗','🥓','🍳','🥚','🧆','🥘','🍲','🫕','🥣','🍿','🧈','🧂','🥫','🍱','🍘','🍙','🍚','🍛','🍜','🍝','🍠','🍢','🍣','🍤','🍥','🥮','🍡','🥟','🥠','🥡'],
+        'Pan & Cereales': ['🍞','🥐','🥖','🫓','🥨','🥯','🥞','🧇','🧀'],
+        'Frutas': ['🍇','🍈','🍉','🍊','🍋','🍌','🍍','🥭','🍎','🍏','🍐','🍑','🍒','🍓','🫐','🥝','🥥'],
+        'Verduras': ['🍅','🥑','🍆','🥔','🥕','🌽','🌶️','🫑','🥒','🥬','🥦','🧄','🧅','🥜','🫘','🌰','🫒'],
+        'Postres & Dulces': ['🍦','🍧','🍨','🍩','🍪','🎂','🍰','🧁','🥧','🍫','🍬','🍭','🍮','🍯'],
+        'Bebidas': ['🥤','☕','🫖','🍵','🥛','🍼','🍺','🍻','🍷','🍸','🍹','🍾','🥂','🥃','🧋','🧃','🧉','🧊','🫗','🍶'],
+        'Restaurante': ['🍽️','🍴','🥄','🔪','🫙','🧑‍🍳','🧾','💳'],
+        'General': ['📦','🛒','🛍️','🏷️','🔥','⭐','✨','💡','✂️','📌','💰','🎉','❤️','👍','🏠','🚗','🛵','📱','📋','✅','⏰','🔔']
+    };
+    const emojiGrid = Object.entries(emojiCats).map(([catName, emojis]) =>
+        `<div class="icon-picker-category">${catName}</div>` +
+        emojis.map(e =>
+            `<div class="emoji-btn" onclick="seleccionarIcono('${tipo}','${e}')">${e}</div>`
+        ).join('')
+    ).join('');
+
+    cont.innerHTML = tabsHTML +
+        `<div class="icon-picker-grid" id="${tipo}SvgGrid">${svgGrid}</div>` +
+        `<div class="icon-picker-grid" id="${tipo}EmojiGrid" style="display:none;">${emojiGrid}</div>`;
+}
+
+// Alias de compatibilidad
+function cargarSelectorEmojis(tipo) { cargarSelectorIconos(tipo); }
+
+function cambiarTabPicker(tipo, tab, btn) {
+    const cont = document.getElementById(`${tipo}EmojiPicker`);
+    if (!cont) return;
+    cont.querySelectorAll('.icon-picker-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+
+    const svgGrid = document.getElementById(`${tipo}SvgGrid`);
+    const emojiGrid = document.getElementById(`${tipo}EmojiGrid`);
+    if (tab === 'svg') {
+        if (svgGrid) svgGrid.style.display = '';
+        if (emojiGrid) emojiGrid.style.display = 'none';
+    } else {
+        if (svgGrid) svgGrid.style.display = 'none';
+        if (emojiGrid) emojiGrid.style.display = '';
     }
 }
 
-function seleccionarEmoji(tipo, e) {
-    emojiSeleccionado = e;
+function seleccionarIcono(tipo, valor) {
+    emojiSeleccionado = valor;
     const display = document.getElementById(`${tipo}EmojiDisplay`);
     if (display) {
-        display.innerText = e;
+        display.innerHTML = renderIcono(valor, 30);
     }
     const picker = document.getElementById(`${tipo}EmojiPicker`);
     if (picker) {
@@ -342,10 +397,17 @@ function seleccionarEmoji(tipo, e) {
     }
 }
 
+// Alias de compatibilidad
+function seleccionarEmoji(tipo, e) { seleccionarIcono(tipo, e); }
+
 function toggleEmojiPicker(tipo) {
     const el = document.getElementById(`${tipo}EmojiPicker`);
     if (el) {
-        el.style.display = el.style.display === 'none' ? 'grid' : 'none';
+        const isHidden = el.style.display === 'none' || !el.style.display;
+        el.style.display = isHidden ? 'block' : 'none';
+        if (isHidden && !el.querySelector('.icon-picker-tabs')) {
+            cargarSelectorIconos(tipo);
+        }
     }
 }
 

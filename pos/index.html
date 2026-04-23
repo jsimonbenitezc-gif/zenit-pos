@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' http://localhost:* http://127.0.0.1:* https: wss: ws:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none';">
     <title>Zenit POS</title>
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -31,17 +32,17 @@
         </div>
         <div class="perfiles-grid" id="perfiles-grid-container">
             <button class="perfil-btn" id="perfil-btn-cajero" onclick="seleccionarPerfil('cajero')">
-                <div class="perfil-icon">🧑‍💼</div>
+                <div class="perfil-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
                 <div class="perfil-nombre">Cajero</div>
                 <div class="perfil-desc">Ventas y pedidos</div>
             </button>
             <button class="perfil-btn" id="perfil-btn-encargado" onclick="seleccionarPerfil('encargado')">
-                <div class="perfil-icon">👔</div>
+                <div class="perfil-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12h.01"/><path d="M16.5 6H18a1 1 0 0 1 1 1v11a2 2 0 0 1-4 0V6a1 1 0 0 1 1-1 1.5"/><path d="M2 21a2 2 0 0 0 4 0V6a1 1 0 0 1 1-1h1.5"/><path d="M7 21a2 2 0 0 0 4 0V11"/><path d="M12 21a2 2 0 0 0 4 0V11"/></svg></div>
                 <div class="perfil-nombre">Encargado</div>
                 <div class="perfil-desc">Gestión completa</div>
             </button>
             <button class="perfil-btn perfil-btn-dueno" id="perfil-btn-dueno" onclick="seleccionarPerfil('dueno')">
-                <div class="perfil-icon">🔑</div>
+                <div class="perfil-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></svg></div>
                 <div class="perfil-nombre">Administrador</div>
                 <div class="perfil-desc">Acceso total</div>
             </button>
@@ -903,7 +904,7 @@
 
             <section id="view-ajustes" class="view">
     <div class="view-header">
-        <h2>Configuración del Sistema ⚙️</h2>
+        <h2>Configuración del Sistema</h2>
         <button class="btn-primary" onclick="guardarTodosLosAjustes()">
             Guardar Cambios
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check" style="display: inline-block; vertical-align: middle; margin-left: 5px;">
@@ -1174,7 +1175,7 @@
             </div>
             <div style="display:flex;gap:8px;margin-top:12px;">
                 <button class="btn-primary" onclick="guardarYRecargarSucursal()" style="flex:1;">Guardar y recargar</button>
-                <button class="btn-secondary small" onclick="abrirGestorSucursales()">⚙️ Administrar</button>
+                <button class="btn-secondary small" onclick="abrirGestorSucursales()">Administrar</button>
             </div>
         </div>
 
@@ -2103,6 +2104,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
 <script src="api-client.js"></script>
+<script src="svg-icons.js"></script>
 
 <!-- Módulos (se cargan antes de render.js) -->
 <script src="modulo-plan.js"></script>
@@ -2307,7 +2309,7 @@
                 <input type="text" id="salida-notas" placeholder="Ej: Producto abierto sin usar">
             </div>
             <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:10px; font-size:0.85em; color:#991b1b;">
-                ⚠️ Esta cantidad se restará del stock actual del insumo.
+                Esta cantidad se restará del stock actual del insumo.
             </div>
         </div>
         <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end; margin-top:15px;">

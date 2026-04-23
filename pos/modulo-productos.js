@@ -6,13 +6,26 @@
 let productoEditandoId = null;
 let categoriaEditandoId = null;
 let rutaImagenTemporal = null;
-let emojiSeleccionado = '📦';
+let emojiSeleccionado = 'svg:package';
 
 const EMOJIS_DISPONIBLES = [
-    '🍔','🍕','🍟','🌭','🌮','🌯','🥙','🥪','🥗','🥩','🍗','🥓','🥖','🥯','🥞','🧇','🧀','🍞',
-    '🥤','☕','🍵','🥛','🍺','🍷','🍹','🍸','🍾','🧊','🍩','🍪','🎂','🍰','🧁','🥧','🍫','🍬','🍭','🍮',
-    '🍅','🥒','🥬','🥦','🥕','🌽','🌶️','🥔','🍇','🍈','🍉','🍊','🍋','🍌','🍍','🍎','🍏','🍐','🍑','🍒','🍓',
-    '📦','🛒','🛍️','🏷️','🔥','⭐','✨','💡','🖍️','🖊️','✂️','📌'
+    // Comida
+    '🍔','🍕','🍟','🌭','🌮','🌯','🫔','🥙','🥪','🥗','🥩','🍖','🍗','🥓','🍳','🥚','🧆','🥘','🍲','🫕','🥣','🍿','🧈','🧂','🥫',
+    '🍱','🍘','🍙','🍚','🍛','🍜','🍝','🍠','🍢','🍣','🍤','🍥','🥮','🍡','🥟','🥠','🥡',
+    // Pan & Cereales
+    '🍞','🥐','🥖','🫓','🥨','🥯','🥞','🧇','🧀',
+    // Frutas
+    '🍇','🍈','🍉','🍊','🍋','🍌','🍍','🥭','🍎','🍏','🍐','🍑','🍒','🍓','🫐','🥝','🥥',
+    // Verduras
+    '🍅','🥑','🍆','🥔','🥕','🌽','🌶️','🫑','🥒','🥬','🥦','🧄','🧅','🥜','🫘','🌰','🫒',
+    // Postres & Dulces
+    '🍦','🍧','🍨','🍩','🍪','🎂','🍰','🧁','🥧','🍫','🍬','🍭','🍮','🍯',
+    // Bebidas
+    '🥤','☕','🫖','🍵','🥛','🍼','🍺','🍻','🍷','🍸','🍹','🍾','🥂','🥃','🧋','🧃','🧉','🧊','🫗','🍶',
+    // Restaurante
+    '🍽️','🍴','🥄','🔪','🫙','🧑‍🍳','🧾','💳',
+    // General
+    '📦','🛒','🛍️','🏷️','🔥','⭐','✨','💡','✂️','📌','💰','🎉','❤️','👍','🏠','🚗','🛵','📱','📋','✅','⏰','🔔'
 ];
 
 async function cargarProductosAdmin() {
@@ -22,33 +35,42 @@ async function cargarProductosAdmin() {
 
         if (!contenedor) return;
 
+        const svgPencil = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>';
+        const svgTrash = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
+
         contenedor.innerHTML = clasificaciones.map(cat => `
             <div class="clasificacion-bloque">
                 <div class="clasificacion-header">
                     <h3>
                         ${cat.imagen
                             ? `<img src="file://${cat.imagen}" style="width: 30px; height: 30px; border-radius: 6px; object-fit: cover; margin-right: 8px; vertical-align: middle;">`
-                            : `${esc(cat.emoji || '📦')}`
+                            : `${renderIcono(cat.emoji || 'svg:package', 28)}`
                         }
                         ${esc(cat.nombre)}
                     </h3>
                     ${cat.id ? `
-                        <div>
-                            <button class="btn-secondary small" onclick="editarCategoria(${cat.id},'${esc(cat.nombre)}','${esc(cat.emoji)}','${esc(cat.imagen || '')}')">✏️</button>
+                        <div style="display:flex; gap:6px;">
+                            <button class="btn-secondary small" title="Editar Categoría" onclick="editarCategoria(${cat.id},'${esc(cat.nombre)}','${esc(cat.emoji)}','${esc(cat.imagen || '')}')">${svgPencil}</button>
+                            <button class="btn-secondary small" title="Eliminar Categoría" style="color:#ef4444;" onclick="eliminarCategoriaAdmin(${cat.id},'${esc(cat.nombre)}')">${svgTrash}</button>
                         </div>
                     ` : ''}
                 </div>
                 <div class="productos-grid">
                     ${cat.productos.length > 0 ? cat.productos.map(p => `
-                        <div class="product-card" onclick="editarProducto(${p.id})">
+                        <div class="product-card">
+                            <button class="btn-delete-prod" onclick="event.stopPropagation(); eliminarProductoAdmin(${p.id}, '${esc(p.nombre)}')" title="Eliminar Producto">
+                                ${svgTrash}
+                            </button>
+                            <div onclick="editarProducto(${p.id})">
                             <div class="product-visual">
                                 ${p.imagen
-                                    ? `<img src="file://${p.imagen}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${esc(p.emoji || '📦')}</span>`
-                                    : `<span class="product-emoji">${esc(p.emoji || '📦')}</span>`
+                                    ? `<img src="file://${p.imagen}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${renderIcono(p.emoji || 'svg:package', 35)}</span>`
+                                    : `<span class="product-emoji">${renderIcono(p.emoji || 'svg:package', 35)}</span>`
                                 }
                             </div>
                             <h4>${esc(p.nombre)}</h4>
                             <p class="precio">$${p.precio.toFixed(2)}</p>
+                            </div>
                         </div>
                     `).join('') : '<p style="color: #9ca3af; padding: 20px;">No hay productos en esta categoría</p>'}
                 </div>
@@ -61,13 +83,13 @@ async function cargarProductosAdmin() {
 
 async function abrirModalProducto(p = null) {
     productoEditandoId = p ? p.id : null;
-    emojiSeleccionado = p ? p.emoji : '📦';
+    emojiSeleccionado = p ? p.emoji : 'svg:package';
 
     document.getElementById('prodNombre').value = p ? p.nombre : '';
     document.getElementById('prodDescripcion').value = p ? p.descripcion : '';
     document.getElementById('prodPrecio').value = p ? p.precio : '';
     document.getElementById('prodStock').value = p ? p.stock : '';
-    document.getElementById('prodEmojiDisplay').innerText = emojiSeleccionado;
+    document.getElementById('prodEmojiDisplay').innerHTML = renderIcono(emojiSeleccionado, 30);
 
     const cats = await window.api.obtenerClasificacionesRaw();
     const sel = document.getElementById('prodCategoria');
@@ -90,7 +112,7 @@ async function abrirModalProducto(p = null) {
         document.getElementById('prodImagenPreview').style.display = 'none';
         document.getElementById('prodImagenPreview').src = '';
         document.getElementById('prodEmojiDisplay').style.display = 'inline';
-        document.getElementById('prodEmojiDisplay').innerText = emojiSeleccionado;
+        document.getElementById('prodEmojiDisplay').innerHTML = renderIcono(emojiSeleccionado, 30);
     }
 
     document.getElementById('modalProducto').classList.remove('hidden');
@@ -146,10 +168,10 @@ async function editarProducto(id) {
 // --- CATEGORÍAS ---
 function abrirModalCategoria(cat = null) {
     categoriaEditandoId = cat ? cat.id : null;
-    emojiSeleccionado = cat ? cat.emoji : '📦';
+    emojiSeleccionado = cat ? cat.emoji : 'svg:package';
 
     document.getElementById('catNombre').value = cat ? cat.nombre : '';
-    document.getElementById('catEmojiDisplay').innerText = emojiSeleccionado;
+    document.getElementById('catEmojiDisplay').innerHTML = renderIcono(emojiSeleccionado, 30);
     document.getElementById('modalCatTitulo').innerText = cat ? 'Editar Categoría' : 'Nueva Categoría';
 
     document.getElementById('modalCategoria').classList.remove('hidden');

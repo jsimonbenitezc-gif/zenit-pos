@@ -14,7 +14,7 @@ async function cargarPedidos() {
         const pag = resultado.pagination || {};
 
         if (resultado._backendError) {
-            contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc2626;">⚠️ Error de conexión con el servidor. Tus pedidos están guardados en la nube, revisa tu conexión e intenta de nuevo.</td></tr>';
+            contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc2626;">Error de conexión con el servidor. Tus pedidos están guardados en la nube, revisa tu conexión e intenta de nuevo.</td></tr>';
             return;
         }
         if (pedidos.length === 0 && paginaPedidos === 1) {
@@ -188,7 +188,7 @@ function renderizarAlertas(alertas) {
     const container = document.getElementById('alertas-stock-list') || document.getElementById('alertas-dashboard');
     if (!container) return;
     if (!alertas || alertas.length === 0) {
-        container.innerHTML = '<p style="color:#10b981;font-size:0.85em;">✅ Sin alertas activas</p>';
+        container.innerHTML = `<p style="color:#10b981;font-size:0.85em;">${svgIconHTML('circle-check', 14, '#10b981')} Sin alertas activas</p>`;
         return;
     }
     const colores = {

@@ -41,6 +41,24 @@ async function inicializarPerfil() {
             return resolve();
         }
 
+        // Inyectar iconos nítidos en los botones built-in (corrige formas no distinguibles)
+        const iconPaths = {
+            cajero: `<svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
+            encargado: `<svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>`,
+            dueno: `<svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18v3c0 .6.4 1 1 1h4v-3h3v-3h2l1.4-1.4a6.5 6.5 0 1 0-4-4Z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>`
+        };
+
+        const fixIcon = (id, key) => {
+            const btn = document.getElementById(id);
+            if (btn) {
+                const iconDiv = btn.querySelector('.perfil-icon');
+                if (iconDiv) iconDiv.innerHTML = iconPaths[key];
+            }
+        };
+        fixIcon('perfil-btn-cajero', 'cajero');
+        fixIcon('perfil-btn-encargado', 'encargado');
+        fixIcon('perfil-btn-dueno', 'dueno');
+
         // Mostrar/ocultar botones builtin
         const btnCajero    = document.getElementById('perfil-btn-cajero');
         const btnEncargado = document.getElementById('perfil-btn-encargado');
@@ -96,8 +114,9 @@ async function seleccionarPerfil(rol) {
 
         if (permisos[rol]?.pin_set && permisos[rol]?.pin) {
             _perfilPendiente = rol;
-            const labels = { cajero: '🧑‍💼 Cajero', encargado: '👔 Encargado' };
-            document.getElementById('pin-perfil-label').textContent = labels[rol] || rol;
+            const labels = { cajero: 'Cajero', encargado: 'Encargado' };
+            const labelIcons = { cajero: 'user', encargado: 'briefcase' };
+            document.getElementById('pin-perfil-label').innerHTML = `${svgIconHTML(labelIcons[rol] || 'user', 14)} ${labels[rol] || rol}`;
             document.getElementById('pin-perfil-input').value = '';
             document.getElementById('pin-perfil-error').style.display = 'none';
             // Ocultar pantalla de perfiles para que el modal se vea claramente
@@ -176,9 +195,10 @@ function completarSeleccionPerfil(rol) {
     const screen = document.getElementById('perfil-screen');
     if (screen) screen.style.display = 'none';
     // Actualizar botón en header con nombre del perfil activo
-    const labels = { cajero: '🧑‍💼 Cajero', encargado: '👔 Encargado', dueno: '🔑 Admin' };
+    const labels = { cajero: 'Cajero', encargado: 'Encargado', dueno: 'Admin' };
+    const labelIcons = { cajero: 'user', encargado: 'briefcase', dueno: 'key-round' };
     const textoBtn = document.getElementById('texto-perfil-activo');
-    if (textoBtn) textoBtn.textContent = labels[rol] || rol;
+    if (textoBtn) textoBtn.innerHTML = `${svgIconHTML(labelIcons[rol] || 'user', 14)} ${labels[rol] || rol}`;
     const btnCambiar = document.getElementById('btn-cambiar-perfil');
     if (btnCambiar) btnCambiar.style.display = 'flex';
     // Si no es admin, mostrar el app directamente y ocultar la pantalla de login

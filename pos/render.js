@@ -353,7 +353,27 @@ cargarAjustesInstalados();
         }
     });
 
-
+    // --- AJUSTE DEFINITIVO DE TAMAÑO DE EMOJIS ---
+    // Forzamos un tamaño reducido para emojis de texto sin encoger los iconos vectoriales (SVG)
+    const styleFix = document.createElement('style');
+    styleFix.innerHTML = `
+        /* Selectores específicos para el catálogo de venta y la administración de productos */
+        .producto-card .emoji, 
+        .product-emoji, 
+        .item-emoji, 
+        .cat-item .emoji,
+        .grid-productos .emoji { 
+            font-size: 1.1rem !important; 
+            line-height: 1 !important;
+            min-width: 1.2em;
+            text-align: center;
+        }
+        /* Mantener los SVGs a un tamaño legible e independiente del font-size */
+        .producto-card .emoji svg, .product-emoji svg, .item-emoji svg { 
+            width: 28px !important; height: 28px !important; 
+        }
+    `;
+    document.head.appendChild(styleFix);
 
 });
 
@@ -859,7 +879,7 @@ setTimeout(() => {
     clientes: 'Clientes',
     ofertas: 'Ofertas',
     inventario: 'Inventario',
-    ajustes: 'Configuración ⚙️',
+    ajustes: 'Configuración',
     turno: 'Turno / Corte de Caja'
 };
 

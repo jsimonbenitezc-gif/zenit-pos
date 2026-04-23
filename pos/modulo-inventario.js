@@ -382,7 +382,7 @@ async function renderizarTablaRecetas() {
     tbody.innerHTML = conReceta.map(({ p, count }) => `<tr>
         <td>
             <div style="display:flex; align-items:center; gap:8px;">
-                <span>${esc(p.emoji || '📦')}</span>
+                <span>${renderIcono(p.emoji || 'svg:package', 18)}</span>
                 <strong>${esc(p.nombre)}</strong>
             </div>
         </td>

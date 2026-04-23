@@ -21,15 +21,15 @@ async function cargarClientes() {
         if (stats.topClientesMes.length === 0) {
             topLista.innerHTML = `
                 <div style="text-align: center; padding: 40px 20px; color: #9ca3af;">
-                    <div style="font-size: 2em; margin-bottom: 10px;">📊</div>
+                    <div style="margin-bottom: 10px;">${svgIconHTML('bar-chart', 32, '#9ca3af')}</div>
                     <p style="font-size: 0.9em;">Aún no hay compras este mes</p>
                 </div>
             `;
         } else {
-            const medallas = ['🥇', '🥈', '🥉'];
+            const medallas = [svgIconHTML('medal', 20, '#ca8a04'), svgIconHTML('medal', 20, '#94a3b8'), svgIconHTML('medal', 20, '#b45309')];
             topLista.innerHTML = stats.topClientesMes.map((cliente, index) => `
                 <div class="top-cliente-item">
-                    <div class="top-cliente-medal">${medallas[index]}</div>
+                    <div class="top-cliente-medal">${medallas[index] || ''}</div>
                     <div class="top-cliente-info">
                         <div class="top-cliente-nombre">${esc(cliente.nombre)}</div>
                         <div class="top-cliente-stats">
@@ -47,7 +47,7 @@ async function cargarClientes() {
                 <tr>
                     <td colspan="6" style="text-align: center; padding: 40px;">
                         <div style="color: #9ca3af;">
-                            <div style="font-size: 3em; margin-bottom: 10px;">👥</div>
+                            <div style="margin-bottom: 10px;">${svgIconHTML('users', 48, '#9ca3af')}</div>
                             <p style="font-size: 1.1em; margin-bottom: 5px;">No hay clientes registrados</p>
                             <p style="font-size: 0.9em;">Agrega tu primer cliente usando el botón "Nuevo Cliente"</p>
                         </div>
@@ -77,11 +77,11 @@ async function cargarClientes() {
                 <td>
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <strong style="color: #111827;">${esc(c.nombre)}</strong>
-                        ${(c.total_compras || 0) >= 3 ? '<span style="color: #f59e0b;">⭐</span>' : ''}
+                        ${(c.total_compras || 0) >= 3 ? '<span style="color: #f59e0b;">' + svgIconHTML('star', 14, '#f59e0b') + '</span>' : ''}
                     </div>
                 </td>
                 <td>
-                    <span style="color: #6b7280;">📱 ${esc(c.telefono)}</span>
+                    <span style="color: #6b7280; display:flex; align-items:center; gap:4px;">${svgIconHTML('smartphone', 14, '#6b7280')} ${esc(c.telefono)}</span>
                 </td>
                 <td>
                     ${c.direccion
@@ -94,7 +94,7 @@ async function cargarClientes() {
                     </span>
                 </td>
                 <td>
-                    <span style="color: #7c3aed; font-weight: 600; font-size: 0.88em;">⭐ ${c.puntos || 0} pts</span>
+                    <span style="color: #7c3aed; font-weight: 600; font-size: 0.88em; display:inline-flex; align-items:center; gap:3px;">${svgIconHTML('star', 14, '#7c3aed')} ${c.puntos || 0} pts</span>
                 </td>
                 <td>
                     <span style="color: #6b7280; font-size: 0.9em;">${fechaRegistro}</span>
@@ -102,14 +102,14 @@ async function cargarClientes() {
                   <td>
                     <div style="display: flex; gap: 5px;">
                         <button class="btn-secondary small" onclick="verDetalleCliente(${c.id})"             title="Ver Detalles">
-                            👁️ Ver
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 010-.696 10.75 10.75 0 0119.876 0 1 1 0 010 .696 10.75 10.75 0 01-19.876 0"/><circle cx="12" cy="12" r="3"/></svg> Ver
                         </button>
                         <button class="btn-secondary small" onclick="editarCliente(${c.id})" title="Editar">
-                            ✏️ Editar
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 00-3.986-3.987L3.842 16.174a2 2 0 00-.5.83l-1.321 4.352a.5.5 0 00.623.622l4.353-1.32a2 2 0 00.83-.497z"/></svg> Editar
                         </button>
                         <button class="btn-secondary small" onclick="confirmarEliminarCliente(${c.id}, '${esc(c.nombre)}')"
                                 style="color: #ef4444;" title="Eliminar">
-                            🗑️
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                         </button>
                     </div>
                 </td>
@@ -128,7 +128,7 @@ async function cargarClientes() {
         contenedor.innerHTML = `
             <tr>
                 <td colspan="6" style="text-align: center; padding: 40px; color: #ef4444;">
-                    ❌ Error al cargar los clientes. Por favor intenta de nuevo.
+                    Error al cargar los clientes. Por favor intenta de nuevo.
                 </td>
             </tr>
         `;
@@ -161,7 +161,7 @@ function configurarBuscadorClientes(clientes) {
             tbody.innerHTML = `
                 <tr>
                     <td colspan="6" style="text-align: center; padding: 40px; color: #9ca3af;">
-                        🔍 No se encontraron clientes que coincidan con "${esc(busqueda)}"
+                        ${svgIconHTML('search', 16, '#9ca3af')} No se encontraron clientes que coincidan con "${esc(busqueda)}"
                     </td>
                 </tr>
             `;
@@ -186,11 +186,11 @@ function configurarBuscadorClientes(clientes) {
                 <td>
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <strong style="color: #111827;">${esc(c.nombre)}</strong>
-                        ${(c.total_compras || 0) >= 3 ? '<span style="color: #f59e0b;">⭐</span>' : ''}
+                        ${(c.total_compras || 0) >= 3 ? '<span style="color: #f59e0b;">' + svgIconHTML('star', 14, '#f59e0b') + '</span>' : ''}
                     </div>
                 </td>
                 <td>
-                    <span style="color: #6b7280;">📱 ${esc(c.telefono)}</span>
+                    <span style="color: #6b7280; display:flex; align-items:center; gap:4px;">${svgIconHTML('smartphone', 14, '#6b7280')} ${esc(c.telefono)}</span>
                 </td>
                 <td>
                     ${c.direccion
@@ -203,7 +203,7 @@ function configurarBuscadorClientes(clientes) {
                     </span>
                 </td>
                 <td>
-                    <span style="color: #7c3aed; font-weight: 600; font-size: 0.88em;">⭐ ${c.puntos || 0} pts</span>
+                    <span style="color: #7c3aed; font-weight: 600; font-size: 0.88em; display:inline-flex; align-items:center; gap:3px;">${svgIconHTML('star', 14, '#7c3aed')} ${c.puntos || 0} pts</span>
                 </td>
                 <td>
                     <span style="color: #6b7280; font-size: 0.9em;">${fechaRegistro}</span>
@@ -211,14 +211,14 @@ function configurarBuscadorClientes(clientes) {
                <td>
                     <div style="display: flex; gap: 5px;">
                         <button class="btn-secondary small" onclick="verDetalleCliente(${c.id})" title="Ver Detalles">
-                            👁️ Ver
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 010-.696 10.75 10.75 0 0119.876 0 1 1 0 010 .696 10.75 10.75 0 01-19.876 0"/><circle cx="12" cy="12" r="3"/></svg> Ver
                         </button>
                         <button class="btn-secondary small" onclick="editarCliente(${c.id})" title="Editar">
-                            ✏️ Editar
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 00-3.986-3.987L3.842 16.174a2 2 0 00-.5.83l-1.321 4.352a.5.5 0 00.623.622l4.353-1.32a2 2 0 00.83-.497z"/></svg> Editar
                         </button>
                         <button class="btn-secondary small" onclick="confirmarEliminarCliente(${c.id}, '${esc(c.nombre)}')"
                                 style="color: #ef4444;" title="Eliminar">
-                            🗑️
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                         </button>
                     </div>
                 </td>
@@ -236,7 +236,7 @@ async function buscarYAutocompletarCliente(telefono) {
             if (document.getElementById('dom-nombre')) {
                 document.getElementById('dom-nombre').value = cliente.nombre;
                 document.getElementById('dom-direccion').value = cliente.direccion || '';
-                mostrarToast("✅ Cliente reconocido: " + cliente.nombre);
+                mostrarToast("Cliente reconocido: " + cliente.nombre);
             }
         }
     }

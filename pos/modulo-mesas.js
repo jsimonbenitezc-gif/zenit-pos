@@ -168,7 +168,7 @@ function _renderizarTarjetasMesas() {
         const items = ocupada ? _parsearItemsMesa(pedido.items_raw) : [];
         const total = ocupada ? parseFloat(pedido.total || 0) : 0;
         const tiempo = ocupada ? _tiempoEnMesa(pedido.fecha_pedido) : '';
-        const comensales = ocupada && pedido.comensales ? `👥 ${pedido.comensales}` : `👥 ${m.capacidad}`;
+        const comensales = ocupada && pedido.comensales ? `${svgIconHTML('users', 14, '#6b7280')} ${pedido.comensales}` : `${svgIconHTML('users', 14, '#6b7280')} ${m.capacidad}`;
         return `<div onclick="${ocupada ? `abrirPanelMesa(${m.id})` : `seleccionarMesaLibre(${m.id})`}"
             style="background:${bg};border:2px solid ${border};border-radius:10px;padding:14px;cursor:pointer;
                    display:flex;flex-direction:column;gap:6px;min-height:110px;position:relative;
@@ -216,7 +216,7 @@ async function confirmarAbrirMesa() {
         abrirPanelMesa(_mesaActivaId);
     } catch(e) {
         console.error('Error abriendo mesa:', e);
-        mostrarNotificacionExito('Error al abrir la mesa', '⚠️ Error');
+        mostrarNotificacionExito('Error al abrir la mesa', 'Error');
     }
 }
 
@@ -229,8 +229,8 @@ async function abrirPanelMesa(mesa_id) {
     const panel = document.getElementById('mesa-panel');
     panel.classList.remove('hidden');
     document.getElementById('mesa-panel-titulo').textContent = mesa?.nombre || 'Mesa';
-    const comensales = pedido.comensales ? `👥 ${pedido.comensales} comensales · ` : '';
-    document.getElementById('mesa-panel-info').textContent = `${comensales}Desde ${_tiempoEnMesa(pedido.fecha_pedido)}`;
+    const comensales = pedido.comensales ? `${svgIconHTML('users', 14, '#6b7280')} ${pedido.comensales} comensales · ` : '';
+    document.getElementById('mesa-panel-info').innerHTML = `${comensales}Desde ${_tiempoEnMesa(pedido.fecha_pedido)}`;
     document.getElementById('mesa-notas-input').value = pedido.notas_generales || '';
     _renderizarPanelMesa();
 }
@@ -307,8 +307,8 @@ async function eliminarItemDeMesa(item_id) {
             _renderizarPanelMesa();
             const info = document.getElementById('mesa-panel-info');
             if (info) {
-                const comensales = _pedidoMesaActivo.comensales ? `👥 ${_pedidoMesaActivo.comensales} comensales · ` : '';
-                info.textContent = `${comensales}Desde ${_tiempoEnMesa(_pedidoMesaActivo.fecha_pedido)}`;
+                const comensales = _pedidoMesaActivo.comensales ? `${svgIconHTML('users', 14, '#6b7280')} ${_pedidoMesaActivo.comensales} comensales · ` : '';
+                info.innerHTML = `${comensales}Desde ${_tiempoEnMesa(_pedidoMesaActivo.fecha_pedido)}`;
             }
         }
         _renderizarTarjetasMesas();
@@ -391,7 +391,7 @@ function _renderizarProductoresMesa(lista) {
         const en_carrito = _carritoMesa[p.id]?.cantidad || 0;
         return `<div id="mesa-pcard-${p.id}" style="border:2px solid ${en_carrito > 0 ? '#4f46e5' : '#e5e7eb'};border-radius:8px;padding:10px;cursor:pointer;text-align:center;background:${en_carrito > 0 ? '#f0f0ff' : '#fff'};"
             onclick="_toggleProductoMesa(${p.id}, '${esc(p.nombre || '')}', ${p.precio})">
-            <div style="font-size:1.3em;">${esc(p.emoji || '🍽️')}</div>
+            <div style="font-size:1.3em;">${renderIcono(p.emoji || 'svg:utensils', 20)}</div>
             <div style="font-size:0.8em;font-weight:500;margin:4px 0;line-height:1.2;">${esc(p.nombre)}</div>
             <div style="font-size:0.85em;color:#4f46e5;font-weight:600;">${_fmtMesa(p.precio)}</div>
             ${mostrarStock ? `<div id="mesa-stock-${p.id}" style="font-size:0.72em;color:#9ca3af;margin-top:3px;">...</div>` : ''}
@@ -410,7 +410,7 @@ function _renderizarProductoresMesa(lista) {
                     el.innerHTML = '<span style="color:#ef4444;font-weight:600;">Sin stock</span>';
                     document.getElementById(`mesa-pcard-${p.id}`)?.style.setProperty('opacity', '0.5');
                 } else if (stock <= 3) {
-                    el.innerHTML = `<span style="color:#f59e0b;font-weight:600;">⚠ ${stock} disponibles</span>`;
+                    el.innerHTML = `<span style="color:#f59e0b;font-weight:600;">${svgIconHTML('triangle-alert', 14, '#f59e0b')} ${stock} disponibles</span>`;
                 } else {
                     el.innerHTML = `<span style="color:#10b981;">${stock} disponibles</span>`;
                 }
@@ -496,12 +496,12 @@ async function confirmarAgregarProductosMesa() {
             notas: null,
             items: items.map(([, item]) => ({ nombre: item.nombre, cantidad: item.cantidad, notas: '' }))
         }).catch(() => {});
-        mostrarNotificacionExito('Comanda enviada a cocina', '🍽️');
+        mostrarNotificacionExito('Comanda enviada a cocina', 'Enviado');
         // Refrescar badges de stock tras descontar insumos (local e inmediato, sin esperar SSE)
         _refrescarStockBadges();
     } catch(e) {
         console.error('Error agregando productos a mesa:', e);
-        mostrarNotificacionExito('Error al agregar productos', '⚠️ Error');
+        mostrarNotificacionExito('Error al agregar productos', 'Error');
     }
 }
 
@@ -543,7 +543,7 @@ async function imprimirCuentaMesa() {
         await window.api.imprimirTicket(html, impresora);
     } catch(e) {
         console.error('Error imprimiendo cuenta:', e);
-        mostrarNotificacionExito('Error al imprimir', '⚠️ Error');
+        mostrarNotificacionExito('Error al imprimir', 'Error');
     }
 }
 
@@ -564,7 +564,7 @@ async function abrirModalCobrarMesa() {
         if (elPts) {
             if (aj.puntos_activos === 'true') {
                 const pts = await calcularPuntosGanados(total);
-                elPts.textContent = `⭐ Esta compra genera ${pts} puntos`;
+                elPts.innerHTML = `${svgIconHTML('star', 14, '#f59e0b')} Esta compra genera ${pts} puntos`;
                 elPts.style.display = '';
             } else {
                 elPts.style.display = 'none';
@@ -621,7 +621,7 @@ async function confirmarCobrarMesa() {
                     await window.api.actualizarPuntosCliente(pedidoSnap.cliente_id, puntosGanados).catch(() => {});
                 }
                 syncLoyaltyBackend(pedidoSnap.cliente_id, { points_delta: puntosGanados });
-                mostrarNotificacionExito(`+${puntosGanados} puntos acumulados`, '⭐ Puntos');
+                mostrarNotificacionExito(`+${puntosGanados} puntos acumulados`, 'Puntos');
             }
         }
 
@@ -656,7 +656,7 @@ async function confirmarCobrarMesa() {
         await cargarVistaMesas();
     } catch(e) {
         console.error('Error cobrando mesa:', e);
-        mostrarNotificacionExito('Error al cobrar la mesa', '⚠️ Error');
+        mostrarNotificacionExito('Error al cobrar la mesa', 'Error');
     }
 }
 
@@ -742,7 +742,7 @@ function abrirModalTransferirMesa() {
         el.innerHTML = libres.map(m =>
             `<button onclick="confirmarTransferirMesa(${m.id})" class="btn-secondary"
                 style="text-align:left;padding:10px 14px;">
-                <b>${esc(m.nombre)}</b> <span style="color:#6b7280;font-size:0.85em;">${esc(m.zona || 'General')} · 👥 ${m.capacidad}</span>
+                <b>${esc(m.nombre)}</b> <span style="color:#6b7280;font-size:0.85em;">${esc(m.zona || 'General')} · ${svgIconHTML('users', 14, '#6b7280')} ${m.capacidad}</span>
             </button>`
         ).join('');
     }
@@ -763,7 +763,7 @@ async function confirmarTransferirMesa(nueva_mesa_id) {
         await cargarVistaMesas();
     } catch(e) {
         console.error('Error transfiriendo mesa:', e);
-        mostrarNotificacionExito('Error al transferir', '⚠️ Error');
+        mostrarNotificacionExito('Error al transferir', 'Error');
     }
 }
 
@@ -794,7 +794,7 @@ async function _cargarConfigMesas() {
         <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f3f4f6;">
             <div style="flex:1;">
                 <span style="font-weight:600;">${esc(m.nombre)}</span>
-                <span style="color:#6b7280;font-size:0.85em;margin-left:8px;">${esc(m.zona || 'General')} · 👥 ${m.capacidad}</span>
+                <span style="color:#6b7280;font-size:0.85em;margin-left:8px;">${esc(m.zona || 'General')} · ${svgIconHTML('users', 14, '#6b7280')} ${m.capacidad}</span>
             </div>
             <button class="btn-secondary" style="padding:4px 10px;font-size:0.8em;"
                 onclick="_eliminarMesaConfig(${m.id}, '${esc(m.nombre || '')}')">Eliminar</button>
@@ -806,7 +806,7 @@ async function crearMesaConfig() {
     const nombre = document.getElementById('config-mesa-nombre').value.trim();
     const zona   = document.getElementById('config-mesa-zona').value.trim() || 'General';
     const cap    = parseInt(document.getElementById('config-mesa-capacidad').value) || 4;
-    if (!nombre) { mostrarNotificacionExito('Escribe un nombre para la mesa', '⚠️ Error'); return; }
+    if (!nombre) { mostrarNotificacionExito('Escribe un nombre para la mesa', 'Error'); return; }
     try {
         if (modoConectado && apiClient && tokenActual) {
             await apiClient.createTable({ name: nombre, zone: zona, capacity: cap });
@@ -818,7 +818,7 @@ async function crearMesaConfig() {
         mostrarNotificacionExito(`Mesa "${nombre}" creada`, '¡Listo!');
     } catch(e) {
         console.error('Error creando mesa:', e);
-        mostrarNotificacionExito('Error al crear la mesa', '⚠️ Error');
+        mostrarNotificacionExito('Error al crear la mesa', 'Error');
     }
 }
 
@@ -833,6 +833,6 @@ async function _eliminarMesaConfig(id, nombre) {
         await _cargarConfigMesas();
         mostrarNotificacionExito(`Mesa eliminada`, '¡Listo!');
     } catch(e) {
-        mostrarNotificacionExito('Error al eliminar la mesa', '⚠️ Error');
+        mostrarNotificacionExito('Error al eliminar la mesa', 'Error');
     }
 }
