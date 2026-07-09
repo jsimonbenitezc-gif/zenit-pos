@@ -34,6 +34,16 @@ async function confirmarPinEmpleado() {
     const errEl = document.getElementById('pin-empleado-error');
     const btnEl = document.getElementById('btn-confirmar-pin-empleado');
 
+    // Bloqueo por intentos fallidos
+    const minRestantes = pinBloqueadoRestanteMin();
+    if (minRestantes > 0) {
+        if (errEl) {
+            errEl.textContent = `Demasiados intentos fallidos. Espera ${minRestantes} minuto(s).`;
+            errEl.style.display = '';
+        }
+        return;
+    }
+
     if (btnEl) btnEl.disabled = true;
     try {
         // Leer permisos efectivos del perfil activo (respetando sucursal)
@@ -58,10 +68,18 @@ async function confirmarPinEmpleado() {
             }
             const pinHash = await hashPin(pin);
             if (perfilActual.pin !== pinHash) {
-                if (errEl) { errEl.textContent = 'PIN incorrecto'; errEl.style.display = ''; }
+                registrarFalloPin();
+                const minBloqueo = pinBloqueadoRestanteMin();
+                if (errEl) {
+                    errEl.textContent = minBloqueo > 0
+                        ? `Demasiados intentos fallidos. Espera ${minBloqueo} minuto(s).`
+                        : 'PIN incorrecto';
+                    errEl.style.display = '';
+                }
                 if (btnEl) btnEl.disabled = false;
                 return;
             }
+            resetearFallosPin();
         }
 
         // PIN válido (o perfil sin PIN — solo requiere confirmar)

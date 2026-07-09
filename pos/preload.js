@@ -52,6 +52,8 @@ contextBridge.exposeInMainWorld('api', {
     
     // Utils y Logo
     seleccionarImagen: () => ipcRenderer.invoke('seleccionar-imagen'),
+    seleccionarImagenDataUri: () => ipcRenderer.invoke('seleccionar-imagen-datauri'),
+    leerImagenDataUri: (ruta) => ipcRenderer.invoke('leer-imagen-datauri', ruta),
     obtenerRutaLogo: () => {
         return "./assets/logo/montana.png"; 
     },
@@ -99,6 +101,7 @@ contextBridge.exposeInMainWorld('api', {
     imprimirTicket: (html, impresora) => ipcRenderer.invoke('imprimir-ticket', html, impresora),
 
     limpiarDatosLocales: () => ipcRenderer.invoke('limpiar-datos-locales'),
+    limpiarDatosSiSinSesion: () => ipcRenderer.invoke('limpiar-datos-si-sin-sesion'),
 
     agregarInsumoConId: (id, datos) => ipcRenderer.invoke('agregar-insumo-con-id', id, datos),
     agregarPreparacionConId: (id, datos) => ipcRenderer.invoke('agregar-preparacion-con-id', id, datos),
@@ -127,6 +130,8 @@ contextBridge.exposeInMainWorld('api', {
     // TOKEN SEGURO (cifrado con safeStorage del sistema operativo)
     guardarTokenSeguro: (token) => ipcRenderer.invoke('guardar-token-seguro', token),
     obtenerTokenSeguro: () => ipcRenderer.invoke('obtener-token-seguro'),
+    guardarRefreshSeguro: (token) => ipcRenderer.invoke('guardar-refresh-seguro', token),
+    obtenerRefreshSeguro: () => ipcRenderer.invoke('obtener-refresh-seguro'),
 
     // ABRIR URL EN NAVEGADOR EXTERNO
     abrirEnNavegador: (url) => ipcRenderer.invoke('abrir-en-navegador', url),
@@ -135,7 +140,7 @@ contextBridge.exposeInMainWorld('api', {
     onWindowFocus: (cb) => ipcRenderer.on('window-focused', () => cb()),
 
     // ROL ACTIVO (para validación de permisos)
-    establecerRolActivo: (rol) => ipcRenderer.invoke('establecer-rol-activo', rol),
+    establecerRolActivo: (rol, permisos) => ipcRenderer.invoke('establecer-rol-activo', rol, permisos),
 
     // TURNOS
     abrirTurno: (nombre, rol, fondo) => ipcRenderer.invoke('abrir-turno', nombre, rol, fondo),

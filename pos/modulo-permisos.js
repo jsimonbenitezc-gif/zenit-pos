@@ -551,7 +551,7 @@ async function crearNuevoPuesto() {
 }
 
 async function eliminarPuestoCustom(key, label) {
-    if (!confirm(`¿Eliminar el puesto "${label}"?`)) return;
+    if (!(await confirmarZenit(`Se eliminará el puesto "${label}" y su configuración de permisos.`, '¿Eliminar puesto?', { textoOk: 'Eliminar', peligro: true }))) return;
     let permisos = { cajero: { ...PERMISOS_DEFAULT.cajero }, encargado: { ...PERMISOS_DEFAULT.encargado } };
     try {
         const ajustes = await window.api.obtenerAjustes();

@@ -1,6 +1,6 @@
 {
   "name": "zenit-pos",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Sistema de registros y punto de venta digital.",
   "main": "pos/main.js",
   "author": "Zenit Software",
@@ -21,7 +21,9 @@
       "pos/**/*",
       "database/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "!**/*.backup",
+      "!**/*.bak"
     ],
     "win": {
       "target": "nsis",

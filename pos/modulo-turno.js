@@ -396,7 +396,7 @@ async function abrirTurno() {
 
         // Switch completo de sesión
         rolActivo = rolDeseado;
-        await window.api.establecerRolActivo(rolDeseado);
+        await registrarRolActivoEnMain(rolDeseado);
         const labels = { cajero: 'Cajero', encargado: 'Encargado', dueno: 'Admin' };
         const labelIcons = { cajero: 'user', encargado: 'briefcase', dueno: 'key-round' };
         const textoBtn = document.getElementById('texto-perfil-activo');

@@ -139,7 +139,7 @@ async function exportarCSV() {
     try {
         const resultado = await obtenerPedidosWrapper({ ...filtroActual, limite: 10000, pagina: 1 });
         const filas = resultado.data || resultado;
-        if (!filas || filas.length === 0) { alert('No hay pedidos para exportar con los filtros actuales.'); return; }
+        if (!filas || filas.length === 0) { alertaZenit('No hay pedidos para exportar con los filtros actuales.'); return; }
 
         const cabecera = ['ID', 'Cajero', 'Cliente', 'Fecha', 'Método de Pago', 'Total', 'Estado'];
         const lineas = filas.map(p => {
@@ -165,7 +165,7 @@ async function exportarCSV() {
         URL.revokeObjectURL(url);
     } catch (e) {
         console.error('Error al exportar CSV:', e);
-        alert('Error al exportar. Intenta de nuevo.');
+        alertaZenit('Error al exportar. Intenta de nuevo.');
     }
 }
 
@@ -280,7 +280,7 @@ async function _cambiarEstadoPedidoBase(pedidoId, nuevoEstado, selectElement) {
         mostrarNotificacionExito(`Estado actualizado a: ${nuevoEstado}`, '¡Estado Actualizado!');
     } catch (error) {
         console.error("Error al cambiar estado:", error);
-        alert("Error al actualizar el estado");
+        alertaZenit("Error al actualizar el estado");
         cargarPedidos();
     }
 }
@@ -308,7 +308,7 @@ async function verDetallePedido(id, cliente, total, metodo) {
         document.getElementById('modalDetallePedido').classList.remove('hidden');
     } catch (error) {
         console.error("Error al obtener detalles:", error);
-        alert("No se pudieron cargar los productos del pedido.");
+        alertaZenit("No se pudieron cargar los productos del pedido.");
     }
 }
 
@@ -336,7 +336,7 @@ async function cambiarEstadoPedido(pedidoId, nuevoEstado, selectElement) {
                     mostrarNotificacionExito(`Pedido #${pedidoId} cancelado`, '¡Cancelado!');
                     cargarPedidos();
                 } catch(e) {
-                    alert('Error al cancelar: ' + (e.message || 'Error desconocido'));
+                    alertaZenit('Error al cancelar: ' + (e.message || 'Error desconocido'));
                     cargarPedidos();
                 }
             }

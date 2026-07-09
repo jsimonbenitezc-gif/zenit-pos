@@ -823,7 +823,7 @@ async function crearMesaConfig() {
 }
 
 async function _eliminarMesaConfig(id, nombre) {
-    if (!confirm(`¿Eliminar la mesa "${nombre}"?`)) return;
+    if (!(await confirmarZenit(`Se eliminará la mesa "${nombre}".`, '¿Eliminar mesa?', { textoOk: 'Eliminar', peligro: true }))) return;
     try {
         if (modoConectado && apiClient && tokenActual) {
             await apiClient.deleteTable(id);

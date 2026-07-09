@@ -18,10 +18,62 @@ function esc(str) {
 // --- SEGURIDAD: Validar rutas de imagen para prevenir path traversal ---
 function urlImagenSegura(ruta) {
     if (!ruta) return null;
+    // Data URIs de imagen (formato nuevo, sincronizado en la nube): seguros para <img src>
+    if (ruta.startsWith('data:image/')) return ruta;
     const normalizada = ruta.replace(/\\/g, '/');
     // Solo permitir rutas dentro de la carpeta 'imagenes' del app y sin saltos de directorio (..)
     if (!normalizada.includes('/imagenes/') || normalizada.includes('..')) return null;
     return 'file://' + ruta;
+}
+
+// --- IMÁGENES: src correcto para cualquier formato de imagen guardado ---
+// Nuevas: data URIs base64 (visibles en todos los dispositivos, viven en la nube).
+// Legacy: rutas de archivo locales de este equipo (file://).
+function srcImagen(imagen) {
+    if (!imagen) return null;
+    if (imagen.startsWith('data:image/')) return imagen;
+    if (imagen.startsWith('http://') || imagen.startsWith('https://')) return imagen;
+    return 'file://' + imagen;
+}
+
+// Comprime un data URI de imagen a un JPEG pequeño (máx 300px de lado)
+// para guardarlo en la nube sin inflar la base de datos (~15-40KB).
+function comprimirImagenDataUri(dataUri, maxLado = 300, calidad = 0.75) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const escala = Math.min(1, maxLado / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * escala));
+            const h = Math.max(1, Math.round(img.height * escala));
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            // Fondo blanco: JPEG no soporta transparencia (PNG con alpha se vería negro)
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL('image/jpeg', calidad));
+        };
+        img.onerror = () => reject(new Error('No se pudo procesar la imagen'));
+        img.src = dataUri;
+    });
+}
+
+// Flujo completo: elegir imagen del disco → comprimir → devolver data URI listo.
+async function elegirImagenComprimida() {
+    const resultado = await window.api.seleccionarImagenDataUri();
+    if (!resultado) return null; // usuario canceló
+    if (resultado.error) {
+        alertaZenit(resultado.error, 'Imagen no válida');
+        return null;
+    }
+    try {
+        return await comprimirImagenDataUri(resultado.dataUri);
+    } catch (e) {
+        alertaZenit('No se pudo procesar la imagen. Intenta con otro archivo.', 'Error');
+        return null;
+    }
 }
 
 let clasificaciones = [];
@@ -42,6 +94,61 @@ const PERMISOS_DEFAULT = {
 
 let nombreActivo = '';
 
+// Lee los permisos efectivos de un rol (defaults + configuración guardada,
+// filtrada por la sucursal activa). Se usa para informar al proceso principal
+// qué puede hacer el perfil seleccionado.
+async function obtenerPermisosEfectivosRol(rol) {
+    let permisos = PERMISOS_DEFAULT[rol] ? { ...PERMISOS_DEFAULT[rol] } : {};
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        let efectivos;
+        if (sucursalIdActual && guardados[`__b_${sucursalIdActual}`]) {
+            efectivos = guardados[`__b_${sucursalIdActual}`];
+        } else {
+            efectivos = Object.fromEntries(Object.entries(guardados).filter(([k]) => !k.startsWith('__b_')));
+        }
+        if (efectivos[rol]) permisos = { ...permisos, ...efectivos[rol] };
+    } catch (e) { /* usa defaults */ }
+    return permisos;
+}
+
+// --- SEGURIDAD: Límite de intentos de PIN (5 fallos → bloqueo de 5 minutos) ---
+// Persistido en localStorage para que reiniciar la app no reinicie el contador.
+const PIN_LOCK_MAX_INTENTOS = 5;
+const PIN_LOCK_MS = 5 * 60 * 1000;
+
+function pinBloqueadoRestanteMin() {
+    const hasta = parseInt(localStorage.getItem('pin_lock_hasta') || '0', 10);
+    if (!hasta || Date.now() >= hasta) return 0;
+    return Math.ceil((hasta - Date.now()) / 60000);
+}
+
+function registrarFalloPin() {
+    const fallos = parseInt(localStorage.getItem('pin_lock_fallos') || '0', 10) + 1;
+    if (fallos >= PIN_LOCK_MAX_INTENTOS) {
+        localStorage.setItem('pin_lock_hasta', String(Date.now() + PIN_LOCK_MS));
+        localStorage.setItem('pin_lock_fallos', '0');
+    } else {
+        localStorage.setItem('pin_lock_fallos', String(fallos));
+    }
+}
+
+function resetearFallosPin() {
+    localStorage.removeItem('pin_lock_fallos');
+    localStorage.removeItem('pin_lock_hasta');
+}
+
+// Registra el rol activo (y sus permisos) en el proceso principal.
+async function registrarRolActivoEnMain(rol) {
+    try {
+        const permisos = await obtenerPermisosEfectivosRol(rol);
+        await window.api.establecerRolActivo(rol, permisos);
+    } catch (e) {
+        console.warn('No se pudo registrar el rol activo:', e.message);
+    }
+}
+
 /* ============================================
    SISTEMA DE MODO (LOCAL vs CONECTADO)
    ============================================ */
@@ -61,6 +168,137 @@ if (typeof APIClient !== 'undefined') {
     apiClient = new APIClient('http://localhost:3000/api');
 }
 
+// Callbacks de sesión del API client:
+// - onTokenRefreshed: persiste los tokens rotados (la sesión dura 30 días sin re-login)
+// - onSessionExpired: sólo se dispara cuando el refresh también falló → cerrar sesión de verdad
+function configurarCallbacksApiClient() {
+    if (!apiClient) return;
+    apiClient.onTokenRefreshed = async (token, refreshToken) => {
+        tokenActual = token;
+        try {
+            await window.api.guardarTokenSeguro(token);
+            if (refreshToken) await window.api.guardarRefreshSeguro(refreshToken);
+        } catch (e) { console.warn('No se pudo persistir el token renovado:', e.message); }
+    };
+    apiClient.onSessionExpired = async () => {
+        console.warn('Sesión expirada definitivamente (refresh falló). Bloqueando acceso.');
+        modoConectado = false;
+        try {
+            await window.api.guardarTokenSeguro('');
+            await window.api.guardarRefreshSeguro('');
+            await window.api.guardarAjuste('api_token', '');
+            await window.api.guardarAjuste('api_refresh', '');
+            await window.api.guardarAjuste('modo_conectado', 'false');
+        } catch (e) {}
+        // Sin sesión no hay acceso a los datos de la cuenta: recargar para
+        // que la pantalla de bloqueo tome el control.
+        await alertaZenit('Tu sesión expiró. Deberás iniciar sesión de nuevo para continuar.', 'Sesión expirada');
+        location.reload();
+    };
+}
+configurarCallbacksApiClient();
+
+// ============================================
+// BLOQUEO DE SESIÓN EXPIRADA
+// Si este equipo está vinculado a una cuenta Zenit pero ya no hay sesión
+// guardada, NADA de la cuenta es accesible (ni pedidos, ni perfiles) hasta
+// volver a iniciar sesión. El modo local puro (sin cuenta) no se bloquea.
+// ============================================
+
+async function verificarBloqueoSesion() {
+    let ajustes = {};
+    try { ajustes = await window.api.obtenerAjustes(); } catch (e) { return; }
+    const emailCuenta = (ajustes.zenit_user_email || '').trim();
+    if (!emailCuenta) return; // nunca se vinculó una cuenta → modo local puro, sin bloqueo
+    const token = await window.api.obtenerTokenSeguro();
+    if (token) return; // hay sesión guardada (funciona online y offline) → continuar
+    // Cuenta vinculada sin sesión → bloquear la app
+    await mostrarBloqueoSesion(emailCuenta, ajustes.api_url || 'https://zenit-pos-backend.onrender.com/api');
+}
+
+function mostrarBloqueoSesion(emailCuenta, backendUrl) {
+    return new Promise(() => { // nunca se resuelve: al desbloquear se recarga la app
+        const overlay = document.createElement('div');
+        overlay.id = 'bloqueo-sesion-zenit';
+        overlay.style.cssText = 'position:fixed;inset:0;background:linear-gradient(180deg,#111827,#1f2933);z-index:20000;display:flex;align-items:center;justify-content:center;padding:20px;';
+        overlay.innerHTML = `
+            <div style="background:#fff;border-radius:16px;padding:32px;max-width:400px;width:100%;box-shadow:0 24px 70px rgba(0,0,0,0.45);">
+                <div style="font-size:1.3em;font-weight:700;color:#111827;margin-bottom:8px;">Sesión expirada</div>
+                <div style="color:#4b5563;font-size:0.92em;line-height:1.5;margin-bottom:20px;">
+                    Este equipo está vinculado a una cuenta Zenit, pero la sesión caducó.
+                    Por seguridad, los datos del negocio no estarán disponibles hasta que inicies sesión de nuevo.
+                </div>
+                <label style="display:block;font-size:0.8em;font-weight:600;color:#6b7280;margin-bottom:4px;">CUENTA</label>
+                <input id="bloqueo-email" type="email" value="${esc(emailCuenta)}" readonly
+                    style="width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;color:#6b7280;margin-bottom:12px;">
+                <label style="display:block;font-size:0.8em;font-weight:600;color:#6b7280;margin-bottom:4px;">CONTRASEÑA</label>
+                <input id="bloqueo-password" type="password" placeholder="Tu contraseña"
+                    style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;margin-bottom:6px;">
+                <div id="bloqueo-error" style="color:#dc2626;font-size:0.85em;min-height:18px;margin-bottom:10px;"></div>
+                <button id="bloqueo-entrar" class="btn-primary" style="width:100%;margin-bottom:10px;">Iniciar sesión</button>
+                <button id="bloqueo-otra-cuenta" class="btn-secondary" style="width:100%;color:#dc2626;border-color:#fca5a5;">
+                    Desvincular cuenta y borrar datos de este equipo
+                </button>
+                <div style="color:#9ca3af;font-size:0.78em;line-height:1.4;margin-top:10px;">
+                    Para desbloquear necesitas conexión a internet. Los pedidos pendientes de sincronizar se conservan y se subirán al entrar.
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        const inputPwd = overlay.querySelector('#bloqueo-password');
+        const errorDiv = overlay.querySelector('#bloqueo-error');
+        const btnEntrar = overlay.querySelector('#bloqueo-entrar');
+        setTimeout(() => inputPwd?.focus(), 100);
+
+        const intentarLogin = async () => {
+            const password = inputPwd.value;
+            if (!password) { errorDiv.textContent = 'Ingresa tu contraseña.'; return; }
+            btnEntrar.disabled = true;
+            btnEntrar.textContent = 'Conectando...';
+            errorDiv.textContent = '';
+            try {
+                apiClient.setBaseURL(backendUrl);
+                const response = await apiClient.login(emailCuenta, password);
+                await window.api.guardarTokenSeguro(response.token);
+                if (response.refreshToken) await window.api.guardarRefreshSeguro(response.refreshToken);
+                await window.api.guardarAjuste('modo_conectado', 'true');
+                location.reload();
+            } catch (e) {
+                const msg = (e.message || '').toLowerCase();
+                errorDiv.textContent = (msg.includes('fetch') || msg.includes('network') || msg.includes('tardó'))
+                    ? 'Sin conexión a internet. Se necesita internet para desbloquear.'
+                    : 'Contraseña incorrecta. Intenta de nuevo.';
+                btnEntrar.disabled = false;
+                btnEntrar.textContent = 'Iniciar sesión';
+            }
+        };
+
+        btnEntrar.onclick = intentarLogin;
+        inputPwd.addEventListener('keypress', (e) => { if (e.key === 'Enter') intentarLogin(); });
+
+        overlay.querySelector('#bloqueo-otra-cuenta').onclick = async () => {
+            const ok = await confirmarZenit(
+                'Se borrarán TODOS los datos de la cuenta guardados en este equipo, incluyendo pedidos que no se hayan sincronizado.\n\nLa cuenta en la nube no se toca: podrás volver a entrar desde cualquier equipo.',
+                '¿Desvincular y borrar datos locales?',
+                { textoOk: 'Borrar y desvincular', peligro: true }
+            );
+            if (!ok) return;
+            try {
+                await window.api.guardarTokenSeguro('');
+                await window.api.guardarRefreshSeguro('');
+                await window.api.guardarAjuste('api_token', '');
+                await window.api.guardarAjuste('api_refresh', '');
+                await window.api.guardarAjuste('modo_conectado', 'false');
+                await window.api.guardarAjuste('zenit_user_name', '');
+                await window.api.guardarAjuste('zenit_user_email', '');
+                await window.api.guardarAjuste('pedir_password_inicio', 'false');
+                await window.api.limpiarDatosLocales();
+            } catch (e) { console.error('Error al desvincular:', e); }
+            location.reload();
+        };
+    });
+}
+
 // Cargar configuración de modo al inicio
 async function cargarConfiguracionModo() {
     try {
@@ -77,11 +315,14 @@ async function cargarConfiguracionModo() {
             if (token) {
                 apiClient.setToken(token);
                 tokenActual = token;
+                // Refresh token: permite renovar la sesión automáticamente sin re-login
+                const refresh = await window.api.obtenerRefreshSeguro();
+                if (refresh) apiClient.setRefreshToken(refresh);
             } else {
                 // Modo conectado activo pero sin sesión → limpiar datos cloud y volver a local
                 modoConectado = false;
                 await window.api.guardarAjuste('modo_conectado', 'false');
-                await window.api.limpiarDatosLocales();
+                await window.api.limpiarDatosSiSinSesion();
             }
         }
         
@@ -277,17 +518,25 @@ async function inicializarLogin() {
         const backendUrl = ajustesPwd.api_url || 'https://zenit-pos-backend.onrender.com/api';
         apiClient.setBaseURL(backendUrl);
         apiClient.setToken(token);
+        const refresh = await window.api.obtenerRefreshSeguro();
+        if (refresh) apiClient.setRefreshToken(refresh);
         await apiClient.request('/auth/me');
-        // Token válido — mantener sesión
+        // Token válido (o renovado automáticamente con el refresh token) — mantener sesión
     } catch (e) {
-        // Token inválido o expirado — limpiar sesión completamente
-        await window.api.guardarTokenSeguro(null);
-        await window.api.guardarAjuste('api_token', '');
-        await window.api.guardarAjuste('modo_conectado', 'false');
+        // Si la sesión expiró de verdad (refresh falló), onSessionExpired ya limpió todo.
+        // Cualquier otro error (ej. sin internet) NO cierra la sesión: la app sigue
+        // funcionando offline y reintentará cuando haya conexión.
+        console.warn('No se pudo validar la sesión al arrancar:', e.message);
     }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+
+    // ── BLOQUEO DE SESIÓN (antes que todo) ─────────────
+    // Si hay cuenta vinculada sin sesión, esta llamada muestra la pantalla
+    // de bloqueo y NO deja continuar (ni perfiles, ni datos) hasta re-login.
+    try { await verificarBloqueoSesion(); } catch(e) { console.error('Error verificarBloqueoSesion:', e); }
+    // ───────────────────────────────────────────────────
 
     // ── PERFIL (primero) ────────────────────────────────
     try { await inicializarPerfil(); } catch(e) { console.error('Error inicializarPerfil:', e); }
@@ -436,6 +685,7 @@ let _mesasAutoRefreshInterval = null;
   let _settingsEventSource = null;
   let _turnoEventSource = null;
   let _auditEventSource = null;
+  let _ordersEventSource = null;
   let _backendProdIdCache = null; // nombre_normalizado -> id_backend
   let _backendProdIdCacheAt = 0;
 
@@ -591,6 +841,29 @@ function _conectarSSETurno() {
     };
 }
 
+// SSE de pedidos/mesas: refresca las vistas al instante cuando otra terminal
+// crea o modifica un pedido (el polling de 20s queda sólo como respaldo).
+function _conectarSSEOrders() {
+    if (_ordersEventSource) { _ordersEventSource.close(); _ordersEventSource = null; }
+    if (!modoConectado || !tokenActual) return;
+    const sseUrl = `${apiClient.baseURL}/orders/events?token=${tokenActual}`;
+    _ordersEventSource = new EventSource(sseUrl);
+    _ordersEventSource.onmessage = () => {
+        // Refrescar sólo la vista visible para no hacer trabajo innecesario
+        if (document.getElementById('view-mesas')?.classList.contains('active')) {
+            cargarVistaMesas?.();
+        }
+        if (document.getElementById('view-pedidos')?.classList.contains('active')) {
+            cargarPedidos?.();
+        }
+    };
+    _ordersEventSource.onerror = () => {
+        _ordersEventSource?.close();
+        _ordersEventSource = null;
+        setTimeout(() => { if (modoConectado && tokenActual) _conectarSSEOrders(); }, 10000);
+    };
+}
+
 function _conectarSSEAudit() {
     if (_auditEventSource) { _auditEventSource.close(); _auditEventSource = null; }
     if (!modoConectado || !tokenActual) return;
@@ -624,6 +897,8 @@ function iniciarSyncInventario() {
     _conectarSSETurno();
     // SSE para auditoría de acciones sensibles en tiempo real
     _conectarSSEAudit();
+    // SSE para pedidos y mesas en tiempo real
+    _conectarSSEOrders();
     // Primera actualización inmediata al conectar
     _actualizarInventarioDesdeBackend();
 }
@@ -634,6 +909,7 @@ function iniciarSyncInventario() {
       _settingsEventSource?.close();   _settingsEventSource = null;
       _turnoEventSource?.close();      _turnoEventSource = null;
       _auditEventSource?.close();      _auditEventSource = null;
+      _ordersEventSource?.close();     _ordersEventSource = null;
   }
 
   function _normalizarNombreProducto(nombre) {
@@ -889,6 +1165,85 @@ setTimeout(() => {
 function configurarBotones() {
     document.getElementById('btnNuevoProducto').addEventListener('click', () => abrirModalProducto());
     document.getElementById('btnNuevaCategoria').addEventListener('click', () => abrirModalCategoria());
+}
+
+// ============================================
+// MODALES PROPIOS — reemplazan confirm() y alert() nativos
+// ============================================
+
+// Crea (o reutiliza) el contenedor del modal de diálogo.
+function _crearModalDialogo() {
+    let overlay = document.getElementById('modal-dialogo-zenit');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'modal-dialogo-zenit';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(17,24,39,0.55);z-index:10000;display:none;align-items:center;justify-content:center;padding:20px;';
+        document.body.appendChild(overlay);
+    }
+    return overlay;
+}
+
+// Modal de confirmación estilizado. Devuelve Promise<boolean>.
+// Uso: if (!(await confirmarZenit('¿Eliminar esto?'))) return;
+function confirmarZenit(mensaje, titulo = 'Confirmar', opciones = {}) {
+    return new Promise((resolve) => {
+        const overlay = _crearModalDialogo();
+        const textoOk = opciones.textoOk || 'Aceptar';
+        const textoCancelar = opciones.textoCancelar || 'Cancelar';
+        const peligro = opciones.peligro === true; // botón rojo para acciones destructivas
+        overlay.innerHTML = `
+            <div style="background:#fff;border-radius:14px;padding:24px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                <div style="font-size:1.15em;font-weight:700;color:#111827;margin-bottom:10px;">${esc(titulo)}</div>
+                <div style="color:#4b5563;font-size:0.95em;line-height:1.5;white-space:pre-line;margin-bottom:20px;">${esc(mensaje)}</div>
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button id="dialogo-zenit-cancelar" class="btn-secondary">${esc(textoCancelar)}</button>
+                    <button id="dialogo-zenit-ok" class="btn-primary" style="${peligro ? 'background:#dc2626;' : ''}">${esc(textoOk)}</button>
+                </div>
+            </div>`;
+        overlay.style.display = 'flex';
+        const cerrar = (valor) => {
+            overlay.style.display = 'none';
+            overlay.innerHTML = '';
+            document.removeEventListener('keydown', onKey);
+            resolve(valor);
+        };
+        const onKey = (e) => {
+            if (e.key === 'Escape') cerrar(false);
+            if (e.key === 'Enter') cerrar(true);
+        };
+        document.addEventListener('keydown', onKey);
+        document.getElementById('dialogo-zenit-ok').onclick = () => cerrar(true);
+        document.getElementById('dialogo-zenit-cancelar').onclick = () => cerrar(false);
+        overlay.onclick = (e) => { if (e.target === overlay) cerrar(false); };
+        setTimeout(() => document.getElementById('dialogo-zenit-ok')?.focus(), 50);
+    });
+}
+
+// Aviso estilizado (reemplazo de alert). Se puede usar sin await.
+function alertaZenit(mensaje, titulo = 'Aviso') {
+    return new Promise((resolve) => {
+        const overlay = _crearModalDialogo();
+        overlay.innerHTML = `
+            <div style="background:#fff;border-radius:14px;padding:24px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                <div style="font-size:1.15em;font-weight:700;color:#111827;margin-bottom:10px;">${esc(titulo)}</div>
+                <div style="color:#4b5563;font-size:0.95em;line-height:1.5;white-space:pre-line;margin-bottom:20px;">${esc(mensaje)}</div>
+                <div style="display:flex;justify-content:flex-end;">
+                    <button id="dialogo-zenit-ok" class="btn-primary">Entendido</button>
+                </div>
+            </div>`;
+        overlay.style.display = 'flex';
+        const cerrar = () => {
+            overlay.style.display = 'none';
+            overlay.innerHTML = '';
+            document.removeEventListener('keydown', onKey);
+            resolve();
+        };
+        const onKey = (e) => { if (e.key === 'Escape' || e.key === 'Enter') cerrar(); };
+        document.addEventListener('keydown', onKey);
+        document.getElementById('dialogo-zenit-ok').onclick = cerrar;
+        overlay.onclick = (e) => { if (e.target === overlay) cerrar(); };
+        setTimeout(() => document.getElementById('dialogo-zenit-ok')?.focus(), 50);
+    });
 }
 
 function mostrarNotificacionExito(mensaje, titulo = '¡Operación Exitosa!') {

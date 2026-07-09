@@ -348,10 +348,10 @@ function eliminarDelCarrito(index) {
     renderizarCarrito();
 }
 
-function limpiarCarrito() {
+async function limpiarCarrito() {
     if (carrito.length === 0) return;
 
-    if (confirm('¿Vaciar el carrito?')) {
+    if (await confirmarZenit('Se quitarán todos los productos del carrito.', '¿Vaciar el carrito?', { textoOk: 'Vaciar', peligro: true })) {
         carrito = [];
         descuentoActual = 0;
         clienteSeleccionadoVenta = null;
@@ -407,7 +407,7 @@ function cerrarModalNotas() {
 // --- PROCESAR VENTA (ABRE EL MODAL DE PAGO) ---
 function procesarVenta() {
     if (carrito.length === 0) {
-        alert('El carrito está vacío');
+        alertaZenit('El carrito está vacío');
         return;
     }
 
@@ -487,14 +487,14 @@ function calcularCambio() {
 // --- EJECUTAR VENTA (CONFIRMAR Y REGISTRAR) ---
 async function ejecutarVenta() {
     if (!metodoSeleccionado) {
-        alert('Selecciona un método de pago');
+        alertaZenit('Selecciona un método de pago');
         return;
     }
 
     if (tipoPedidoActual === 'domicilio') {
         const direccion = document.getElementById('dom-direccion')?.value?.trim() || '';
         if (!direccion) {
-            const continuar = confirm('No se registró una dirección para este pedido. ¿Continuar de todas formas?');
+            const continuar = await confirmarZenit('No se registró una dirección para este pedido.', '¿Continuar sin dirección?', { textoOk: 'Continuar' });
             if (!continuar) return;
         }
     }
@@ -603,7 +603,7 @@ async function ejecutarVenta() {
 
     } catch (e) {
         console.error(e);
-        alert("Error al guardar: " + e);
+        alertaZenit("Error al guardar: " + e);
         const btnFinal = document.getElementById('btn-confirmar-final');
         if (btnFinal) btnFinal.disabled = false;
     }

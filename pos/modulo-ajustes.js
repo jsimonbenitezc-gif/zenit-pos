@@ -63,12 +63,13 @@ async function registrarCuentaZenit() {
     try {
         const ajustes = await window.api.obtenerAjustes();
         const backendUrl = ajustes.api_url || 'https://zenit-pos-backend.onrender.com/api';
-        if (!apiClient) window.apiClient = new APIClient(backendUrl);
+        if (!apiClient) { window.apiClient = new APIClient(backendUrl); configurarCallbacksApiClient(); }
         apiClient.setBaseURL(backendUrl);
 
         const response = await apiClient.register(nombre, email, password);
 
         await window.api.guardarTokenSeguro(response.token); // Token cifrado
+        if (response.refreshToken) await window.api.guardarRefreshSeguro(response.refreshToken);
         await window.api.guardarAjuste('api_url', backendUrl);
         await window.api.guardarAjuste('zenit_user_name', response.user.name);
         await window.api.guardarAjuste('zenit_user_email', email);
@@ -116,24 +117,26 @@ async function iniciarSesionZenitAjustes() {
     try {
         const ajustes = await window.api.obtenerAjustes();
         const backendUrl = ajustes.api_url || 'https://zenit-pos-backend.onrender.com/api';
-        if (!apiClient) window.apiClient = new APIClient(backendUrl);
+        if (!apiClient) { window.apiClient = new APIClient(backendUrl); configurarCallbacksApiClient(); }
         apiClient.setBaseURL(backendUrl);
 
         // Verificar si hay pedidos locales "anónimos" antes de iniciar sesión
         const pendientesLocales = await window.api.obtenerPedidosPendientes();
         let subirAnonimos = false;
         if (pendientesLocales && pendientesLocales.length > 0) {
-            subirAnonimos = confirm(
+            subirAnonimos = await confirmarZenit(
                 `Tienes ${pendientesLocales.length} pedido(s) registrado(s) sin cuenta.\n\n` +
-                '¿Subirlos a tu cuenta?\n\n' +
-                'Acepta → se suben a tu cuenta\n' +
-                'Cancela → se descartan (no se pierden del historial local hasta cerrar sesión)'
+                'Subirlos → se agregan a tu cuenta\n' +
+                'Descartar → se conservan solo en el historial local hasta cerrar sesión',
+                '¿Subir pedidos a tu cuenta?',
+                { textoOk: 'Subirlos', textoCancelar: 'Descartar' }
             );
         }
 
         const response = await apiClient.login(email, password);
 
         await window.api.guardarTokenSeguro(response.token); // Token cifrado
+        if (response.refreshToken) await window.api.guardarRefreshSeguro(response.refreshToken);
         await window.api.guardarAjuste('api_url', backendUrl);
         await window.api.guardarAjuste('zenit_user_name', response.user.name);
         await window.api.guardarAjuste('zenit_user_email', email);
@@ -173,7 +176,12 @@ async function iniciarSesionZenitAjustes() {
 }
 
 async function cerrarSesionZenit() {
-    if (!confirm('¿Cerrar sesión? Los datos se sincronizarán con tu cuenta antes de salir.')) return;
+    const okCerrar = await confirmarZenit(
+        'Tus datos se sincronizarán con tu cuenta antes de salir.\n\nDespués, los datos locales de este equipo se borrarán por seguridad. Podrás recuperarlos iniciando sesión de nuevo.',
+        '¿Cerrar sesión?',
+        { textoOk: 'Cerrar sesión', peligro: true }
+    );
+    if (!okCerrar) return;
 
     // Detener SSE y polling para evitar fugas y requests huérfanos durante el cierre de sesión
     try { detenerSyncInventario(); } catch {}
@@ -192,7 +200,9 @@ async function cerrarSesionZenit() {
 
     // 2. Limpiar credenciales y datos locales (ahora están seguros en la nube)
     await window.api.guardarTokenSeguro('');
+    await window.api.guardarRefreshSeguro('');
     await window.api.guardarAjuste('api_token', '');
+    await window.api.guardarAjuste('api_refresh', '');
     await window.api.guardarAjuste('modo_conectado', 'false');
     await window.api.guardarAjuste('pedir_password_inicio', 'false');
     await window.api.guardarAjuste('zenit_user_name', '');
@@ -212,8 +222,8 @@ function mostrarCambiarPasswordApp() {
 async function guardarNuevaPasswordApp() {
     const nueva = document.getElementById('nueva-password-app').value;
     const confirmar = document.getElementById('confirm-password-app').value;
-    if (nueva.length < 4) { alert('La contraseña debe tener al menos 4 caracteres'); return; }
-    if (nueva !== confirmar) { alert('Las contraseñas no coinciden'); return; }
+    if (nueva.length < 4) { alertaZenit('La contraseña debe tener al menos 4 caracteres'); return; }
+    if (nueva !== confirmar) { alertaZenit('Las contraseñas no coinciden'); return; }
     await window.api.establecerPasswordApp(nueva);
     document.getElementById('form-cambiar-password').style.display = 'none';
     document.getElementById('nueva-password-app').value = '';
@@ -400,7 +410,7 @@ function ocultarFormNuevaSucursal() {
 
 async function guardarNuevaSucursal() {
     const nombre = document.getElementById('ns-nombre')?.value?.trim();
-    if (!nombre) { alert('El nombre de la sucursal es requerido'); return; }
+    if (!nombre) { alertaZenit('El nombre de la sucursal es requerido'); return; }
     const direccion = document.getElementById('ns-direccion')?.value?.trim() || '';
     const telefono = document.getElementById('ns-telefono')?.value?.trim() || '';
     const checkboxes = document.querySelectorAll('#form-nueva-sucursal input[type="checkbox"][value]');
@@ -415,18 +425,18 @@ async function guardarNuevaSucursal() {
         await cargarSucursalesAjustes();
         mostrarNotificacionExito('Sucursal creada correctamente', '¡Listo!');
     } catch (e) {
-        alert('Error al crear la sucursal: ' + (e.message || 'Error desconocido'));
+        alertaZenit('Error al crear la sucursal: ' + (e.message || 'Error desconocido'));
     }
 }
 
 async function desactivarSucursal(id, nombre) {
-    if (!confirm(`¿Eliminar la sucursal "${nombre}"?\n\nSus pedidos no se borran, pero esta sucursal dejará de aparecer.`)) return;
+    if (!(await confirmarZenit(`Sus pedidos no se borran, pero la sucursal "${nombre}" dejará de aparecer.`, '¿Eliminar sucursal?', { textoOk: 'Eliminar', peligro: true }))) return;
     try {
         await apiClient.request(`/branches/${id}`, { method: 'DELETE' });
         await recargarListaSucursales();
         await cargarSucursalesAjustes();
     } catch (e) {
-        alert('Error al desactivar la sucursal');
+        alertaZenit('Error al desactivar la sucursal');
     }
 }
 
@@ -447,7 +457,7 @@ async function guardarEditarSucursal() {
     const id = document.getElementById('es-id').value;
     const nombre = document.getElementById('es-nombre').value.trim();
     const direccion = document.getElementById('es-direccion').value.trim();
-    if (!nombre) { alert('El nombre es requerido'); return; }
+    if (!nombre) { alertaZenit('El nombre es requerido'); return; }
     try {
         await apiClient.request(`/branches/${id}`, {
             method: 'PUT',
@@ -458,7 +468,7 @@ async function guardarEditarSucursal() {
         await cargarSucursalesAjustes();
         mostrarNotificacionExito('Sucursal actualizada', '¡Listo!');
     } catch (e) {
-        alert('Error al actualizar la sucursal');
+        alertaZenit('Error al actualizar la sucursal');
     }
 }
 
@@ -998,7 +1008,7 @@ async function imprimirTicket(pedidoId) {
         const pedido = (pedidosResult.data || pedidosResult).find(p => p.id === pedidoId);
 
         if (!pedido || !detalles) {
-            alert('No se pudo cargar la información del pedido');
+            alertaZenit('No se pudo cargar la información del pedido');
             return;
         }
 
@@ -1268,7 +1278,7 @@ async function imprimirTicket(pedidoId) {
 
     } catch (error) {
         console.error('Error al imprimir ticket:', error);
-        alert('Error al generar el ticket de impresión');
+        alertaZenit('Error al generar el ticket de impresión');
     }
 }
 
@@ -1293,11 +1303,11 @@ async function seleccionarLogoNegocio() {
 
             // Guardar en ajustes
             await window.api.guardarAjuste('logo_path', ruta);
-            alert('Logo actualizado correctamente');
+            alertaZenit('Logo actualizado correctamente');
         }
     } catch (error) {
         console.error('Error al seleccionar logo:', error);
-        alert('Error al cargar la imagen');
+        alertaZenit('Error al cargar la imagen');
     }
 }
 
@@ -1317,7 +1327,7 @@ async function verificarActualizacionManual() {
 
         // En desarrollo, checkForUpdates devuelve { available: false }
         if (result && result.available === false) {
-            alert('Las actualizaciones automáticas no están disponibles en modo desarrollo.');
+            alertaZenit('Las actualizaciones automáticas no están disponibles en modo desarrollo.');
             return;
         }
 
@@ -1325,19 +1335,19 @@ async function verificarActualizacionManual() {
         const versionDisponible = result && result.updateInfo && result.updateInfo.version;
 
         if (versionDisponible && versionDisponible !== versionActual) {
-            const descargar = confirm(`Nueva versión disponible: v${versionDisponible}\nTienes instalada: v${versionActual}\n\n¿Descargar ahora? La app se reiniciará al terminar.`);
+            const descargar = await confirmarZenit(`Nueva versión disponible: v${versionDisponible}\nTienes instalada: v${versionActual}\n\nLa app se reiniciará al terminar.`, '¿Descargar actualización?', { textoOk: 'Descargar' });
             if (descargar) {
                 btn.innerText = 'Descargando...';
                 await window.api.downloadUpdate();
                 // El evento update-downloaded en render.js mostrará el modal de instalación
             }
         } else {
-            alert(`Ya tienes la versión más reciente (v${versionActual})`);
+            alertaZenit(`Ya tienes la versión más reciente (v${versionActual})`);
         }
 
     } catch (error) {
         console.error('Error al verificar actualizaciones:', error);
-        alert('No se pudo verificar actualizaciones. Verifica tu conexión a internet.');
+        alertaZenit('No se pudo verificar actualizaciones. Verifica tu conexión a internet.');
     } finally {
         btn.innerText = textOriginal;
         btn.disabled = false;

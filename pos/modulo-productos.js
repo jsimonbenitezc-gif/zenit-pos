@@ -43,14 +43,14 @@ async function cargarProductosAdmin() {
                 <div class="clasificacion-header">
                     <h3>
                         ${cat.imagen
-                            ? `<img src="file://${cat.imagen}" style="width: 30px; height: 30px; border-radius: 6px; object-fit: cover; margin-right: 8px; vertical-align: middle;">`
+                            ? `<img src="${srcImagen(cat.imagen)}" style="width: 30px; height: 30px; border-radius: 6px; object-fit: cover; margin-right: 8px; vertical-align: middle;">`
                             : `${renderIcono(cat.emoji || 'svg:package', 28)}`
                         }
                         ${esc(cat.nombre)}
                     </h3>
                     ${cat.id ? `
                         <div style="display:flex; gap:6px;">
-                            <button class="btn-secondary small" title="Editar Categoría" onclick="editarCategoria(${cat.id},'${esc(cat.nombre)}','${esc(cat.emoji)}','${esc(cat.imagen || '')}')">${svgPencil}</button>
+                            <button class="btn-secondary small" title="Editar Categoría" onclick="editarCategoria(${cat.id})">${svgPencil}</button>
                             <button class="btn-secondary small" title="Eliminar Categoría" style="color:#ef4444;" onclick="eliminarCategoriaAdmin(${cat.id},'${esc(cat.nombre)}')">${svgTrash}</button>
                         </div>
                     ` : ''}
@@ -64,7 +64,7 @@ async function cargarProductosAdmin() {
                             <div onclick="editarProducto(${p.id})">
                             <div class="product-visual">
                                 ${p.imagen
-                                    ? `<img src="file://${p.imagen}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${renderIcono(p.emoji || 'svg:package', 35)}</span>`
+                                    ? `<img src="${srcImagen(p.imagen)}" class="product-img-display" onerror="this.style.display='none';this.nextElementSibling.style.display=''"><span class="product-emoji" style="display:none">${renderIcono(p.emoji || 'svg:package', 35)}</span>`
                                     : `<span class="product-emoji">${renderIcono(p.emoji || 'svg:package', 35)}</span>`
                                 }
                             </div>
@@ -104,9 +104,11 @@ async function abrirModalProducto(p = null) {
     if (p && p.imagen) {
         // Producto existente CON imagen: mostrar imagen, ocultar emoji
         const preview = document.getElementById('prodImagenPreview');
-        preview.src = 'file://' + p.imagen;
+        preview.src = srcImagen(p.imagen);
         preview.style.display = 'block';
         document.getElementById('prodEmojiDisplay').style.display = 'none';
+        // Conservar la imagen existente si el usuario no elige otra
+        document.getElementById('prodImagenRuta').value = p.imagen;
     } else {
         // Producto nuevo O existente sin imagen: mostrar emoji, ocultar imagen
         document.getElementById('prodImagenPreview').style.display = 'none';
@@ -137,7 +139,7 @@ async function guardarProducto() {
     };
 
     if (!p.nombre || !p.precio) {
-        alert('Nombre y precio son obligatorios');
+        alertaZenit('Nombre y precio son obligatorios');
         return;
     }
 
@@ -152,7 +154,7 @@ async function guardarProducto() {
         cargarProductosAdmin();
     } catch (e) {
         console.error(e);
-        alert('Error al guardar producto');
+        alertaZenit('Error al guardar producto');
     }
 }
 
@@ -168,11 +170,29 @@ async function editarProducto(id) {
 // --- CATEGORÍAS ---
 function abrirModalCategoria(cat = null) {
     categoriaEditandoId = cat ? cat.id : null;
-    emojiSeleccionado = cat ? cat.emoji : 'svg:package';
+    emojiSeleccionado = (cat && cat.emoji) ? cat.emoji : 'svg:package';
 
     document.getElementById('catNombre').value = cat ? cat.nombre : '';
-    document.getElementById('catEmojiDisplay').innerHTML = renderIcono(emojiSeleccionado, 30);
     document.getElementById('modalCatTitulo').innerText = cat ? 'Editar Categoría' : 'Nueva Categoría';
+
+    // Resetear SIEMPRE el estado de imagen del modal (sin esto, la imagen de la
+    // categoría anterior se quedaba pegada y se guardaba en la siguiente).
+    const inputRuta = document.getElementById('catImagenRuta');
+    const preview = document.getElementById('catImagenPreview');
+    const emojiDisplay = document.getElementById('catEmojiDisplay');
+    if (inputRuta) inputRuta.value = '';
+    if (preview) { preview.src = ''; preview.style.display = 'none'; }
+    if (emojiDisplay) {
+        emojiDisplay.style.display = 'inline';
+        emojiDisplay.innerHTML = renderIcono(emojiSeleccionado, 30);
+    }
+
+    // Si la categoría ya tiene imagen, mostrarla y conservarla al guardar
+    if (cat && cat.imagen) {
+        if (inputRuta) inputRuta.value = cat.imagen;
+        if (preview) { preview.src = srcImagen(cat.imagen); preview.style.display = 'block'; }
+        if (emojiDisplay) emojiDisplay.style.display = 'none';
+    }
 
     document.getElementById('modalCategoria').classList.remove('hidden');
 }
@@ -187,7 +207,7 @@ async function guardarCategoria() {
     const imagenRuta = document.getElementById('catImagenRuta')?.value || '';
 
     if (!nombre) {
-        alert('El nombre es obligatorio');
+        alertaZenit('El nombre es obligatorio');
         return;
     }
 
@@ -198,9 +218,23 @@ async function guardarCategoria() {
             imagen: imagenRuta
         };
 
+        // En modo conectado la categoría vive en la nube: guardarla ahí primero.
+        // (Antes sólo se guardaba localmente y la siguiente sincronización
+        // la pisaba con la versión de la nube — por eso la imagen "no cambiaba".)
+        if (modoConectado && apiClient && tokenActual) {
+            if (categoriaEditandoId) {
+                await apiClient.updateCategory(categoriaEditandoId, { name: nombre, emoji: datos.emoji, image: datos.imagen || null });
+            } else {
+                const creada = await apiClient.createCategory({ name: nombre, emoji: datos.emoji, image: datos.imagen || null });
+                categoriaEditandoId = creada?.id || null;
+            }
+        }
+
+        // Copia local (cache offline). En modo conectado los IDs locales
+        // coinciden con los de la nube gracias a syncClasificaciones.
         if (categoriaEditandoId) {
             datos.id = categoriaEditandoId;
-            await window.api.editarClasificacion(datos);
+            await window.api.editarClasificacion(datos).catch(() => {});
         } else {
             await window.api.agregarClasificacion(datos);
         }
@@ -210,10 +244,12 @@ async function guardarCategoria() {
         cargarProductosAdmin();
     } catch (e) {
         console.error(e);
-        alert('Error al guardar categoría');
+        alertaZenit('Error al guardar categoría');
     }
 }
 
-function editarCategoria(id, nombre, emoji) {
-    abrirModalCategoria({ id, nombre, emoji });
+function editarCategoria(id) {
+    // Buscar la categoría completa (incluida su imagen) en el cache ya cargado
+    const cat = clasificaciones.find(c => c.id === id);
+    if (cat) abrirModalCategoria({ id: cat.id, nombre: cat.nombre, emoji: cat.emoji, imagen: cat.imagen });
 }

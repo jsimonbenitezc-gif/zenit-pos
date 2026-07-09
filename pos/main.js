@@ -58,7 +58,10 @@ function createWindow() {
             // Buscamos preload.js en la misma carpeta que main.js
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
-            nodeIntegration: false
+            nodeIntegration: false,
+            // Sin DevTools en producción: evita que un empleado invoque
+            // window.api.* directamente desde la consola.
+            devTools: !app.isPackaged
         }
     });
     // FIX AQUÍ: Forzamos a que busque index.html en la carpeta del script
@@ -147,10 +150,19 @@ ipcMain.handle('obtener-clasificaciones-raw', async () => {
     return new Promise((res, rej) => db.obtenerClasificacionesRaw((err, rows) => err ? rej(err) : res(rows)));
 });
 
-// Helper: verificar si el rol activo tiene permiso para operaciones de administrador
+// Helper: verificar si el rol activo tiene permiso para gestionar el catálogo
+// (productos y clasificaciones). 'dueno' y 'encargado' pasan siempre; los puestos
+// personalizados sólo si su configuración incluye ver_productos.
 function verificarPermisoAdmin() {
-    if (rolActivoEnMain === 'cajero') {
-        throw new Error('Permiso denegado: el perfil Cajero no puede realizar esta acción.');
+    if (rolActivoEnMain === 'dueno' || rolActivoEnMain === 'encargado') return;
+    if (permisosRolActivoEnMain?.ver_productos === true) return;
+    throw new Error('Permiso denegado: el perfil actual no puede realizar esta acción.');
+}
+
+// Helper: operaciones que sólo el dueño puede ejecutar (borrar datos, contraseña de la app).
+function verificarPermisoDueno() {
+    if (rolActivoEnMain !== 'dueno') {
+        throw new Error('Permiso denegado: sólo el administrador puede realizar esta acción.');
     }
 }
 
@@ -272,6 +284,49 @@ ipcMain.handle('seleccionar-imagen', async () => {
         return rutaDestino; // Devolver la nueva ruta
     } catch (error) {
         console.error('Error al copiar imagen:', error);
+        return null;
+    }
+});
+
+// Selección de imagen como data URI (base64). El renderer la comprime con
+// canvas y la guarda en la nube para que sea visible en todos los dispositivos.
+ipcMain.handle('seleccionar-imagen-datauri', async () => {
+    const result = await dialog.showOpenDialog({
+        properties: ['openFile'],
+        filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] }]
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+
+    const ruta = result.filePaths[0];
+    try {
+        const stats = fs.statSync(ruta);
+        if (stats.size > 15 * 1024 * 1024) {
+            return { error: 'La imagen es demasiado grande (máximo 15 MB).' };
+        }
+        const ext = path.extname(ruta).toLowerCase().replace('.', '');
+        const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' }[ext] || 'image/png';
+        const base64 = fs.readFileSync(ruta).toString('base64');
+        return { dataUri: `data:${mime};base64,${base64}` };
+    } catch (e) {
+        console.error('Error leyendo imagen:', e);
+        return { error: 'No se pudo leer la imagen.' };
+    }
+});
+
+// Lee una imagen local guardada previamente (rutas legacy) como data URI,
+// para poder migrarla a la nube al editar el producto/categoría.
+ipcMain.handle('leer-imagen-datauri', async (_, ruta) => {
+    try {
+        if (typeof ruta !== 'string' || !ruta) return null;
+        // Sólo permitir lecturas dentro de la carpeta de imágenes de la app
+        const carpetaImagenes = path.join(app.getPath('userData'), 'imagenes');
+        const normalizada = path.resolve(ruta);
+        if (!normalizada.startsWith(carpetaImagenes)) return null;
+        if (!fs.existsSync(normalizada)) return null;
+        const ext = path.extname(normalizada).toLowerCase().replace('.', '');
+        const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' }[ext] || 'image/png';
+        return `data:${mime};base64,${fs.readFileSync(normalizada).toString('base64')}`;
+    } catch (e) {
         return null;
     }
 });
@@ -541,14 +596,27 @@ ipcMain.handle('verificar-password-app', (event, password) => {
 });
 
 ipcMain.handle('establecer-password-app', (event, password) => {
+    verificarPermisoDueno();
     return new Promise((resolve) => {
         db.establecerPasswordApp(password, (err) => resolve(!err));
     });
 });
 
 ipcMain.handle('limpiar-datos-locales', () => {
+    verificarPermisoDueno();
     return new Promise((resolve) => {
         db.limpiarDatosLocales((err) => resolve(!err));
+    });
+});
+
+// Limpieza automática al arrancar cuando el modo conectado quedó sin sesión.
+// No exige rol porque main verifica por sí mismo que no exista ningún token guardado.
+ipcMain.handle('limpiar-datos-si-sin-sesion', () => {
+    return new Promise((resolve) => {
+        db.db.get("SELECT valor FROM ajustes WHERE clave IN ('api_token_enc','api_token') AND valor != '' LIMIT 1", [], (err, row) => {
+            if (row) return resolve(false); // hay sesión guardada → no limpiar
+            db.limpiarDatosLocales((err2) => resolve(!err2));
+        });
     });
 });
 
@@ -665,6 +733,47 @@ ipcMain.handle('guardar-token-seguro', (event, token) => {
     }
 });
 
+// REFRESH TOKEN — mismo esquema de cifrado que el access token.
+// Permite renovar la sesión sin pedir login durante 30 días.
+ipcMain.handle('guardar-refresh-seguro', (event, token) => {
+    try {
+        if (!token) {
+            return new Promise((resolve) => {
+                db.guardarAjuste('api_refresh_enc', '', () => resolve(true));
+            });
+        }
+        if (safeStorage.isEncryptionAvailable()) {
+            const cifrado = safeStorage.encryptString(token).toString('base64');
+            return new Promise((resolve, reject) => {
+                db.guardarAjuste('api_refresh_enc', cifrado, (err) => err ? reject(err) : resolve(true));
+            });
+        } else {
+            return new Promise((resolve, reject) => {
+                db.guardarAjuste('api_refresh', token, (err) => err ? reject(err) : resolve(true));
+            });
+        }
+    } catch (err) {
+        console.error('Error al guardar refresh token seguro:', err);
+        return false;
+    }
+});
+
+ipcMain.handle('obtener-refresh-seguro', () => {
+    return new Promise((resolve) => {
+        db.db.get("SELECT valor FROM ajustes WHERE clave = 'api_refresh_enc'", [], (err, row) => {
+            if (!err && row && row.valor && safeStorage.isEncryptionAvailable()) {
+                try {
+                    const buffer = Buffer.from(row.valor, 'base64');
+                    return resolve(safeStorage.decryptString(buffer));
+                } catch (e) { /* cae al fallback */ }
+            }
+            db.db.get("SELECT valor FROM ajustes WHERE clave = 'api_refresh'", [], (err2, row2) => {
+                resolve(row2?.valor || null);
+            });
+        });
+    });
+});
+
 ipcMain.handle('obtener-token-seguro', () => {
     return new Promise((resolve) => {
         // Intentar obtener token cifrado primero
@@ -714,6 +823,7 @@ ipcMain.handle('abrir-en-navegador', async (event, url) => {
 // ============================================
 
 let rolActivoEnMain = 'dueno'; // Cache del rol actual
+let permisosRolActivoEnMain = null; // Permisos efectivos del rol activo (para puestos personalizados)
 
 // Lee y decodifica el payload del JWT almacenado (sin verificar firma — sólo para leer claims locales).
 // Se usa para validar que el rol solicitado desde el renderer corresponda a la sesión real del servidor.
@@ -748,9 +858,10 @@ async function obtenerRolDelTokenAlmacenado() {
     });
 }
 
-ipcMain.handle('establecer-rol-activo', async (event, rol) => {
-    const rolesValidos = ['cajero', 'encargado', 'dueno'];
-    if (!rolesValidos.includes(rol)) {
+ipcMain.handle('establecer-rol-activo', async (event, rol, permisos) => {
+    // Se aceptan los roles built-in y también las claves de puestos personalizados
+    // (restringidos según los permisos que acompañan al registro).
+    if (typeof rol !== 'string' || !rol || rol.length > 60) {
         return false;
     }
     // El rol 'dueno' (admin) sólo se acepta si el JWT almacenado corresponde a un owner.
@@ -763,6 +874,7 @@ ipcMain.handle('establecer-rol-activo', async (event, rol) => {
         }
     }
     rolActivoEnMain = rol;
+    permisosRolActivoEnMain = (permisos && typeof permisos === 'object') ? permisos : null;
     return true;
 });
 
@@ -836,9 +948,10 @@ function broadcastKDS(data) {
 const kdsPendingApprovals = new Map();
 
 function getClientIP(req) {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded) return forwarded.split(',')[0].trim();
-    return req.socket.remoteAddress?.replace('::ffff:', '') || '127.0.0.1';
+    // Sólo la dirección real del socket. Nunca confiar en headers como
+    // X-Forwarded-For: los controla el cliente y permitirían suplantar
+    // una IP local para saltarse la aprobación de dispositivos.
+    return req.socket.remoteAddress?.replace('::ffff:', '') || '0.0.0.0';
 }
 
 // Verifica si un dispositivo está autorizado (promesa)

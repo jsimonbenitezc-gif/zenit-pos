@@ -123,7 +123,7 @@ function actualizarCardMiPlan() {
 
 async function iniciarPruebaPremium() {
     if (!modoConectado || !apiClient) {
-        alert('Conéctate a tu cuenta Zenit primero.');
+        alertaZenit('Conéctate a tu cuenta Zenit primero.');
         return;
     }
     const btn = document.getElementById('btn-iniciar-trial');
@@ -133,7 +133,7 @@ async function iniciarPruebaPremium() {
         await cargarPlanInfo();
         mostrarNotificacionExito('Prueba de 30 días activada', '¡Disfruta Premium!');
     } catch (e) {
-        alert(e.message || 'No se pudo activar la prueba. Intenta de nuevo.');
+        alertaZenit(e.message || 'No se pudo activar la prueba. Intenta de nuevo.');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Iniciar prueba gratuita (30 días)'; }
     }
@@ -143,7 +143,7 @@ let _planPollingInterval = null;
 
 async function abrirCheckoutStripe() {
     if (!modoConectado || !apiClient) {
-        alert('Conéctate a tu cuenta Zenit primero.');
+        alertaZenit('Conéctate a tu cuenta Zenit primero.');
         return;
     }
     const btn = document.getElementById('btn-upgrade-premium');
@@ -156,7 +156,7 @@ async function abrirCheckoutStripe() {
             iniciarPollingPlan();
         }
     } catch (e) {
-        alert(e.message || 'No se pudo iniciar el proceso de pago. Intenta de nuevo.');
+        alertaZenit(e.message || 'No se pudo iniciar el proceso de pago. Intenta de nuevo.');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Actualizar a Premium — $499 MXN/mes'; }
     }
@@ -215,7 +215,7 @@ async function abrirPortalStripe() {
         const data = await apiClient.request('/billing/portal', { method: 'POST' });
         if (data.url) await window.api.abrirEnNavegador(data.url);
     } catch (e) {
-        alert(e.message || 'No se pudo abrir el portal de facturación.');
+        alertaZenit(e.message || 'No se pudo abrir el portal de facturación.');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Gestionar suscripción'; }
     }

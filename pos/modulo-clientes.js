@@ -291,7 +291,7 @@ async function guardarCliente() {
     const direccion = document.getElementById('cli-direccion').value.trim();
 
     if (!telefono || !nombre) {
-        alert("El teléfono y el nombre son obligatorios.");
+        alertaZenit("El teléfono y el nombre son obligatorios.");
         return;
     }
 
@@ -311,7 +311,7 @@ async function guardarCliente() {
         cargarClientes();
     } catch (error) {
         console.error("Error al guardar cliente:", error);
-        alert("Error al guardar el cliente");
+        alertaZenit("Error al guardar el cliente");
         if (btnGuardar) btnGuardar.disabled = false;
     }
 }
@@ -321,7 +321,7 @@ function editarCliente(id) {
     window.api.obtenerClientesConCompras().then(clientes => {
         const cliente = clientes.find(c => c.id === id);
         if (!cliente) {
-            alert("Cliente no encontrado");
+            alertaZenit("Cliente no encontrado");
             return;
         }
 
@@ -347,7 +347,7 @@ function editarCliente(id) {
         document.getElementById('modal-cliente').classList.remove('hidden');
     }).catch(error => {
         console.error("Error al cargar cliente para editar:", error);
-        alert("Error al cargar los datos del cliente");
+        alertaZenit("Error al cargar los datos del cliente");
     });
 }
 async function _actualizarClienteExistenteBase(id) {
@@ -356,7 +356,7 @@ async function _actualizarClienteExistenteBase(id) {
     const direccion = document.getElementById('cli-direccion').value.trim();
 
     if (!telefono || !nombre) {
-        alert("El teléfono y el nombre son obligatorios.");
+        alertaZenit("El teléfono y el nombre son obligatorios.");
         return;
     }
 
@@ -380,18 +380,18 @@ async function _actualizarClienteExistenteBase(id) {
 
     } catch (error) {
         console.error("Error al actualizar cliente:", error);
-        alert("Error al actualizar el cliente");
+        alertaZenit("Error al actualizar el cliente");
     }
 }
 
-function confirmarEliminarCliente(id, nombre) {
-    if (confirm(`¿Estás seguro de eliminar al cliente "${nombre}"?\n\nSi tiene pedidos asociados, se marcará como eliminado pero no se borrará completamente.`)) {
+async function confirmarEliminarCliente(id, nombre) {
+    if (await confirmarZenit(`Se eliminará al cliente "${nombre}".\n\nSi tiene pedidos asociados, se marcará como eliminado pero su historial se conserva.`, '¿Eliminar cliente?', { textoOk: 'Eliminar', peligro: true })) {
         window.api.eliminarCliente(id).then(() => {
             mostrarNotificacionExito('Cliente eliminado correctamente', '¡Cliente Eliminado!');
             cargarClientes();  // Recargar la lista
         }).catch(error => {
             console.error("Error al eliminar cliente:", error);
-            alert("Error al eliminar el cliente");
+            alertaZenit("Error al eliminar el cliente");
         });
     }
 }
@@ -400,7 +400,7 @@ function verDetalleCliente(id) {
     obtenerClientesWrapper().then(clientes => {
         const cliente = clientes.find(c => c.id === id);
         if (!cliente) {
-            alert("Cliente no encontrado");
+            alertaZenit("Cliente no encontrado");
             return;
         }
 
@@ -432,7 +432,7 @@ function verDetalleCliente(id) {
         document.getElementById('modal-ver-cliente').classList.remove('hidden');
     }).catch(error => {
         console.error("Error al cargar cliente:", error);
-        alert("Error al cargar los datos del cliente");
+        alertaZenit("Error al cargar los datos del cliente");
     });
 }
 
@@ -446,7 +446,7 @@ async function actualizarClienteExistente(id) {
         const telefono  = document.getElementById('cli-telefono').value.trim();
         const nombre    = document.getElementById('cli-nombre').value.trim();
         const direccion = document.getElementById('cli-direccion').value.trim();
-        if (!telefono || !nombre) { alert('El teléfono y el nombre son obligatorios.'); return; }
+        if (!telefono || !nombre) { alertaZenit('El teléfono y el nombre son obligatorios.'); return; }
 
         pedirPinEmpleado(
             `Editar cliente. Esta acción quedará registrada. Ingresa tu PIN para confirmar.`,
@@ -462,7 +462,7 @@ async function actualizarClienteExistente(id) {
                     cerrarModalCliente();
                     cargarClientes();
                 } catch(e) {
-                    alert('Error al actualizar cliente: ' + (e.message || 'Error'));
+                    alertaZenit('Error al actualizar cliente: ' + (e.message || 'Error'));
                 }
             }
         );

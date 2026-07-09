@@ -412,24 +412,26 @@ function toggleEmojiPicker(tipo) {
 }
 
 async function seleccionarImagenProducto() {
-    const rutaImagen = await window.api.seleccionarImagen();
-    if (rutaImagen) {
-        rutaImagenTemporal = rutaImagen;
-        document.getElementById('prodImagenRuta').value = rutaImagen;
+    // La imagen se comprime y se guarda como data URI: visible en todos los dispositivos
+    const dataUri = await elegirImagenComprimida();
+    if (dataUri) {
+        rutaImagenTemporal = dataUri;
+        document.getElementById('prodImagenRuta').value = dataUri;
         document.getElementById('prodEmojiDisplay').style.display = 'none';
         const preview = document.getElementById('prodImagenPreview');
-        preview.src = 'file://' + rutaImagen;
+        preview.src = dataUri;
         preview.style.display = 'block';
     }
 }
 
 async function seleccionarImagenCategoria() {
-    const rutaImagen = await window.api.seleccionarImagen();
-    if (rutaImagen) {
-        document.getElementById('catImagenRuta').value = rutaImagen;
+    // La imagen se comprime y se guarda como data URI: visible en todos los dispositivos
+    const dataUri = await elegirImagenComprimida();
+    if (dataUri) {
+        document.getElementById('catImagenRuta').value = dataUri;
         document.getElementById('catEmojiDisplay').style.display = 'none';
         const preview = document.getElementById('catImagenPreview');
-        preview.src = 'file://' + rutaImagen;
+        preview.src = dataUri;
         preview.style.display = 'block';
     }
 }

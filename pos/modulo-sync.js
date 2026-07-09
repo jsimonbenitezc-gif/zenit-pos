@@ -17,10 +17,10 @@ async function crearRespaldoAhora() {
             document.getElementById('last-backup').innerText = nombre.replace('backup-', '').replace('.db', '').replace(/T/, ' ').replace(/-/g, ':').substring(0, 19);
             mostrarNotificacionExito(`Respaldo guardado (${resultado.total} en total)`, '¡Respaldo Creado!');
         } else {
-            alert('Error al crear el respaldo: ' + resultado.error);
+            alertaZenit('Error al crear el respaldo: ' + resultado.error);
         }
     } catch(e) {
-        alert('No se pudo crear el respaldo');
+        alertaZenit('No se pudo crear el respaldo');
     } finally {
         btn.disabled = false;
         btn.innerText = textoOriginal;
@@ -40,7 +40,7 @@ async function syncLocalToCloud() {
 
     try {
         // 1. CATEGORÍAS — emparejar por nombre
-        msg('${svgIconHTML("loader", 16, "#2563eb")} Sincronizando categorías...');
+        msg(`${svgIconHTML("loader", 16, "#2563eb")} Sincronizando categorías...`);
         const localCats = await window.api.obtenerClasificacionesRaw();
         const cloudCats = await apiClient.getCategories();
         const catIdMap = {}; // local_id → cloud_id
@@ -60,7 +60,7 @@ async function syncLocalToCloud() {
         }
 
         // 2. PRODUCTOS — emparejar por nombre
-        msg('${svgIconHTML("loader", 16, "#2563eb")} Sincronizando productos...');
+        msg(`${svgIconHTML("loader", 16, "#2563eb")} Sincronizando productos...`);
         const localCatsConProds = await window.api.obtenerProductosAgrupados();
         const localProds = localCatsConProds.flatMap(cat => cat.productos || []);
         const cloudProds = await apiClient.getProducts();
@@ -89,7 +89,7 @@ async function syncLocalToCloud() {
         }
 
         // 3. CLIENTES — emparejar por teléfono
-        msg('${svgIconHTML("loader", 16, "#2563eb")} Sincronizando clientes...');
+        msg(`${svgIconHTML("loader", 16, "#2563eb")} Sincronizando clientes...`);
         const localClientes = await window.api.obtenerClientes();
         const cloudClientes = await apiClient.getCustomers();
 
@@ -112,7 +112,7 @@ async function syncLocalToCloud() {
 
     } catch (error) {
         console.error('Error durante sincronización:', error);
-        msg('${svgIconHTML("triangle-alert", 16, "#f59e0b")} Sincronización parcial. Algunos datos podrían no haberse subido.');
+        msg(`${svgIconHTML("triangle-alert", 16, "#f59e0b")} Sincronización parcial. Algunos datos podrían no haberse subido.`);
         await new Promise(r => setTimeout(r, 1500));
     }
 }

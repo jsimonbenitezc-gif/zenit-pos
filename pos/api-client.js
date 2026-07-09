@@ -2,23 +2,74 @@
 // API CLIENT - Comunicación con Backend
 // ============================================
 
+const API_REQUEST_TIMEOUT_MS = 30000; // 30 segundos
+
 class APIClient {
     constructor(baseURL) {
         this.baseURL = baseURL || 'http://localhost:3000/api';
         this.token = null;
+        this.refreshToken = null;
+        this.onTokenRefreshed = null; // callback (token, refreshToken) tras rotación exitosa
+        this.onSessionExpired = null; // callback cuando el refresh también falla
+        this._refreshPromise = null;  // dedupe: evita refrescar varias veces en paralelo
     }
 
     setToken(token) {
         this.token = token;
     }
 
+    setRefreshToken(refreshToken) {
+        this.refreshToken = refreshToken;
+    }
+
     setBaseURL(url) {
         this.baseURL = url;
     }
 
-    async request(endpoint, options = {}) {
+    // Intenta rotar el access token usando el refresh token actual.
+    // Devuelve el nuevo access token o null si falló.
+    // Usa fetch directamente (no this.request) para evitar recursión infinita.
+    async _doRefresh() {
+        if (!this.refreshToken) return null;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+        try {
+            const response = await fetch(`${this.baseURL}/auth/refresh`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refreshToken: this.refreshToken }),
+                cache: 'no-store',
+                signal: controller.signal
+            });
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (!data || !data.token) return null;
+            this.token = data.token;
+            if (data.refreshToken) this.refreshToken = data.refreshToken;
+            if (this.onTokenRefreshed) {
+                try { await this.onTokenRefreshed(data.token, data.refreshToken || null); } catch (e) {}
+            }
+            return data.token;
+        } catch (e) {
+            return null;
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    // Garantiza una sola operación de refresh concurrente.
+    _refreshTokenOnce() {
+        if (!this._refreshPromise) {
+            this._refreshPromise = this._doRefresh().finally(() => {
+                this._refreshPromise = null;
+            });
+        }
+        return this._refreshPromise;
+    }
+
+    async request(endpoint, options = {}, _isRetry = false) {
         const url = `${this.baseURL}${endpoint}`;
-        
+
         const headers = {
             'Content-Type': 'application/json',
             ...options.headers
@@ -28,9 +79,14 @@ class APIClient {
             headers['Authorization'] = `Bearer ${this.token}`;
         }
 
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+
         const config = {
             ...options,
-            headers
+            headers,
+            cache: 'no-store',
+            signal: controller.signal
         };
 
         if (options.body && typeof options.body === 'object') {
@@ -39,16 +95,38 @@ class APIClient {
 
         try {
             const response = await fetch(url, config);
-            
+
+            // Access token expirado → intentar rotarlo con el refresh token y reintentar una vez.
+            // (No aplica a login/register: ahí un 401 significa credenciales incorrectas.)
+            const esEndpointAuth = endpoint.startsWith('/auth/login') || endpoint.startsWith('/auth/register');
+            if (response.status === 401 && !esEndpointAuth) {
+                if (!_isRetry && this.refreshToken) {
+                    const nuevoToken = await this._refreshTokenOnce();
+                    if (nuevoToken) {
+                        return this.request(endpoint, options, true);
+                    }
+                }
+                if (this.onSessionExpired) {
+                    try { this.onSessionExpired(); } catch (e) {}
+                }
+                const error = await response.json().catch(() => ({}));
+                throw new Error(error.error || 'Sesión expirada');
+            }
+
             if (!response.ok) {
-                const error = await response.json();
+                const error = await response.json().catch(() => ({}));
                 throw new Error(error.error || `HTTP ${response.status}`);
             }
 
             return await response.json();
         } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('El servidor tardó demasiado en responder');
+            }
             console.error('API Request Error:', error);
             throw error;
+        } finally {
+            clearTimeout(timeout);
         }
     }
 
@@ -61,6 +139,9 @@ class APIClient {
         if (data.token) {
             this.setToken(data.token);
         }
+        if (data.refreshToken) {
+            this.setRefreshToken(data.refreshToken);
+        }
         return data;
     }
 
@@ -69,11 +150,14 @@ class APIClient {
             method: 'POST',
             body: { username, password }
         });
-        
+
         if (data.token) {
             this.setToken(data.token);
         }
-        
+        if (data.refreshToken) {
+            this.setRefreshToken(data.refreshToken);
+        }
+
         return data;
     }
 
@@ -404,6 +488,41 @@ class APIClient {
     async getAuditLogs(params = {}) {
         const q = new URLSearchParams(params).toString();
         return await this.request(`/audit${q ? '?' + q : ''}`, { method: 'GET' });
+    }
+
+    // LISTA DE COMPRAS
+    async getShoppingList(branchId) {
+        const q = branchId ? `?branch_id=${branchId}` : '';
+        return await this.request(`/shopping-list${q}`, { method: 'GET' });
+    }
+
+    async getShoppingInventoryOptions(branchId) {
+        const q = branchId ? `?branch_id=${branchId}` : '';
+        return await this.request(`/shopping-list/inventory-options${q}`, { method: 'GET' });
+    }
+
+    async generateShoppingList(branchId) {
+        return await this.request('/shopping-list/generate', { method: 'POST', body: { branch_id: branchId || null } });
+    }
+
+    async addShoppingItem(data) {
+        return await this.request('/shopping-list/items', { method: 'POST', body: data });
+    }
+
+    async updateShoppingItem(id, data) {
+        return await this.request(`/shopping-list/items/${id}`, { method: 'PUT', body: data });
+    }
+
+    async deleteShoppingItem(id) {
+        return await this.request(`/shopping-list/items/${id}`, { method: 'DELETE' });
+    }
+
+    async clearShoppingList(branchId) {
+        return await this.request('/shopping-list/clear', { method: 'POST', body: { branch_id: branchId || null } });
+    }
+
+    async sendShoppingList(branchId, sentBy) {
+        return await this.request('/shopping-list/send', { method: 'POST', body: { branch_id: branchId || null, sent_by: sentBy || null } });
     }
 }
 

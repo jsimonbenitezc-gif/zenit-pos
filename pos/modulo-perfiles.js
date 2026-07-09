@@ -134,6 +134,17 @@ async function confirmarPinPerfil() {
     const pinIngresado = document.getElementById('pin-perfil-input')?.value;
     if (!pinIngresado) return;
 
+    // Bloqueo por intentos fallidos
+    const minRestantes = pinBloqueadoRestanteMin();
+    if (minRestantes > 0) {
+        const errEl = document.getElementById('pin-perfil-error');
+        if (errEl) {
+            errEl.textContent = `Demasiados intentos fallidos. Espera ${minRestantes} minuto(s).`;
+            errEl.style.display = '';
+        }
+        return;
+    }
+
     let permisos = {};
     try {
         const ajustes = await window.api.obtenerAjustes();
@@ -167,11 +178,20 @@ async function confirmarPinPerfil() {
     }
 
     if (pinValido) {
+        resetearFallosPin();
         document.getElementById('modal-pin-perfil').classList.add('hidden');
         completarSeleccionPerfil(_perfilPendiente);
         _perfilPendiente = null;
     } else {
-        document.getElementById('pin-perfil-error').style.display = '';
+        registrarFalloPin();
+        const errEl = document.getElementById('pin-perfil-error');
+        const minBloqueo = pinBloqueadoRestanteMin();
+        if (errEl && minBloqueo > 0) {
+            errEl.textContent = `Demasiados intentos fallidos. Espera ${minBloqueo} minuto(s).`;
+        } else if (errEl) {
+            errEl.textContent = 'PIN incorrecto. Intenta de nuevo.';
+        }
+        if (errEl) errEl.style.display = '';
         document.getElementById('pin-perfil-input').value = '';
         document.getElementById('pin-perfil-input').focus();
     }
@@ -190,8 +210,8 @@ function cancelarSeleccionPerfil() {
 function completarSeleccionPerfil(rol) {
     rolActivo = rol;
     nombreActivo = document.getElementById('perfil-nombre-input')?.value?.trim() || '';
-    // Comunicar el rol al proceso principal para validación de permisos en IPC
-    window.api.establecerRolActivo(rol);
+    // Comunicar el rol (y sus permisos) al proceso principal para validación de permisos en IPC
+    registrarRolActivoEnMain(rol);
     const screen = document.getElementById('perfil-screen');
     if (screen) screen.style.display = 'none';
     // Actualizar botón en header con nombre del perfil activo

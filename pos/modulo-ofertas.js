@@ -85,7 +85,7 @@ async function guardarDescuento() {
     const tipo        = document.getElementById('ndesc-tipo').value;
     const valor       = parseFloat(document.getElementById('ndesc-valor').value);
     const requiresPin = document.getElementById('ndesc-requires-pin')?.checked === true;
-    if (!nombre || isNaN(valor) || valor <= 0) { alert('Completa todos los campos correctamente.'); return; }
+    if (!nombre || isNaN(valor) || valor <= 0) { alertaZenit('Completa todos los campos correctamente.'); return; }
     try {
         const datos = { nombre, tipo, valor, requires_pin: requiresPin };
         if (modoConectado && apiClient && tokenActual) {
@@ -108,7 +108,7 @@ async function guardarDescuento() {
         cerrarModalNuevoDescuento();
         await cargarOfertas();
         mostrarNotificacionExito('Descuento guardado', '¡Guardado!');
-    } catch(e) { console.error(e); alert('Error al guardar el descuento'); }
+    } catch(e) { console.error(e); alertaZenit('Error al guardar el descuento'); }
 }
 
 function editarDescuento(id) {
@@ -117,7 +117,7 @@ function editarDescuento(id) {
 }
 
 async function confirmarEliminarDescuento(id, nombre) {
-    if (confirm(`¿Eliminar el descuento "${nombre}"?`)) {
+    if (await confirmarZenit(`Se eliminará el descuento "${nombre}".`, '¿Eliminar descuento?', { textoOk: 'Eliminar', peligro: true })) {
         if (modoConectado && apiClient && tokenActual) {
             try { await apiClient.request(`/offers/discounts/${id}`, { method: 'DELETE' }); } catch(e) { console.warn('Error al eliminar descuento en backend:', e.message); }
         }
@@ -227,7 +227,7 @@ async function guardarCombo() {
     const precio_especial = parseFloat(document.getElementById('ncombo-precio').value);
     const descripcion = document.getElementById('ncombo-descripcion').value.trim();
     if (!nombre || isNaN(precio_especial) || precio_especial <= 0) {
-        alert('El nombre y el precio especial son obligatorios.');
+        alertaZenit('El nombre y el precio especial son obligatorios.');
         return;
     }
     const items = [];
@@ -238,7 +238,7 @@ async function guardarCombo() {
             items.push({ producto_id: parseInt(sel.value), cantidad: parseInt(inp.value) || 1 });
         }
     });
-    if (items.length === 0) { alert('Agrega al menos un producto al combo.'); return; }
+    if (items.length === 0) { alertaZenit('Agrega al menos un producto al combo.'); return; }
     try {
         const datos = { nombre, descripcion, precio_especial };
         const itemsBackend = items.map(i => ({ product_id: i.producto_id, quantity: i.cantidad }));
@@ -267,7 +267,7 @@ async function guardarCombo() {
         combosCache = await window.api.obtenerCombos();
         renderizarTablaCombos();
         mostrarNotificacionExito('Combo guardado correctamente', '¡Combo Guardado!');
-    } catch(e) { console.error(e); alert('Error al guardar el combo'); }
+    } catch(e) { console.error(e); alertaZenit('Error al guardar el combo'); }
 }
 
 async function editarCombo(id) {
@@ -276,7 +276,7 @@ async function editarCombo(id) {
 }
 
 async function confirmarEliminarCombo(id, nombre) {
-    if (confirm(`¿Eliminar el combo "${nombre}"?`)) {
+    if (await confirmarZenit(`Se eliminará el combo "${nombre}".`, '¿Eliminar combo?', { textoOk: 'Eliminar', peligro: true })) {
         if (modoConectado && apiClient && tokenActual) {
             try { await apiClient.request(`/offers/combos/${id}`, { method: 'DELETE' }); } catch(e) { console.warn('Error al eliminar combo en backend:', e.message); }
         }
