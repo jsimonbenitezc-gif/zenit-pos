@@ -210,6 +210,7 @@ async function subirPedidosPendientes() {
                     customer_id: pedido.cliente_id || null,
                     customer_temp_info: pedido.info_cliente_temp || null,
                     total: pedido.total,
+                    discount_amount: pedido.descuento_monto || 0,
                     payment_method: pedido.metodo_pago,
                     order_type: (pedido.tipo_pedido === 'mesa' ? 'comer' : pedido.tipo_pedido) || 'comer',
                     reference: pedido.referencia || null,
@@ -217,7 +218,11 @@ async function subirPedidosPendientes() {
                     maps_link: pedido.link_maps || null,
                     notes: pedido.notas_generales || null,
                     branch_id: sucursalIdActual || null,
-                    client_uuid: pedido.client_uuid || null
+                    client_uuid: pedido.client_uuid || null,
+                    // La venta YA se concretó localmente; no dejar que un aviso de
+                    // stock del backend bloquee su subida (evita marcarla como
+                    // sincronizada sin haberse creado en el backend).
+                    skip_stock_check: true
                 };
                 const itemsAPI = items.map(i => ({
                     product_id: i.producto_id,
@@ -226,8 +231,17 @@ async function subirPedidosPendientes() {
                     subtotal: i.subtotal,
                     notes: i.nota_item || ''
                 }));
-                await apiClient.createOrder(datosAPI, itemsAPI);
-                await window.api.marcarPedidoSincronizado(pedido.id);
+                const creado = await apiClient.createOrder(datosAPI, itemsAPI);
+                // Solo marcar como sincronizado si el backend realmente creó/devolvió
+                // el pedido (tiene id). Si no, se reintenta en el próximo ciclo.
+                if (creado && creado.id) {
+                    // Evitar que el polling del KDS reenvíe esta comanda: marcarla como
+                    // ya enviada con el id que le asignó el backend.
+                    if (typeof _kdsMarcarEnviado === 'function') {
+                        _kdsMarcarEnviado(creado.id, creado.updatedAt, creado.items);
+                    }
+                    await window.api.marcarPedidoSincronizado(pedido.id);
+                }
             } catch (e) {
                 console.warn(`No se pudo subir pedido ${pedido.id}:`, e.message);
             }

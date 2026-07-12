@@ -543,7 +543,8 @@ async function ejecutarVenta() {
         }));
 
         const pedidoResultado = await crearPedidoWrapper(datosPedido, itemsParaDB);
-        // crearPedidoWrapper retorna el objeto completo en modo conectado, o solo el ID en modo local
+        // crearPedidoWrapper ahora guarda LOCAL de inmediato y sincroniza con el
+        // backend en segundo plano (venta instantánea): retorna el ID local.
         const pedidoId = pedidoResultado?.id ?? pedidoResultado;
 
         // Marcar en el tracker del KDS ANTES de enviar, para que el polling no lo reenvíe

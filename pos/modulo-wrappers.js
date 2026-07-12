@@ -103,43 +103,21 @@ async function crearPedidoWrapper(datosPedido, items) {
     // un pedido duplicado ni descuente stock dos veces.
     const client_uuid = _generarUuid();
     const datosLocal = { ...datosPedido, client_uuid };
-    if (modoConectado && apiClient && tokenActual) {
-        try {
-            // Traducir campos español → inglés para el backend
-            const datosAPI = {
-                customer_id: datosPedido.cliente_id || null,
-                customer_temp_info: datosPedido.info_cliente_temp || null,
-                total: datosPedido.total,
-                discount_amount: datosPedido.descuento_monto || 0,
-                payment_method: datosPedido.metodo_pago,
-                order_type: datosPedido.tipo_pedido || 'comer',
-                reference: datosPedido.referencia || null,
-                delivery_address: datosPedido.direccion_domicilio || null,
-                maps_link: datosPedido.link_maps || null,
-                notes: datosPedido.notas_generales || null,
-                branch_id: sucursalIdActual || null,
-                client_uuid
-            };
-            const itemsAPI = items.map(i => ({
-                product_id: i.id,
-                quantity: i.cantidad || 1,
-                unit_price: i.precio,
-                subtotal: i.subtotal,
-                notes: i.nota || ''
-            }));
-            const resultado = await apiClient.createOrder(datosAPI, itemsAPI);
-            // skipStock: el backend ya descontó ingredientes en PostgreSQL;
-            // no descontar localmente para evitar doble deducción.
-            await window.api.crearPedidoDirecto(datosLocal, items, { skipStock: true });
-            return resultado; // retorna objeto completo para que el caller pueda marcar KDS
-        } catch (error) {
-            console.error('Error al crear pedido en backend:', error);
-            // Guardar localmente y marcar para subir cuando vuelva la conexión
-            return await window.api.crearPedidoDirecto({ ...datosLocal, pendiente_sync: 1 }, items);
-        }
-    } else {
+
+    // Modo local puro (sin cuenta vinculada): guardar y listo.
+    if (!modoConectado || !apiClient || !tokenActual) {
         return await window.api.crearPedidoDirecto(datosLocal, items);
     }
+
+    // Modo conectado — VENTA INSTANTÁNEA:
+    //  1) Guardar LOCAL de inmediato (marca pendiente_sync y descuenta stock local).
+    //     La venta se cierra al instante sin esperar la respuesta del backend.
+    //  2) Sincronizar con el backend en SEGUNDO PLANO. La idempotencia por
+    //     client_uuid garantiza que no se duplique aunque se reintente, y
+    //     subirPedidosPendientes marca la comanda en el KDS para no reenviarla.
+    const local = await window.api.crearPedidoDirecto({ ...datosLocal, pendiente_sync: 1 }, items);
+    subirPedidosPendientes().catch(e => console.warn('Sync de venta en segundo plano:', e && e.message));
+    return local;
 }
 
 async function obtenerPedidosWrapper(filtro) {
