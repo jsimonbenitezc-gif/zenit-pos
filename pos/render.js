@@ -698,7 +698,7 @@ let _inventarioSyncEnCurso = false;
       try {
           const branchQ = sucursalIdActual ? `?branch_id=${sucursalIdActual}` : '';
           const [insumos, preps, recetas] = await Promise.all([
-              apiClient.request(`/inventory/ingredients${branchQ}`).catch(() => null),
+              apiClient.getIngredients(branchQ).catch(() => null),
               apiClient.request('/inventory/preparations').catch(() => null),
               apiClient.request('/inventory/all-recipes').catch(() => null),
           ]);

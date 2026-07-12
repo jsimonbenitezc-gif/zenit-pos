@@ -1338,6 +1338,10 @@ function syncClientes(datos, cb) {
 }
 
 function syncInsumos(datos, cb) {
+    // Red de seguridad: tolerar respuestas paginadas ({ data, pagination }).
+    // Si llega un objeto no-array, un forEach lanzaría dentro del callback de
+    // SQLite y la promesa del IPC nunca respondería ("reply was never sent").
+    if (datos && !Array.isArray(datos) && Array.isArray(datos.data)) datos = datos.data;
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     syncConTransaccion((done) => {
         db.serialize(() => {

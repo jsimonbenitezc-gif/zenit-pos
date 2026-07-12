@@ -143,7 +143,7 @@ async function sincronizarDesdeBackend() {
         let descuentos = null, combos = null;
         if (puedeAccederPremium()) {
             const branchQ = sucursalIdActual ? `?branch_id=${sucursalIdActual}` : '';
-            insumosBackend = await apiClient.request(`/inventory/ingredients${branchQ}`);
+            insumosBackend = await apiClient.getIngredients(branchQ);
             if (insumosBackend && insumosBackend.length > 0) {
                 preps = await apiClient.request('/inventory/preparations');
                 recetas = await apiClient.request('/inventory/all-recipes');
@@ -241,7 +241,7 @@ async function subirInventarioLocalAlBackend() {
     if (!modoConectado || !apiClient || !tokenActual) return;
     try {
         // Verificar si el backend ya tiene inventario
-        const insumosBackend = await apiClient.request('/inventory/ingredients');
+        const insumosBackend = await apiClient.getIngredients();
         if (insumosBackend && insumosBackend.length > 0) return; // Ya tiene datos, no sobreescribir
 
         const insumosLocales = await window.api.obtenerInsumos();
@@ -312,7 +312,7 @@ async function subirInventarioLocalAlBackend() {
         console.log('✅ Inventario local subido al backend');
         // Re-sincronizar para que los IDs locales queden iguales a los del backend
         const _branchQup = sucursalIdActual ? `?branch_id=${sucursalIdActual}` : '';
-        const insumosNuevos = await apiClient.request(`/inventory/ingredients${_branchQup}`);
+        const insumosNuevos = await apiClient.getIngredients(_branchQup);
         await window.api.syncInsumos(insumosNuevos);
         const prepsNuevos = await apiClient.request('/inventory/preparations');
         await window.api.syncPreparaciones(prepsNuevos);

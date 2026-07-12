@@ -28,7 +28,7 @@ function fmtStock(val) {
           // usando branch_id para obtener el stock correcto de esta sucursal
           if (modoConectado && apiClient && tokenActual) {
               const branchQ = sucursalIdActual ? `?branch_id=${sucursalIdActual}` : '';
-              const insumosBackend = await apiClient.request(`/inventory/ingredients${branchQ}`).catch(() => null);
+              const insumosBackend = await apiClient.getIngredients(branchQ).catch(() => null);
               if (insumosBackend && insumosBackend.length > 0) {
                   await window.api.syncInsumos(insumosBackend);
               }

@@ -287,8 +287,10 @@ class APIClient {
     }
 
     // INVENTORY
-    async getIngredients() {
-        return await this.request('/inventory/ingredients', { method: 'GET' });
+    // query opcional: '?branch_id=X'. Devuelve SIEMPRE un array plano
+    // (el endpoint está paginado: { data, pagination }).
+    async getIngredients(query = '') {
+        return await this._getAllPaginated(`/inventory/ingredients${query}`);
     }
 
     async createIngredient(ingredient) {
