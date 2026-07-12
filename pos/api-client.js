@@ -161,9 +161,28 @@ class APIClient {
         return data;
     }
 
+    // Recorre todos los pages de un endpoint paginado ({ data, pagination })
+    // y devuelve un array plano. Tolera respuestas legacy que ya son array.
+    async _getAllPaginated(endpoint) {
+        const sep = endpoint.includes('?') ? '&' : '?';
+        let page = 1;
+        const acumulado = [];
+        // Tope de seguridad para no ciclar indefinidamente
+        for (let i = 0; i < 100; i++) {
+            const resp = await this.request(`${endpoint}${sep}page=${page}&limit=100`, { method: 'GET' });
+            if (Array.isArray(resp)) return resp; // endpoint no paginado
+            const filas = Array.isArray(resp?.data) ? resp.data : [];
+            acumulado.push(...filas);
+            const totalPages = resp?.pagination?.totalPages || 1;
+            if (page >= totalPages || filas.length === 0) break;
+            page++;
+        }
+        return acumulado;
+    }
+
     // PRODUCTS
     async getProducts() {
-        return await this.request('/products', { method: 'GET' });
+        return await this._getAllPaginated('/products');
     }
 
     async getProductsGrouped() {
@@ -237,7 +256,7 @@ class APIClient {
 
     // CUSTOMERS
     async getCustomers() {
-        return await this.request('/customers', { method: 'GET' });
+        return await this._getAllPaginated('/customers');
     }
 
     async getCustomersWithStats() {
