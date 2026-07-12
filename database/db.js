@@ -103,6 +103,7 @@ function inicializarTablas() {
         info_cliente_temp TEXT,
         cajero TEXT,
         pendiente_sync INTEGER DEFAULT 0,
+        client_uuid TEXT,
         fecha_pedido DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (cliente_id) REFERENCES clientes(id)
     )`);
@@ -223,6 +224,7 @@ function inicializarTablas() {
     db.run("ALTER TABLE pedidos ADD COLUMN info_cliente_temp TEXT", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN cajero TEXT", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN pendiente_sync INTEGER DEFAULT 0", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN client_uuid TEXT", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN tipo TEXT DEFAULT 'ingrediente'", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_cantidad REAL", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_unidad TEXT", () => {});
@@ -461,9 +463,10 @@ async function crearPedido(datos, items, callback, opciones) {
             info_cliente_temp,
             cajero,
             pendiente_sync,
+            client_uuid,
             fecha_pedido
         )
-        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
     `;
 
     const skipStock = opciones && opciones.skipStock;
@@ -484,7 +487,8 @@ async function crearPedido(datos, items, callback, opciones) {
             datos.notas_generales,
             datos.info_cliente_temp || null,
             datos.cajero || null,
-            datos.pendiente_sync || 0
+            datos.pendiente_sync || 0,
+            datos.client_uuid || null
         ]);
         const pedidoId = resultadoPedido.lastID;
 

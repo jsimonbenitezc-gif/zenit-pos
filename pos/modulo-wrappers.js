@@ -83,8 +83,26 @@ async function actualizarProductoWrapper(id, producto) {
     }
 }
 
+// Genera un uuid v4 para idempotencia de la venta. Usa crypto.randomUUID si
+// está disponible (contexto seguro) y cae a un fallback manual si no.
+function _generarUuid() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
 // PEDIDOS
 async function crearPedidoWrapper(datosPedido, items) {
+    // uuid de idempotencia: el MISMO id viaja al backend y se guarda en SQLite
+    // local, de modo que un reintento (p. ej. tras un timeout de red) no cree
+    // un pedido duplicado ni descuente stock dos veces.
+    const client_uuid = _generarUuid();
+    const datosLocal = { ...datosPedido, client_uuid };
     if (modoConectado && apiClient && tokenActual) {
         try {
             // Traducir campos español → inglés para el backend
@@ -99,7 +117,8 @@ async function crearPedidoWrapper(datosPedido, items) {
                 delivery_address: datosPedido.direccion_domicilio || null,
                 maps_link: datosPedido.link_maps || null,
                 notes: datosPedido.notas_generales || null,
-                branch_id: sucursalIdActual || null
+                branch_id: sucursalIdActual || null,
+                client_uuid
             };
             const itemsAPI = items.map(i => ({
                 product_id: i.id,
@@ -111,15 +130,15 @@ async function crearPedidoWrapper(datosPedido, items) {
             const resultado = await apiClient.createOrder(datosAPI, itemsAPI);
             // skipStock: el backend ya descontó ingredientes en PostgreSQL;
             // no descontar localmente para evitar doble deducción.
-            await window.api.crearPedidoDirecto(datosPedido, items, { skipStock: true });
+            await window.api.crearPedidoDirecto(datosLocal, items, { skipStock: true });
             return resultado; // retorna objeto completo para que el caller pueda marcar KDS
         } catch (error) {
             console.error('Error al crear pedido en backend:', error);
             // Guardar localmente y marcar para subir cuando vuelva la conexión
-            return await window.api.crearPedidoDirecto({ ...datosPedido, pendiente_sync: 1 }, items);
+            return await window.api.crearPedidoDirecto({ ...datosLocal, pendiente_sync: 1 }, items);
         }
     } else {
-        return await window.api.crearPedidoDirecto(datosPedido, items);
+        return await window.api.crearPedidoDirecto(datosLocal, items);
     }
 }
 

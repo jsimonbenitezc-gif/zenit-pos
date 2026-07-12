@@ -216,7 +216,8 @@ async function subirPedidosPendientes() {
                     delivery_address: pedido.direccion_domicilio || null,
                     maps_link: pedido.link_maps || null,
                     notes: pedido.notas_generales || null,
-                    branch_id: sucursalIdActual || null
+                    branch_id: sucursalIdActual || null,
+                    client_uuid: pedido.client_uuid || null
                 };
                 const itemsAPI = items.map(i => ({
                     product_id: i.producto_id,
