@@ -27,10 +27,7 @@
     ],
     "win": {
       "target": "nsis",
-      "sign": false,
-      "publish": [
-        "github"
-      ]
+      "sign": false
     },
     "nsis": {
       "oneClick": false,
