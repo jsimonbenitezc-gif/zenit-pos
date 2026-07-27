@@ -77,7 +77,7 @@ async function cargarClientes() {
                 <td>
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <strong style="color: #111827;">${esc(c.nombre)}</strong>
-                        ${(c.total_compras || 0) >= 3 ? '<span style="color: #f59e0b;">' + svgIconHTML('star', 14, '#f59e0b') + '</span>' : ''}
+                        ${(c.total_compras || 0) >= 3 ? '<span title="Cliente frecuente: 3 o más compras" style="color: #f59e0b;">' + svgIconHTML('star', 14, '#f59e0b') + '</span>' : ''}
                     </div>
                 </td>
                 <td>
@@ -186,7 +186,7 @@ function configurarBuscadorClientes(clientes) {
                 <td>
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <strong style="color: #111827;">${esc(c.nombre)}</strong>
-                        ${(c.total_compras || 0) >= 3 ? '<span style="color: #f59e0b;">' + svgIconHTML('star', 14, '#f59e0b') + '</span>' : ''}
+                        ${(c.total_compras || 0) >= 3 ? '<span title="Cliente frecuente: 3 o más compras" style="color: #f59e0b;">' + svgIconHTML('star', 14, '#f59e0b') + '</span>' : ''}
                     </div>
                 </td>
                 <td>

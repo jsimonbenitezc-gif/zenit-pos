@@ -367,10 +367,72 @@ async function guardarNuevaPasswordApp() {
 // SUCURSALES
 // ==========================================
 
+// Cuántas sucursales tiene el negocio. Se cachea localmente para poder validar
+// también SIN internet (una venta offline no debe encolarse sin sucursal: el
+// backend la rechazaría al subirla y el usuario se enteraría mucho después).
+let sucursalesCountLocal = 1;
+// Última lista de sucursales conocida (para el aviso de solo-lectura del dashboard)
+let _branchesCache = [];
+
+async function cachearConteoSucursales(branches) {
+    sucursalesCountLocal = Array.isArray(branches) && branches.length > 0 ? branches.length : 1;
+    try { await window.api.guardarAjuste('sucursales_count', String(sucursalesCountLocal)); } catch {}
+}
+
+/**
+ * Portero de registros (BLOQUE 4): este equipo no puede vender ni abrir turno si el
+ * negocio tiene varias sucursales y aquí no se eligió ninguna. Con una sola sucursal
+ * no estorba: el backend la asigna solo.
+ * @returns {Promise<boolean>} true si se puede registrar
+ */
+async function verificarSucursalParaRegistrar() {
+    if (sucursalIdActual) return true;
+    if (sucursalesCountLocal <= 1) return true;
+    await alertaZenit(
+        'Este equipo todavía no tiene una sucursal asignada, y tu negocio tiene varias. ' +
+        'Ve a Ajustes → Sucursal y elige en cuál registra este equipo antes de continuar.',
+        'Falta elegir la sucursal'
+    );
+    return false;
+}
+
 async function guardarYRecargarSucursal() {
     const sel = document.getElementById('aj-sucursal-id');
     const valor = sel ? sel.value : '';
-    sucursalIdActual = parseInt(valor) || null;
+    const nuevoId = parseInt(valor) || null;
+
+    if (nuevoId === sucursalIdActual) {
+        await alertaZenit('Este equipo ya registra en esa sucursal.', 'Sin cambios');
+        return;
+    }
+
+    // Cambiar la sucursal de un equipo mueve TODOS sus registros futuros a otra
+    // sucursal: es configuración, no una acción de operación. Por eso se explica la
+    // consecuencia y se pide la contraseña de administrador (no un PIN de empleado).
+    const nombreNuevo = nuevoId ? (sel.options[sel.selectedIndex]?.textContent || 'la sucursal elegida') : null;
+    const turnoAbierto = await _turnoGetActivo().catch(() => null);
+
+    // confirmarZenit escapa el HTML: el mensaje va en texto plano (respeta los saltos de línea)
+    let mensaje = nuevoId
+        ? `Todos los registros de este equipo (ventas, turnos, mesas e inventario) pasarán a "${nombreNuevo}".`
+        : 'Este equipo quedará sin sucursal asignada y no podrá registrar ventas si tu negocio tiene varias sucursales.';
+    if (turnoAbierto) {
+        mensaje += '\n\n⚠️ Hay un turno abierto. Cámbiala solo si estás seguro: el cierre de caja de ese turno puede quedar descuadrado.';
+    }
+
+    const confirmado = await confirmarZenit(mensaje, 'Cambiar la sucursal de este equipo', {
+        textoOk: 'Sí, cambiar', textoCancelar: 'Cancelar', peligro: true
+    });
+    if (!confirmado) { _restaurarSelectSucursal(sel); return; }
+
+    try {
+        await solicitarPasswordAdmin('Ingresa la contraseña de administrador para cambiar la sucursal de este equipo.');
+    } catch {
+        _restaurarSelectSucursal(sel);
+        return; // canceló la contraseña
+    }
+
+    sucursalIdActual = nuevoId;
     await window.api.guardarAjuste('sucursal_id', valor);
     mostrarNotificacionExito('Sucursal guardada', 'Actualizando datos...');
     // Re-sincronizar pedidos y datos con el filtro de la nueva sucursal
@@ -390,11 +452,20 @@ async function guardarYRecargarSucursal() {
     } else {
         _branchActualData = null;
     }
+    // La vista del dashboard sigue al equipo tras el cambio (no dejar al usuario
+    // mirando una sucursal ajena justo después de mudar el equipo).
+    sucursalVistaActual = sucursalIdActual;
     // Refrescar vista de mesas si está abierta
     const vistaActiva = document.querySelector('.view.active');
     if (vistaActiva && vistaActiva.id === 'view-mesas') {
         await cargarVistaMesas();
     }
+}
+
+// Devuelve el <select> a la sucursal realmente asignada (el usuario canceló el cambio)
+function _restaurarSelectSucursal(sel) {
+    if (!sel) return;
+    sel.value = sucursalIdActual ? String(sucursalIdActual) : '';
 }
 
 async function cargarSucursalesAjustes() {
@@ -411,12 +482,14 @@ async function cargarSucursalesAjustes() {
             });
             branches = [nueva];
         }
+        await cachearConteoSucursales(branches);
         // Si hay exactamente una sucursal y este dispositivo no tiene ninguna asignada, asignarla automáticamente
         if (branches.length === 1 && !sucursalIdActual) {
             sucursalIdActual = branches[0].id;
+            sucursalVistaActual = sucursalIdActual;
             await window.api.guardarAjuste('sucursal_id', String(sucursalIdActual));
         }
-        // Limpiar opciones excepto la primera (sin sucursal)
+        // Limpiar opciones excepto el marcador "— Elige una sucursal —"
         while (sel.options.length > 1) sel.remove(1);
         (branches || []).forEach(b => {
             const opt = document.createElement('option');
@@ -425,45 +498,112 @@ async function cargarSucursalesAjustes() {
             if (sucursalIdActual === b.id) opt.selected = true;
             sel.appendChild(opt);
         });
-        sel.addEventListener('change', async () => {
-            sucursalIdActual = parseInt(sel.value) || null;
-            await window.api.guardarAjuste('sucursal_id', sel.value);
-            // Recargar permisos de empleados y teléfono/dirección para la nueva sucursal
-            const _set = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.value = val || ''; };
-            if (sucursalIdActual) {
-                const b = (branches || []).find(x => x.id === sucursalIdActual) || null;
-                _branchActualData = b;
-                if (b) {
-                    if (b.phone   != null) _set('adj-telefono-negocio',  b.phone);
-                    if (b.address != null) _set('adj-direccion-negocio', b.address);
-                }
-            } else {
-                _branchActualData = null;
-            }
-            cargarPermisosAjustes().catch(() => {});
-        });
+        // Con sucursal ya elegida, el marcador sobra: quitarlo evita que alguien
+        // "des-asigne" el equipo, algo que solo rompería sus registros.
+        if (sucursalIdActual) sel.remove(0);
+        // El <select> solo ELIGE; el cambio se aplica en guardarYRecargarSucursal(),
+        // que explica la consecuencia y pide la contraseña de administrador. Antes se
+        // guardaba en el 'change' y bastaba con rozar el selector para mover de
+        // sucursal todos los registros del equipo.
         await cargarTabsSucursales(branches);
     } catch (e) {
         console.error('Error cargando sucursales:', e);
     }
 }
 
-async function cargarTabsSucursales(branches) {
-    const container = document.getElementById('branch-tabs-container');
-    if (!container) return;
-    if (!branches || branches.length <= 1) {
-        container.style.display = 'none';
+// ── Selector de sucursal para VER (dashboard, pedidos, inventario, mesas) ─────
+//
+// `sucursalVistaActual` es UNA sola para toda la app: si miras Norte en el dashboard
+// y entras a Pedidos, sigues en Norte. Es solo-lectura — los registros de este equipo
+// van siempre a `sucursalIdActual`, y el aviso amarillo lo repite en cada vista para
+// que nadie crea que está vendiendo en la sucursal que está mirando.
+//
+// Cada vista declara sus dos contenedores y qué recargar. Añadir una vista nueva es
+// agregar una entrada aquí y los dos <div> en index.html.
+const VISTAS_CON_SUCURSAL = {
+    dashboard:  { tabs: 'branch-tabs-container',   aviso: 'branch-readonly-aviso',   recargar: () => cargarDashboard() },
+    pedidos:    { tabs: 'branch-tabs-pedidos',     aviso: 'branch-aviso-pedidos',    recargar: () => cargarPedidos() },
+    inventario: { tabs: 'branch-tabs-inventario',  aviso: 'branch-aviso-inventario', recargar: () => cargarInventario() },
+    mesas:      { tabs: 'branch-tabs-mesas',       aviso: 'branch-aviso-mesas',      recargar: () => cargarVistaMesas() },
+};
+
+// La sucursal que deben usar las CONSULTAS de la vista actual: la que se está
+// mirando. Con "Todas" devuelve null (sin filtro).
+function sucursalParaConsultar() {
+    return sucursalVistaActual;
+}
+
+/**
+ * ¿Se está mirando una sucursal que no es la de este equipo? Entonces la vista es
+ * SOLO LECTURA: registrar ahí crearía datos cruzados (p.ej. abrir una mesa de Norte
+ * con una venta que se guarda en Centro).
+ * @param {boolean} avisar si true, muestra el modal explicativo
+ * @returns {Promise<boolean>} true si es solo lectura (no se puede registrar)
+ */
+async function bloquearSiVistaAjena(avisar = true) {
+    if (sucursalVistaActual === sucursalIdActual) return false;
+    if (avisar) {
+        const nombre = sucursalVistaActual === null
+            ? 'todas las sucursales'
+            : (_branchesCache.find(b => b.id === sucursalVistaActual) || {}).name || 'otra sucursal';
+        await alertaZenit(
+            `Estás viendo ${nombre} en modo solo lectura. Para registrar aquí, vuelve a la ` +
+            `sucursal de este equipo en las pestañas de arriba.`,
+            'Solo lectura'
+        );
+    }
+    return true;
+}
+
+function _actualizarAvisoSucursalVista(branches, avisoId) {
+    const aviso = document.getElementById(avisoId);
+    if (!aviso) return;
+
+    const mismaQueElEquipo = sucursalVistaActual === sucursalIdActual;
+    if (!branches || branches.length <= 1 || mismaQueElEquipo) {
+        aviso.style.display = 'none';
         return;
     }
+
+    const nombreEquipo = (branches.find(b => b.id === sucursalIdActual) || {}).name;
+    const nombreVista  = sucursalVistaActual === null
+        ? 'todas las sucursales'
+        : (branches.find(b => b.id === sucursalVistaActual) || {}).name;
+
+    aviso.innerHTML = `${svgIconHTML('map-pin', 14)} Estás viendo <b>${esc(nombreVista || 'otra sucursal')}</b> — solo lectura. ` +
+        (nombreEquipo
+            ? `Los registros de este equipo siguen yendo a <b>${esc(nombreEquipo)}</b>.`
+            : 'Este equipo no tiene sucursal asignada.');
+    aviso.style.display = '';
+}
+
+/**
+ * Dibuja las tabs de sucursal de una vista. Sin sucursales (o con una sola) no
+ * muestra nada: el negocio de un solo local no debe ver este control.
+ * @param {string} vista clave de VISTAS_CON_SUCURSAL
+ */
+function renderizarTabsSucursal(vista) {
+    const cfg = VISTAS_CON_SUCURSAL[vista];
+    if (!cfg) return;
+    const container = document.getElementById(cfg.tabs);
+    if (!container) return;
+
+    const branches = _branchesCache;
+    if (!branches || branches.length <= 1) {
+        container.style.display = 'none';
+        _actualizarAvisoSucursalVista(branches, cfg.aviso);
+        return;
+    }
+
     container.innerHTML = '';
     container.style.display = 'flex';
 
-    // Inicializar vista a la sucursal activa de este dispositivo si aún no se eligió nada
+    // Sin nada elegido, se empieza mirando la sucursal del propio equipo
     if (sucursalVistaActual === null && sucursalIdActual) {
         sucursalVistaActual = sucursalIdActual;
     }
 
-    // Orden: sucursal activa primero, luego las demás, "Todas" al final
+    // Orden: la sucursal del equipo primero, luego las demás, "Todas" al final
     const sorted = [...branches].sort((a, b) => {
         if (a.id === sucursalIdActual) return -1;
         if (b.id === sucursalIdActual) return 1;
@@ -474,24 +614,29 @@ async function cargarTabsSucursales(branches) {
         const btn = document.createElement('button');
         btn.className = 'branch-tab' + (b.id === sucursalVistaActual ? ' active' : '');
         btn.textContent = b.name;
-        btn.onclick = () => cambiarSucursalVista(b.id, btn, container);
+        btn.onclick = () => cambiarSucursalVista(b.id, vista);
         container.appendChild(btn);
     });
 
     const btnTodas = document.createElement('button');
     btnTodas.className = 'branch-tab' + (sucursalVistaActual === null ? ' active' : '');
     btnTodas.textContent = 'Todas';
-    btnTodas.onclick = () => cambiarSucursalVista(null, btnTodas, container);
+    btnTodas.onclick = () => cambiarSucursalVista(null, vista);
     container.appendChild(btnTodas);
+
+    _actualizarAvisoSucursalVista(branches, cfg.aviso);
 }
 
-async function cambiarSucursalVista(branchId, activeBtn, container) {
+async function cargarTabsSucursales(branches) {
+    _branchesCache = branches || [];
+    renderizarTabsSucursal('dashboard');
+}
+
+async function cambiarSucursalVista(branchId, vista = 'dashboard') {
     sucursalVistaActual = branchId;
-    if (container) {
-        container.querySelectorAll('.branch-tab').forEach(b => b.classList.remove('active'));
-    }
-    if (activeBtn) activeBtn.classList.add('active');
-    await cargarDashboard();
+    renderizarTabsSucursal(vista);
+    const cfg = VISTAS_CON_SUCURSAL[vista];
+    if (cfg) await cfg.recargar();
 }
 
 async function abrirGestorSucursales() {
@@ -1410,7 +1555,7 @@ async function imprimirTicket(pedidoId) {
                     ${(ajustes.puntos_activos === 'true' && nombreClienteTicket) ? `
                     <div class="separator"></div>
                     <div style="text-align:center;font-size:11px;margin:6px 0;">
-                        <div>${svgIconHTML('star', 14, '#f59e0b')} Puntos ganados: <b>+${Math.floor(pedido.total * parseFloat(ajustes.puntos_por_peso || '0')) + parseInt(ajustes.puntos_bono_pedido || '0')}</b></div>
+                        <div>${svgIconHTML('star', 14, '#7c3aed')} Puntos ganados: <b>+${Math.floor(pedido.total * parseFloat(ajustes.puntos_por_peso || '0')) + parseInt(ajustes.puntos_bono_pedido || '0')}</b></div>
                     </div>` : ''}
 
                     <div class="footer">

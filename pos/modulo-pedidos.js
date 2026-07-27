@@ -6,6 +6,7 @@ async function cargarPedidos() {
     const contenedor = document.getElementById('lista-pedidos');
     if (!contenedor) return;
 
+    renderizarTabsSucursal('pedidos');
     contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center;">Cargando pedidos...</td></tr>';
 
     try {

@@ -134,7 +134,7 @@ async function cargarAuditLog() {
         lista.innerHTML = `<div style="margin-top:8px; padding-top:8px; border-top:1px solid #e5e7eb;">
             <div style="font-size:0.8em; font-weight:600; color:#6b7280; margin-bottom:6px; display:flex; align-items:center; gap:5px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
-                Acciones autorizadas con PIN
+                Acciones sensibles realizadas (todas las sucursales)
             </div>
             ${logs.map((log, idx) => {
                 const tipo  = TIPOS[log.action_type] || { icon: '🔒', label: log.action_type };

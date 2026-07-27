@@ -126,8 +126,10 @@ async function obtenerPedidosWrapper(filtro) {
             const filtroBackend = { ...filtro };
             if (filtro.date_from) filtroBackend.date_from = new Date(filtro.date_from + 'T00:00:00').toISOString();
             if (filtro.date_to)   filtroBackend.date_to   = new Date(filtro.date_to   + 'T23:59:59').toISOString();
-            // Filtrar por sucursal de este dispositivo si está asignada
-            if (sucursalIdActual) filtroBackend.branch_id = sucursalIdActual;
+            // Filtrar por la sucursal que se está MIRANDO (por defecto la de este
+            // equipo; el dueño puede cambiarla en las tabs). "Todas" = sin filtro.
+            const _sucVista = (typeof sucursalParaConsultar === 'function') ? sucursalParaConsultar() : sucursalIdActual;
+            if (_sucVista) filtroBackend.branch_id = _sucVista;
             const result = await apiClient.getOrders(filtroBackend);
             const rawOrders = result.data || result;
             const pag = result.pagination || { total: rawOrders.length, page: 1, limit: rawOrders.length, pages: 1 };

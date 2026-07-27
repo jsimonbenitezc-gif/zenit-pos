@@ -78,24 +78,17 @@ function _normalizarPedidoApi(order) {
 }
 
 async function cargarVistaMesas() {
-    // Si el dueño está viendo otra sucursal en el dashboard, mostrar aviso
-    if (sucursalVistaActual !== null && sucursalVistaActual !== sucursalIdActual) {
-        const cont = document.getElementById('mesas-grid-container') || document.querySelector('#view-mesas .view-header');
-        const aviso = document.getElementById('mesas-otra-sucursal-aviso');
-        if (!aviso && cont) {
-            const div = document.createElement('div');
-            div.id = 'mesas-otra-sucursal-aviso';
-            div.style.cssText = 'background:#fef9c3;border:1px solid #fde047;border-radius:8px;padding:12px 16px;margin:16px 20px;font-size:0.9em;color:#92400e;';
-            div.textContent = 'Estás viendo el dashboard de otra sucursal. Las mesas mostradas pertenecen a este dispositivo.';
-            cont.parentElement.insertBefore(div, cont);
-        }
-    } else {
-        const aviso = document.getElementById('mesas-otra-sucursal-aviso');
-        if (aviso) aviso.remove();
-    }
+    // Tabs de sucursal + aviso de solo-lectura (el mismo control del dashboard).
+    // Sustituye al aviso propio que se inyectaba a mano y que además mentía: decía
+    // que las mesas eran las de este dispositivo aunque el backend las devolvía
+    // todas, porque las mesas no tenían sucursal.
+    renderizarTabsSucursal('mesas');
+    const _avisoViejo = document.getElementById('mesas-otra-sucursal-aviso');
+    if (_avisoViejo) _avisoViejo.remove();
+
     try {
         if (modoConectado && apiClient && tokenActual) {
-            const tables = await apiClient.getTables();
+            const tables = await apiClient.getTables(sucursalParaConsultar());
             _mesasData = _normalizarMesasApi(tables);
             _pedidosMesa = {};
             for (const t of tables) {
@@ -200,6 +193,9 @@ function cerrarModalAbrirMesa() {
 
 async function confirmarAbrirMesa() {
     if (!_mesaActivaId) return;
+    // Abrir mesa crea un pedido: aplica la misma regla de sucursal que una venta
+    if (await bloquearSiVistaAjena()) return;
+    if (!(await verificarSucursalParaRegistrar())) return;
     const comensales = parseInt(document.getElementById('mesa-comensales').value) || 1;
     const notas = document.getElementById('mesa-notas-apertura').value.trim();
     try {
@@ -564,7 +560,7 @@ async function abrirModalCobrarMesa() {
         if (elPts) {
             if (aj.puntos_activos === 'true') {
                 const pts = await calcularPuntosGanados(total);
-                elPts.innerHTML = `${svgIconHTML('star', 14, '#f59e0b')} Esta compra genera ${pts} puntos`;
+                elPts.innerHTML = `${svgIconHTML('star', 14, '#7c3aed')} Esta compra genera ${pts} puntos`;
                 elPts.style.display = '';
             } else {
                 elPts.style.display = 'none';
@@ -780,8 +776,10 @@ function cerrarModalConfigurarMesas() {
 }
 
 async function _cargarConfigMesas() {
+    // Configurar mesas siempre trabaja sobre la sucursal de ESTE equipo: se crean
+    // y editan las mesas del local donde está la caja, no las que se estén mirando.
     const raw = (modoConectado && apiClient && tokenActual)
-        ? await apiClient.getTables()
+        ? await apiClient.getTables(sucursalIdActual)
         : await window.api.obtenerMesas(sucursalIdActual);
     const todasMesas = (modoConectado && apiClient && tokenActual) ? _normalizarMesasApi(raw) : raw;
     const el = document.getElementById('config-mesas-lista');
@@ -809,7 +807,7 @@ async function crearMesaConfig() {
     if (!nombre) { mostrarNotificacionExito('Escribe un nombre para la mesa', 'Error'); return; }
     try {
         if (modoConectado && apiClient && tokenActual) {
-            await apiClient.createTable({ name: nombre, zone: zona, capacity: cap });
+            await apiClient.createTable({ name: nombre, zone: zona, capacity: cap, branch_id: sucursalIdActual || undefined });
         } else {
             await window.api.crearMesa(nombre, zona, cap, sucursalIdActual);
         }

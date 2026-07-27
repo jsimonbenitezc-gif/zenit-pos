@@ -329,6 +329,8 @@ async function cargarConfiguracionModo() {
         
         sucursalIdActual = parseInt(ajustes.sucursal_id) || null;
         sucursalVistaActual = sucursalIdActual; // el dashboard inicia en la sucursal activa de este dispositivo
+        // Conteo de sucursales cacheado: permite exigir sucursal también SIN internet
+        sucursalesCountLocal = parseInt(ajustes.sucursales_count) || 1;
         modoSoloOnline = ajustes.modo_solo_online === 'true';
 
         // Cargar plan desde ajustes guardados (funciona offline)

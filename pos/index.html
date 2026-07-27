@@ -202,6 +202,8 @@
             <section id="view-dashboard" class="view active">
                 <!-- Tabs de sucursales (solo aparece si hay más de una) -->
                 <div id="branch-tabs-container" style="display:none;margin-bottom:16px;gap:8px;flex-wrap:wrap;"></div>
+                <!-- Aviso: estás MIRANDO otra sucursal; los registros siguen yendo a la tuya -->
+                <div id="branch-readonly-aviso" style="display:none;margin-bottom:16px;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;color:#92400e;font-size:0.88em;"></div>
                 <!-- KPIs Principales -->
                 <div class="dashboard-kpis">
                     <div class="kpi-card">
@@ -379,6 +381,8 @@
             </section>
 
            <section id="view-pedidos" class="view">
+    <div id="branch-tabs-pedidos" style="display:none;margin-bottom:16px;gap:8px;flex-wrap:wrap;"></div>
+    <div id="branch-aviso-pedidos" style="display:none;margin-bottom:16px;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;color:#92400e;font-size:0.88em;"></div>
     <div class="table-card">
         <div class="table-header" style="flex-direction:column; align-items:stretch; gap:10px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -443,6 +447,8 @@
 
             <!-- ===== VISTA MESAS ===== -->
             <section id="view-mesas" class="view">
+                <div id="branch-tabs-mesas" style="display:none;gap:8px;flex-wrap:wrap;padding:16px 20px 0;"></div>
+                <div id="branch-aviso-mesas" style="display:none;margin:12px 20px 0;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;color:#92400e;font-size:0.88em;"></div>
                 <div class="view-header" style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 8px;">
                     <h1 style="margin:0;font-size:1.4em;">Mesas</h1>
                     <div style="display:flex;gap:8px;">
@@ -753,6 +759,9 @@
 </section>
 
 <section id="view-inventario" class="view">
+
+    <div id="branch-tabs-inventario" style="display:none;margin-bottom:12px;gap:8px;flex-wrap:wrap;"></div>
+    <div id="branch-aviso-inventario" style="display:none;margin-bottom:16px;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;color:#92400e;font-size:0.88em;"></div>
 
     <!-- Tabs de navegación -->
     <div class="inv-tabs">
@@ -1187,7 +1196,7 @@
 
         <!-- Sistema de Puntos -->
         <div class="ajustes-card" id="card-puntos" style="position:relative;">
-            <h3>Sistema de Puntos ⭐</h3>
+            <h3>Sistema de Puntos <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></h3>
             <div class="setting-item">
                 <div>
                     <span>Activar sistema de puntos</span>
@@ -1222,15 +1231,18 @@
         <!-- CARD: Sucursal -->
         <div class="ajustes-card" id="card-sucursal">
             <h3>📍 Sucursal</h3>
-            <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">Asigna este dispositivo a una sucursal. Sus ventas se registrarán bajo esa sucursal. Requiere conexión activa.</p>
+            <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">Todo lo que registra este equipo (ventas, turnos, mesas, inventario) se guarda en esta sucursal. Cambiarla requiere la contraseña de administrador. Requiere conexión activa.</p>
             <div class="input-group">
                 <label>Sucursal de este dispositivo</label>
+                <!-- La opción vacía es solo un marcador para el equipo que aún no eligió:
+                     una vez que el negocio tiene sucursales, registrar "sin sucursal" no
+                     tiene sentido, así que no es elegible (ver CLAUDE.md §24). -->
                 <select id="aj-sucursal-id">
-                    <option value="">— Sin sucursal asignada —</option>
+                    <option value="" disabled selected>— Elige una sucursal —</option>
                 </select>
             </div>
             <div style="display:flex;gap:8px;margin-top:12px;">
-                <button class="btn-primary" onclick="guardarYRecargarSucursal()" style="flex:1;">Guardar y recargar</button>
+                <button class="btn-primary" onclick="guardarYRecargarSucursal()" style="flex:1;">Cambiar sucursal del equipo</button>
                 <button class="btn-secondary small" onclick="abrirGestorSucursales()">Administrar</button>
             </div>
         </div>
@@ -1560,7 +1572,8 @@
 
     <!-- Programa de Fidelidad -->
     <div class="ajustes-card" id="card-fidelidad" style="margin-top:24px;position:relative;">
-        <h3>Programa de Fidelidad ⭐</h3>
+        <!-- Estrella MORADA: es fidelidad, no "cliente frecuente" (esa es ámbar) -->
+        <h3>Programa de Fidelidad <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></h3>
         <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">
             Solo los clientes inscritos acumulan y pueden canjear puntos. Los demás no participan.
         </p>
@@ -1836,7 +1849,7 @@
                 <div id="panel-puntos-venta" style="display:none;background:linear-gradient(135deg,#f5f3ff,#ede9fe);border:1px solid #ddd6fe;border-radius:10px;padding:12px;margin-top:8px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
                         <div style="font-size:0.9em;color:#6d28d9;font-weight:700;">
-                            ⭐ <span id="puntos-balance-venta">0</span> puntos
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> <span id="puntos-balance-venta">0</span> puntos
                         </div>
                         <div style="font-size:0.82em;color:#7c3aed;font-weight:600;background:#ede9fe;padding:2px 8px;border-radius:20px;">
                             -$<span id="puntos-valor-display">0.00</span>

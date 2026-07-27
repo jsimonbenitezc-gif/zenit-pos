@@ -339,11 +339,56 @@ async function solicitarAuthTurno(rol) {
     });
 }
 
+/**
+ * Pide la contraseña de administrador para una acción de CONFIGURACIÓN
+ * (hoy: cambiar la sucursal de este equipo). Reusa el modal de auth del turno.
+ *
+ * ⚠️ Con cuenta vinculada valida contra la contraseña de la CUENTA (backend), no
+ * contra `app_password` de la SQLite local. Son dos contraseñas distintas: la local
+ * es un cerrojo del equipo que se fija en Ajustes → "Contraseña del sistema" y NO se
+ * entera cuando el dueño cambia la de su cuenta (desde el celular, o por el enlace de
+ * recuperación). Validando contra la local, el equipo seguía aceptando la contraseña
+ * vieja para siempre. Sin conexión (o en modo local puro) se cae a la local, que es
+ * lo único disponible offline.
+ *
+ * @param {string} mensaje texto que explica para qué se pide
+ * @returns {Promise<void>} resuelve si la contraseña es correcta, rechaza si cancela
+ */
+async function solicitarPasswordAdmin(mensaje) {
+    const usarCuenta = !!(modoConectado && apiClient && tokenActual);
+
+    return new Promise(async (resolve, reject) => {
+        if (!usarCuenta) {
+            const tienePass = await window.api.tienePasswordApp();
+            if (!tienePass) { resolve(); return; } // equipo sin cerrojo local: nada que pedir
+        }
+
+        _turnoAuthResolve = resolve;
+        _turnoAuthReject  = reject;
+        _turnoAuthRol     = usarCuenta ? 'cuenta' : 'dueno';
+        document.getElementById('auth-turno-titulo').textContent = 'Administrador';
+        document.getElementById('auth-turno-label').textContent  =
+            mensaje || 'Ingresa la contraseña de administrador para continuar.';
+        document.getElementById('auth-turno-input').value = '';
+        document.getElementById('auth-turno-error').style.display = 'none';
+        document.getElementById('modal-auth-turno').classList.remove('hidden');
+        setTimeout(() => document.getElementById('auth-turno-input').focus(), 50);
+    });
+}
+
 async function confirmarAuthTurno() {
     const valor = document.getElementById('auth-turno-input').value;
     if (!valor) return;
     let ok = false;
-    if (_turnoAuthRol === 'dueno') {
+    if (_turnoAuthRol === 'cuenta') {
+        // Contraseña de la cuenta Zenit (fuente de verdad). Si falla la red, se cae
+        // a la contraseña local del equipo para no dejar al dueño encerrado.
+        try {
+            ok = await apiClient.verifyPassword(valor);
+        } catch (e) {
+            ok = await window.api.verificarPasswordApp(valor);
+        }
+    } else if (_turnoAuthRol === 'dueno') {
         ok = await window.api.verificarPasswordApp(valor);
     } else {
         const ajustes = await window.api.obtenerAjustes();
@@ -379,6 +424,9 @@ async function abrirTurno() {
         mostrarNotificacionExito('Ingresa el nombre del cajero', 'Error');
         return;
     }
+
+    // Un turno sin sucursal descuadra el cierre de caja (ver CLAUDE.md §24)
+    if (!(await verificarSucursalParaRegistrar())) return;
 
     // Si el rol elegido es diferente al actual, pedir autenticación
     if (rolDeseado !== rolActivo) {

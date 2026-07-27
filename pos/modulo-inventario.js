@@ -24,6 +24,31 @@ function fmtStock(val) {
 
   async function cargarInventario() {
       try {
+          renderizarTabsSucursal('inventario');
+
+          // Mirando OTRA sucursal: solo lectura. Se pinta el stock que devuelve el
+          // backend sin tocar la SQLite local — si lo sincronizáramos, el equipo se
+          // quedaría con el inventario de una sucursal que no es la suya y vendería
+          // offline contra números ajenos.
+          const vista = sucursalParaConsultar();
+          if (modoConectado && apiClient && tokenActual && vista !== sucursalIdActual) {
+              const ajenos = await apiClient.getIngredients(vista ? `?branch_id=${vista}` : '').catch(() => null);
+              insumosCache = (ajenos || []).map(d => ({
+                  id: d.id, nombre: d.name, unidad: d.unit,
+                  stock_actual: d.stock || 0, stock_minimo: d.min_stock || 0,
+                  activo: d.active ? 1 : 0, tipo: d.type || 'ingrediente',
+                  contenido_cantidad: d.content_amount || null, contenido_unidad: d.content_unit || null,
+              }));
+              preparacionesCache = await window.api.obtenerPreparaciones();
+              const agrupadosVista = await obtenerProductosAgrupadosWrapper();
+              productosRecetaCache = [];
+              agrupadosVista.forEach(cat => cat.productos.forEach(p => productosRecetaCache.push({ ...p, categoria: cat.nombre })));
+              renderizarTablaInsumos();
+              renderizarTablaPreparaciones();
+              renderizarTablaRecetas();
+              return;
+          }
+
           // En modo conectado: sincronizar stock desde el backend primero,
           // usando branch_id para obtener el stock correcto de esta sucursal
           if (modoConectado && apiClient && tokenActual) {

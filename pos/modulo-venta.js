@@ -78,7 +78,7 @@ async function buscarClientesVenta(e, tipo) {
                 data-direccion="${esc(c.direccion || '')}"
                 data-puntos="${c.puntos || 0}"
                 data-fidelidad="${c.en_fidelidad || 0}">
-                <div class="sugerencia-nombre">${esc(c.nombre)}${c.en_fidelidad ? ' ' + svgIconHTML('star', 14, '#f59e0b') : ''}</div>
+                <div class="sugerencia-nombre">${esc(c.nombre)}${c.en_fidelidad ? ' ' + svgIconHTML('star', 14, '#7c3aed') : ''}</div>
                 <div class="sugerencia-tel" style="display:flex;align-items:center;gap:4px;">${svgIconHTML('smartphone', 13, '#6b7280')} ${esc(c.telefono)}</div>
                 ${c.direccion ? `<div class="sugerencia-direccion" style="display:flex;align-items:center;gap:4px;">${svgIconHTML('map-pin', 13, '#6b7280')} ${esc(c.direccion)}</div>` : ''}
             </div>
@@ -414,11 +414,15 @@ function cerrarModalNotas() {
    ============================================ */
 
 // --- PROCESAR VENTA (ABRE EL MODAL DE PAGO) ---
-function procesarVenta() {
+async function procesarVenta() {
     if (carrito.length === 0) {
         alertaZenit('El carrito está vacío');
         return;
     }
+
+    // Sin sucursal la venta quedaría huérfana (y el backend la rechazaría al subirla,
+    // incluso si se registró offline). Se avisa ANTES de cobrar. Ver CLAUDE.md §24.
+    if (!(await verificarSucursalParaRegistrar())) return;
 
     const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual - descuentoPuntosVenta;
     document.getElementById('pago-total-display').innerText = `$${total.toFixed(2)}`;

@@ -157,6 +157,21 @@ class APIClient {
         return this.request('/auth/forgot-password', { method: 'POST', body: { email } });
     }
 
+    // Confirma la contraseña de la CUENTA (la del dueño) sin tocar la sesión.
+    // Devuelve true/false; cualquier otro error (sin internet, 500) se propaga.
+    async verifyPassword(password) {
+        try {
+            const data = await this.request('/auth/verify-password', {
+                method: 'POST',
+                body: { password }
+            });
+            return data && data.valid === true;
+        } catch (e) {
+            if (/incorrecta|401/i.test(e.message || '')) return false;
+            throw e;
+        }
+    }
+
     async login(username, password) {
         const data = await this.request('/auth/login', {
             method: 'POST',
@@ -404,8 +419,11 @@ class APIClient {
     }
 
     // MESAS
-    async getTables() {
-        return await this.request('/tables', { method: 'GET' });
+    // branchId opcional: las mesas viven en una sucursal (las creadas antes de esa
+    // regla no tienen y se ven siempre).
+    async getTables(branchId) {
+        const q = branchId ? `?branch_id=${branchId}` : '';
+        return await this.request(`/tables${q}`, { method: 'GET' });
     }
 
     async createTable(data) {
