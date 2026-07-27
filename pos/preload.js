@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('api', {
     agregarDescuento: (d) => ipcRenderer.invoke('agregar-descuento', d),
     actualizarDescuento: (id, d) => ipcRenderer.invoke('actualizar-descuento', id, d),
     eliminarDescuento: (id) => ipcRenderer.invoke('eliminar-descuento', id),
+    eliminarDescuentoDefinitivo: (id) => ipcRenderer.invoke('eliminar-descuento-definitivo', id),
     // OFERTAS — COMBOS
     obtenerCombos: () => ipcRenderer.invoke('obtener-combos'),
     agregarCombo: (d) => ipcRenderer.invoke('agregar-combo', d),
@@ -101,6 +102,7 @@ contextBridge.exposeInMainWorld('api', {
     imprimirTicket: (html, impresora) => ipcRenderer.invoke('imprimir-ticket', html, impresora),
 
     limpiarDatosLocales: () => ipcRenderer.invoke('limpiar-datos-locales'),
+    limpiarAjustesCuenta: () => ipcRenderer.invoke('limpiar-ajustes-cuenta'),
     limpiarDatosSiSinSesion: () => ipcRenderer.invoke('limpiar-datos-si-sin-sesion'),
 
     agregarInsumoConId: (id, datos) => ipcRenderer.invoke('agregar-insumo-con-id', id, datos),

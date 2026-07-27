@@ -293,6 +293,7 @@ function mostrarBloqueoSesion(emailCuenta, backendUrl) {
                 await window.api.guardarAjuste('zenit_user_email', '');
                 await window.api.guardarAjuste('pedir_password_inicio', 'false');
                 await window.api.limpiarDatosLocales();
+                await window.api.limpiarAjustesCuenta();
             } catch (e) { console.error('Error al desvincular:', e); }
             location.reload();
         };
@@ -520,8 +521,13 @@ async function inicializarLogin() {
         apiClient.setToken(token);
         const refresh = await window.api.obtenerRefreshSeguro();
         if (refresh) apiClient.setRefreshToken(refresh);
-        await apiClient.request('/auth/me');
-        // Token válido (o renovado automáticamente con el refresh token) — mantener sesión
+        const me = await apiClient.request('/auth/me');
+        // Token válido (o renovado automáticamente con el refresh token) — mantener sesión.
+        // Refrescar el estado de verificación de correo (por si el usuario ya confirmó
+        // vía el enlace del email): así el aviso suave se limpia solo.
+        if (me && typeof me.email_verified !== 'undefined') {
+            await window.api.guardarAjuste('zenit_email_verified', me.email_verified === false ? 'false' : 'true');
+        }
     } catch (e) {
         // Si la sesión expiró de verdad (refresh falló), onSessionExpired ya limpió todo.
         // Cualquier otro error (ej. sin internet) NO cierra la sesión: la app sigue
@@ -1116,14 +1122,14 @@ setTimeout(() => {
     } else if (vista === 'clientes') {
         cargarClientes();
     } else if (vista === 'ofertas') {
-        if (modoConectado && !puedeAccederPremium()) {
+        if (!puedeAccederPremium()) {
             mostrarBloquePremium('view-ofertas');
         } else {
             document.querySelector('#view-ofertas .premium-lock-overlay')?.remove();
             cargarOfertas();
         }
     } else if (vista === 'inventario') {
-        if (modoConectado && !puedeAccederPremium()) {
+        if (!puedeAccederPremium()) {
             mostrarBloquePremium('view-inventario');
         } else {
             document.querySelector('#view-inventario .premium-lock-overlay')?.remove();

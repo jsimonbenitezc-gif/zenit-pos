@@ -4,7 +4,12 @@
 
 // Variables de Pago y Descuento
 let metodoSeleccionado = null;
+// Descuento de empleado/promoción. El backend exige autorización para este monto
+// (un Discount configurado vía descuentoIdActual, o PIN), así que va SEPARADO del
+// canje de puntos: los puntos son del cliente y no requieren autorización.
 let descuentoActual = 0;
+let descuentoIdActual = null;   // id del Discount del backend que respalda el descuento
+let descuentoPuntosVenta = 0;   // pesos descontados por canje de puntos de fidelidad
 
 /* ============================================
    LÓGICA DE VENTAS (CARRITO DESAGRUPADO)
@@ -333,10 +338,12 @@ function renderizarCarrito() {
         </div>`;
     }).join('');
 
-    // Actualizar subtotal, descuento y total
-    const totalFinal = subtotal - descuentoActual;
+    // Actualizar subtotal, descuento y total. El renglón "descuento" muestra la suma
+    // (promoción + puntos), que es lo que el cliente percibe; internamente van separados.
+    const descuentoVisible = descuentoActual + descuentoPuntosVenta;
+    const totalFinal = subtotal - descuentoVisible;
     if (subtotalEl) subtotalEl.innerText = `$${subtotal.toFixed(2)}`;
-    if (descuentoEl) descuentoEl.innerText = `-$${descuentoActual.toFixed(2)}`;
+    if (descuentoEl) descuentoEl.innerText = `-$${descuentoVisible.toFixed(2)}`;
     totalEl.innerText = `$${totalFinal.toFixed(2)}`;
 
     // Actualizar panel de puntos si hay cliente inscrito
@@ -354,6 +361,8 @@ async function limpiarCarrito() {
     if (await confirmarZenit('Se quitarán todos los productos del carrito.', '¿Vaciar el carrito?', { textoOk: 'Vaciar', peligro: true })) {
         carrito = [];
         descuentoActual = 0;
+        descuentoIdActual = null;
+        descuentoPuntosVenta = 0;
         clienteSeleccionadoVenta = null;
 
         // Limpiar campos de cliente
@@ -411,7 +420,7 @@ function procesarVenta() {
         return;
     }
 
-    const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual;
+    const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual - descuentoPuntosVenta;
     document.getElementById('pago-total-display').innerText = `$${total.toFixed(2)}`;
 
     // Mostrar información del cliente en el modal
@@ -455,7 +464,7 @@ function seleccionarMetodo(metodo) {
 
 // --- CALCULAR CAMBIO EN TIEMPO REAL ---
 function calcularCambio() {
-    const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual;
+    const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual - descuentoPuntosVenta;
     const inputRecibido = document.getElementById('efectivo-recibido').value;
 
     // Limpiar el valor: permitir solo números y punto decimal
@@ -502,7 +511,7 @@ async function ejecutarVenta() {
     const btnFinal = document.getElementById('btn-confirmar-final');
     if (btnFinal) btnFinal.disabled = true;
 
-    const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual;
+    const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual - descuentoPuntosVenta;
 
     // Determinar el cliente_id (solo si hay un cliente seleccionado Y REGISTRADO)
     let clienteId = null;
@@ -523,7 +532,12 @@ async function ejecutarVenta() {
         const datosPedido = {
             cliente_id: clienteId,
             total: total,
+            // El descuento de promoción viaja con su descuento_id (autorización que
+            // exige el backend) y SEPARADO del canje de puntos, que no requiere PIN.
             descuento_monto: descuentoActual || 0,
+            descuento_id: descuentoIdActual || null,
+            descuento_puntos_monto: descuentoPuntosVenta || 0,
+            puntos_usados: descuentoPuntosVenta > 0 ? (puntosUsadosVenta || 0) : 0,
             metodo_pago: metodoSeleccionado,
             tipo_pedido: tipoPedidoActual || 'comer',
             referencia: document.getElementById('pedido-referencia')?.value || '',
@@ -567,9 +581,11 @@ async function ejecutarVenta() {
         // Puntos: solo aplica a clientes inscritos en programa de fidelidad
         if (clienteSeleccionadoVenta?.id && clienteSeleccionadoVenta.enFidelidad === 1) {
             if (puntosUsadosVenta > 0) {
-                // Canjear puntos: descontar del balance
+                // Canjear puntos: descontar del balance LOCAL. El descuento en el
+                // backend NO se manda aquí: el pedido ya lleva `puntos_usados` y el
+                // backend los resta dentro de la misma transacción de la venta
+                // (mandarlo también por /loyalty los restaría dos veces).
                 await window.api.actualizarPuntosCliente(clienteSeleccionadoVenta.id, -puntosUsadosVenta).catch(() => {});
-                syncLoyaltyBackend(clienteSeleccionadoVenta.id, { points_delta: -puntosUsadosVenta });
             } else {
                 // Ganar puntos normalmente
                 const puntosGanados = await calcularPuntosGanados(total);
@@ -593,6 +609,8 @@ async function ejecutarVenta() {
         carrito = [];
         metodoSeleccionado = null;
         descuentoActual = 0;
+        descuentoIdActual = null;
+        descuentoPuntosVenta = 0;
         clienteSeleccionadoVenta = null;
         document.getElementById('telefono-cliente').value = '';
         document.getElementById('nombre-cliente').value = '';
@@ -638,7 +656,7 @@ async function abrirModalDescuento() {
                 const pct = d.tipo === 'porcentaje' ? d.valor : 0;
                 const mnto = d.tipo === 'monto_fijo' ? d.valor : 0;
                 const needsPin = d.requires_pin ? 'true' : 'false';
-                return `<button onclick="aplicarDescuentoRapido(${pct}, ${mnto}, '${esc(d.nombre)}', ${needsPin})"
+                return `<button onclick="aplicarDescuentoRapido(${pct}, ${mnto}, '${esc(d.nombre)}', ${needsPin}, ${d.id})"
                     style="background:#eff6ff; border:1px solid #bfdbfe; color:#1d4ed8; padding:8px 14px; border-radius:8px; cursor:pointer; font-size:0.85em; font-weight:600; transition:0.2s;"
                     onmouseover="this.style.background='#dbeafe'" onmouseout="this.style.background='#eff6ff'">
                     ${esc(d.nombre)}${d.requires_pin ? ' 🔒' : ''}<br><span style="font-weight:400; color:#6b7280;">-$${montoCalc}</span>
@@ -652,7 +670,7 @@ async function abrirModalDescuento() {
     document.getElementById('modal-descuento').classList.remove('hidden');
 }
 
-async function aplicarDescuentoRapido(pct, monto, nombre, requiresPin) {
+async function aplicarDescuentoRapido(pct, monto, nombre, requiresPin, descuentoId) {
     const aj = await window.api.obtenerAjustes().catch(() => ({}));
     // Per-descuento: requires_pin → usar modal de PIN de empleado (mismo sistema que cancel_order)
     if (requiresPin) {
@@ -660,25 +678,28 @@ async function aplicarDescuentoRapido(pct, monto, nombre, requiresPin) {
         pedirPinEmpleado(
             `Aplicar descuento "${nombre}" requiere autorización. Ingresa tu PIN.`,
             async (employeeId) => {
-                await _aplicarDescuentoFinal(pct, monto, nombre, { empleadoId: employeeId, empleadoNombre: nombreActivo || 'empleado' });
+                await _aplicarDescuentoFinal(pct, monto, nombre, { empleadoId: employeeId, empleadoNombre: nombreActivo || 'empleado' }, descuentoId);
             }
         );
         return;
     }
     // Setting global: requiere_pin_descuentos → PIN local simple
     if (aj.requiere_pin_descuentos === 'true') {
-        _pendienteDescuento = { pct, monto, nombre };
+        _pendienteDescuento = { pct, monto, nombre, descuentoId };
         document.getElementById('input-pin-descuento').value = '';
         document.getElementById('modal-pin-descuento').classList.remove('hidden');
         cerrarModalDescuento();
         return;
     }
-    _aplicarDescuentoFinal(pct, monto, nombre, null);
+    _aplicarDescuentoFinal(pct, monto, nombre, null, descuentoId);
 }
 
-async function _aplicarDescuentoFinal(pct, monto, nombre, autorizado) {
+async function _aplicarDescuentoFinal(pct, monto, nombre, autorizado, descuentoId = null) {
     const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
     descuentoActual = pct > 0 ? (subtotal * pct / 100) : monto;
+    // Guardar el id del descuento: es la autorización que el backend exige para
+    // aceptar el monto (evita tener que guardar el PIN en la cola offline).
+    descuentoIdActual = descuentoId || null;
     cerrarModalDescuento();
     renderizarCarrito();
     // Registrar en log local
@@ -719,9 +740,9 @@ async function confirmarPinDescuento() {
         return;
     }
     document.getElementById('modal-pin-descuento').classList.add('hidden');
-    const { pct, monto, nombre } = _pendienteDescuento;
+    const { pct, monto, nombre, descuentoId } = _pendienteDescuento;
     _pendienteDescuento = null;
-    _aplicarDescuentoFinal(pct, monto, nombre, null);
+    _aplicarDescuentoFinal(pct, monto, nombre, null, descuentoId);
 }
 
 function cancelarPinDescuento() {
@@ -736,6 +757,7 @@ function cerrarModalDescuento() {
 
 function quitarDescuento() {
     descuentoActual = 0;
+    descuentoIdActual = null;
     cerrarModalDescuento();
     renderizarCarrito();
 }

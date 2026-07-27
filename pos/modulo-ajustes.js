@@ -3,6 +3,75 @@
 // ============================================
 
 /* ============================================
+   ZONA HORARIA DEL NEGOCIO (Bloque 2 · V5)
+   El backend corre en UTC. Sin esto, "hoy" en el dashboard y los resúmenes
+   automáticos cortaban el día a las 6pm hora de México. La zona se manda al
+   registrar la cuenta y se puede corregir aquí en Ajustes.
+   ============================================ */
+
+const ZONAS_HORARIAS = [
+    ['America/Mexico_City',            'México — Centro (CDMX, Guadalajara)'],
+    ['America/Monterrey',              'México — Monterrey'],
+    ['America/Cancun',                 'México — Cancún / Quintana Roo'],
+    ['America/Hermosillo',             'México — Hermosillo / Sonora'],
+    ['America/Mazatlan',               'México — Mazatlán / Sinaloa'],
+    ['America/Tijuana',                'México — Tijuana / Baja California'],
+    ['America/Guatemala',              'Guatemala'],
+    ['America/El_Salvador',            'El Salvador'],
+    ['America/Tegucigalpa',            'Honduras'],
+    ['America/Managua',                'Nicaragua'],
+    ['America/Costa_Rica',             'Costa Rica'],
+    ['America/Panama',                 'Panamá'],
+    ['America/Bogota',                 'Colombia'],
+    ['America/Caracas',                'Venezuela'],
+    ['America/Guayaquil',              'Ecuador'],
+    ['America/Lima',                   'Perú'],
+    ['America/La_Paz',                 'Bolivia'],
+    ['America/Santiago',               'Chile'],
+    ['America/Asuncion',               'Paraguay'],
+    ['America/Argentina/Buenos_Aires', 'Argentina'],
+    ['America/Montevideo',             'Uruguay'],
+    ['America/Sao_Paulo',              'Brasil — São Paulo'],
+    ['America/Santo_Domingo',          'República Dominicana'],
+    ['America/Havana',                 'Cuba'],
+    ['America/Puerto_Rico',            'Puerto Rico'],
+    ['America/New_York',               'EE.UU. — Este (Nueva York, Miami)'],
+    ['America/Chicago',                'EE.UU. — Central (Chicago, Houston)'],
+    ['America/Denver',                 'EE.UU. — Montaña (Denver)'],
+    ['America/Phoenix',                'EE.UU. — Phoenix'],
+    ['America/Los_Angeles',            'EE.UU. — Pacífico (Los Ángeles)'],
+    ['Europe/Madrid',                  'España'],
+    ['UTC',                            'UTC (hora universal)'],
+];
+
+const ZONA_HORARIA_DEFAULT = 'America/Mexico_City';
+
+// Zona del sistema operativo. Es la mejor suposición para un negocio nuevo.
+function zonaHorariaDelEquipo() {
+    try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        // Solo la aceptamos si parece una zona IANA real ("Region/Ciudad")
+        if (typeof tz === 'string' && /^[A-Za-z0-9_+\-/]+$/.test(tz) && tz.includes('/')) return tz;
+    } catch { /* entorno sin Intl completo */ }
+    return ZONA_HORARIA_DEFAULT;
+}
+
+// Llena el select de Ajustes. Si la zona guardada no está en la lista curada
+// (p.ej. un equipo en otra región del mundo) se agrega para no perderla.
+function poblarSelectZonaHoraria(zonaActual) {
+    const select = document.getElementById('adj-zona-horaria');
+    if (!select) return;
+    const zona = zonaActual || zonaHorariaDelEquipo();
+    const opciones = ZONAS_HORARIAS.slice();
+    if (zona && !opciones.some(([tz]) => tz === zona)) opciones.unshift([zona, zona]);
+
+    select.innerHTML = opciones
+        .map(([tz, etiqueta]) => `<option value="${tz}">${etiqueta}</option>`)
+        .join('');
+    select.value = zona;
+}
+
+/* ============================================
    CUENTA ZENIT — Registro y sesión
    ============================================ */
 
@@ -14,6 +83,30 @@ function mostrarLoginZenit() {
 function mostrarRegistroZenit() {
     document.getElementById('zenit-form-login').style.display = 'none';
     document.getElementById('zenit-form-registro').style.display = '';
+}
+
+// "¿Olvidaste tu contraseña?" — dispara el correo de recuperación.
+// El reseteo en sí ocurre en la página web que abre el enlace del correo.
+async function recuperarPasswordZenit() {
+    const email = (document.getElementById('zenit-email-login').value || '').trim();
+    if (!email) {
+        await alertaZenit('Escribe tu correo en el campo de arriba y vuelve a pulsar el enlace.', 'Falta tu correo');
+        return;
+    }
+    const link = document.getElementById('zenit-link-olvide');
+    if (link) { link.style.pointerEvents = 'none'; link.textContent = 'Enviando...'; }
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const backendUrl = ajustes.api_url || 'https://zenit-pos-backend.onrender.com/api';
+        if (!apiClient) { window.apiClient = new APIClient(backendUrl); configurarCallbacksApiClient(); }
+        apiClient.setBaseURL(backendUrl);
+        const r = await apiClient.forgotPassword(email);
+        await alertaZenit((r && r.message) || 'Si existe una cuenta con ese correo, te enviamos un enlace para restablecer tu contraseña. Revisa tu bandeja (y spam).', 'Revisa tu correo');
+    } catch (error) {
+        await alertaZenit(error.message || 'No se pudo enviar el correo. Intenta de nuevo en unos minutos.', 'Error');
+    } finally {
+        if (link) { link.style.pointerEvents = ''; link.textContent = '¿Olvidaste tu contraseña?'; }
+    }
 }
 
 async function cargarCuentaZenitAjustes() {
@@ -31,11 +124,41 @@ async function cargarCuentaZenitAjustes() {
         conCuenta.style.display = '';
         document.getElementById('zenit-nombre-mostrar').textContent = nombre;
         document.getElementById('zenit-email-mostrar').textContent = email || '';
+        // Aviso suave de correo sin confirmar: solo cuando está explícitamente en 'false'.
+        // (Cuentas antiguas / sin el dato = tratadas como verificadas → no molestan.)
+        const aviso = document.getElementById('zenit-verificacion-aviso');
+        if (aviso) aviso.style.display = ajustes.zenit_email_verified === 'false' ? '' : 'none';
     } else {
         sinCuenta.style.display = '';
         conCuenta.style.display = 'none';
     }
     actualizarCardMiPlan();
+}
+
+// Reenvía el correo de confirmación (política suave; requiere conexión y sesión)
+async function reenviarVerificacionZenit() {
+    const btn = document.getElementById('zenit-btn-reenviar-verif');
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+    try {
+        if (!apiClient) {
+            const ajustes = await window.api.obtenerAjustes();
+            const backendUrl = ajustes.api_url || 'https://zenit-pos-backend.onrender.com/api';
+            window.apiClient = new APIClient(backendUrl); configurarCallbacksApiClient();
+        }
+        const r = await apiClient.resendVerification();
+        if (r && r.email_verified === true) {
+            // El backend confirma que ya estaba verificado: ocultar el aviso.
+            await window.api.guardarAjuste('zenit_email_verified', 'true');
+            await cargarCuentaZenitAjustes();
+            await alertaZenit('Tu correo ya está confirmado.', 'Todo listo');
+            return;
+        }
+        await alertaZenit((r && r.message) || 'Te enviamos el correo de confirmación. Revisa tu bandeja (y spam).', 'Correo enviado');
+    } catch (error) {
+        await alertaZenit(error.message || 'No se pudo enviar el correo. Intenta de nuevo en unos minutos.', 'Error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Reenviar correo'; }
+    }
 }
 
 async function registrarCuentaZenit() {
@@ -66,13 +189,18 @@ async function registrarCuentaZenit() {
         if (!apiClient) { window.apiClient = new APIClient(backendUrl); configurarCallbacksApiClient(); }
         apiClient.setBaseURL(backendUrl);
 
-        const response = await apiClient.register(nombre, email, password);
+        // La zona del equipo se manda al crear la cuenta para que el dashboard
+        // corte el día bien desde el primer momento (se puede cambiar en Ajustes).
+        const zonaEquipo = zonaHorariaDelEquipo();
+        const response = await apiClient.register(nombre, email, password, zonaEquipo);
+        await window.api.guardarAjuste('tz', zonaEquipo);
 
         await window.api.guardarTokenSeguro(response.token); // Token cifrado
         if (response.refreshToken) await window.api.guardarRefreshSeguro(response.refreshToken);
         await window.api.guardarAjuste('api_url', backendUrl);
         await window.api.guardarAjuste('zenit_user_name', response.user.name);
         await window.api.guardarAjuste('zenit_user_email', email);
+        await window.api.guardarAjuste('zenit_email_verified', response.user.email_verified === false ? 'false' : 'true');
         await window.api.guardarAjuste('plan', response.user.plan || 'free');
         await window.api.guardarAjuste('plan_expires_at', response.user.plan_expires_at || '');
 
@@ -140,6 +268,7 @@ async function iniciarSesionZenitAjustes() {
         await window.api.guardarAjuste('api_url', backendUrl);
         await window.api.guardarAjuste('zenit_user_name', response.user.name);
         await window.api.guardarAjuste('zenit_user_email', email);
+        await window.api.guardarAjuste('zenit_email_verified', response.user.email_verified === false ? 'false' : 'true');
         await window.api.guardarAjuste('plan', response.user.plan || 'free');
         await window.api.guardarAjuste('plan_expires_at', response.user.plan_expires_at || '');
 
@@ -208,6 +337,9 @@ async function cerrarSesionZenit() {
     await window.api.guardarAjuste('zenit_user_name', '');
     await window.api.guardarAjuste('zenit_user_email', '');
     await window.api.limpiarDatosLocales();
+    // Borrar también los ajustes de la cuenta (plan, negocio, puestos, etc.) para no
+    // dejar datos ni premium desbloqueado tras cerrar sesión. Conserva los de dispositivo.
+    await window.api.limpiarAjustesCuenta();
     location.reload();
 }
 
@@ -709,6 +841,9 @@ async function cargarAjustesInstalados() {
         if(ajustes.currency_symbol && document.getElementById('adj-moneda'))
             document.getElementById('adj-moneda').value = ajustes.currency_symbol;
 
+        // Zona horaria del negocio (la nube manda; si nunca se configuró, la del equipo)
+        poblarSelectZonaHoraria(ajustes.tz || zonaHorariaDelEquipo());
+
         // Logo
         if(ajustes.logo_path && document.getElementById('adj-logo-path')) {
             document.getElementById('adj-logo-path').value = ajustes.logo_path;
@@ -893,6 +1028,22 @@ function agregarListenersGuardadoAjustes() {
     if (moneda) {
         moneda.addEventListener('change', async () => {
             await window.api.guardarAjuste('currency_symbol', moneda.value);
+        });
+    }
+
+    // Zona horaria — se guarda local y en la nube (el backend la usa para cortar el día)
+    const zonaHoraria = document.getElementById('adj-zona-horaria');
+    if (zonaHoraria) {
+        zonaHoraria.addEventListener('change', async () => {
+            await window.api.guardarAjuste('tz', zonaHoraria.value);
+            if (modoConectado && apiClient && tokenActual) {
+                try {
+                    await apiClient.saveSettings({ tz: zonaHoraria.value });
+                    mostrarNotificacionExito('Zona horaria actualizada', 'El dashboard y los reportes ya usan tu hora local.');
+                } catch (error) {
+                    await alertaZenit('No se pudo guardar la zona horaria en la nube. Se reintentará cuando haya conexión.', 'Sin conexión');
+                }
+            }
         });
     }
 

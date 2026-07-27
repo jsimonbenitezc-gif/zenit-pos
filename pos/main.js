@@ -495,6 +495,9 @@ ipcMain.handle('actualizar-descuento', async (_, id, d) => {
 ipcMain.handle('eliminar-descuento', async (_, id) => {
     return new Promise((res, rej) => db.eliminarDescuento(id, (err) => err ? rej(err) : res(true)));
 });
+ipcMain.handle('eliminar-descuento-definitivo', async (_, id) => {
+    return new Promise((res, rej) => db.eliminarDescuentoDefinitivo(id, (err) => err ? rej(err) : res(true)));
+});
 ipcMain.handle('obtener-combos', async () => {
     return new Promise((res, rej) => db.obtenerCombos((err, rows) => err ? rej(err) : res(rows)));
 });
@@ -606,6 +609,13 @@ ipcMain.handle('limpiar-datos-locales', () => {
     verificarPermisoDueno();
     return new Promise((resolve) => {
         db.limpiarDatosLocales((err) => resolve(!err));
+    });
+});
+
+// Borra los ajustes de cuenta al cerrar sesión (conserva los de dispositivo).
+ipcMain.handle('limpiar-ajustes-cuenta', () => {
+    return new Promise((resolve) => {
+        db.limpiarAjustesCuenta((err) => resolve(!err));
     });
 });
 

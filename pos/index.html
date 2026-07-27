@@ -1176,6 +1176,13 @@
                     <option value="S/">S/ (Sol)</option>
                 </select>
             </div>
+            <div class="input-group">
+                <label>Zona horaria del negocio</label>
+                <select id="adj-zona-horaria"></select>
+                <p style="margin:4px 0 0; font-size:0.8em; color:#9ca3af;">
+                    Define a qué hora corta el día en el dashboard, los reportes y los resúmenes automáticos.
+                </p>
+            </div>
         </div>
 
         <!-- Sistema de Puntos -->
@@ -1383,6 +1390,9 @@
                     </div>
                     <div id="zenit-error-login" style="display:none;color:#ef4444;font-size:13px;margin-bottom:8px;"></div>
                     <button class="btn-primary" style="width:100%" onclick="iniciarSesionZenitAjustes()">Iniciar sesión</button>
+                    <div style="text-align:center;margin-top:10px">
+                        <a id="zenit-link-olvide" href="#" onclick="recuperarPasswordZenit(); return false;" style="color:#2563eb;font-size:13px;text-decoration:none;">¿Olvidaste tu contraseña?</a>
+                    </div>
                     <button class="btn-secondary" style="width:100%;margin-top:8px" onclick="mostrarRegistroZenit()">← Crear cuenta nueva</button>
                 </div>
             </div>
@@ -1396,6 +1406,12 @@
                     </p>
                     <p id="zenit-nombre-mostrar" style="margin:6px 0 2px;color:#374151;font-weight:500;"></p>
                     <p id="zenit-email-mostrar" style="margin:0;color:#6b7280;font-size:13px;"></p>
+                </div>
+                <!-- Aviso suave: correo sin confirmar (no bloquea nada) -->
+                <div id="zenit-verificacion-aviso" style="display:none;background:#fffbeb;padding:14px;border-radius:8px;border-left:4px solid #f59e0b;margin-bottom:16px;">
+                    <p style="margin:0 0 4px;color:#92400e;font-weight:600;">Confirma tu correo</p>
+                    <p style="margin:0 0 10px;color:#92400e;font-size:13px;line-height:1.5;">Revisa tu bandeja de entrada (y spam) y confirma tu correo para habilitar la recuperación de contraseña.</p>
+                    <button id="zenit-btn-reenviar-verif" class="btn-secondary" style="color:#2563eb;border-color:#2563eb;" onclick="reenviarVerificacionZenit()">Reenviar correo</button>
                 </div>
                 <div style="border:1px solid #fca5a5;border-radius:8px;padding:8px;background:#fff5f5;margin-top:4px;">
                     <button class="btn-secondary" style="width:100%;color:#dc2626;border-color:#fca5a5;" onclick="cerrarSesionZenit()">Cerrar sesión</button>

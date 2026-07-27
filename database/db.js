@@ -227,6 +227,13 @@ function inicializarTablas() {
     db.run("ALTER TABLE pedidos ADD COLUMN pendiente_sync INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN client_uuid TEXT", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN descuento_monto REAL DEFAULT 0", () => {});
+    // Autorización del descuento y canje de puntos (Bloque 1, seguridad de dinero):
+    // el backend exige que un descuento venga respaldado por un Discount configurado
+    // (descuento_id) o por PIN. Guardamos el id para que la venta encolada offline
+    // pueda autorizarse al subir SIN tener que almacenar el PIN en claro.
+    db.run("ALTER TABLE pedidos ADD COLUMN descuento_id INTEGER", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN descuento_puntos_monto REAL DEFAULT 0", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN puntos_usados INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN tipo TEXT DEFAULT 'ingrediente'", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_cantidad REAL", () => {});
     db.run("ALTER TABLE insumos ADD COLUMN contenido_unidad TEXT", () => {});
@@ -467,9 +474,12 @@ async function crearPedido(datos, items, callback, opciones) {
             pendiente_sync,
             client_uuid,
             descuento_monto,
+            descuento_id,
+            descuento_puntos_monto,
+            puntos_usados,
             fecha_pedido
         )
-        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
     `;
 
     const skipStock = opciones && opciones.skipStock;
@@ -492,7 +502,10 @@ async function crearPedido(datos, items, callback, opciones) {
             datos.cajero || null,
             datos.pendiente_sync || 0,
             datos.client_uuid || null,
-            datos.descuento_monto || 0
+            datos.descuento_monto || 0,
+            datos.descuento_id || null,
+            datos.descuento_puntos_monto || 0,
+            datos.puntos_usados || 0
         ]);
         const pedidoId = resultadoPedido.lastID;
 
@@ -1103,6 +1116,11 @@ function actualizarDescuento(id, d, cb) {
 function eliminarDescuento(id, cb) {
     db.run("UPDATE promociones SET activa = 0 WHERE id = ?", [id], cb);
 }
+// Borrado real (no solo desactivar). Se usa al reconciliar un descuento local con
+// el backend: la fila con el id viejo se elimina tras reinsertarla con el id real.
+function eliminarDescuentoDefinitivo(id, cb) {
+    db.run("DELETE FROM promociones WHERE id = ?", [id], cb);
+}
 
 // ============================================
 // OFERTAS — COMBOS
@@ -1691,6 +1709,7 @@ module.exports = {
     agregarDescuento,
     actualizarDescuento,
     eliminarDescuento,
+    eliminarDescuentoDefinitivo,
     obtenerCombos,
     agregarCombo,
     actualizarCombo,
@@ -1707,6 +1726,7 @@ module.exports = {
     calcularTotalesTurno,
     cerrarTurno,
     limpiarDatosLocales,
+    limpiarAjustesCuenta,
     agregarInsumoConId,
     agregarPreparacionConId,
     agregarDescuentoConId,
@@ -1925,4 +1945,21 @@ function limpiarDatosLocales(cb) {
             });
         });
     });
+}
+
+// Borra los ajustes de CUENTA (plan, negocio, permisos_roles, tokens, etc.) al
+// cerrar sesión, conservando solo los de DISPOSITIVO: la URL del backend, la
+// contraseña de bloqueo de la app y la configuración de impresora. Se usa una
+// lista blanca (borrar todo lo demás) para que cualquier ajuste de cuenta nuevo
+// se limpie solo, sin tener que actualizar esta función. currency_symbol se
+// conserva porque es cosmético y NO se re-descarga del backend en el re-login.
+// Los datos de cuenta (permisos_roles, plan, etc.) se restauran solos al iniciar
+// sesión (sincronizarDesdeBackend baja /settings; el plan vuelve por el login).
+function limpiarAjustesCuenta(cb) {
+    db.run(
+        `DELETE FROM ajustes
+         WHERE clave NOT IN ('api_url', 'app_password', 'currency_symbol')
+           AND clave NOT LIKE 'impresora%'`,
+        (err) => { if (cb) cb(err); }
+    );
 }

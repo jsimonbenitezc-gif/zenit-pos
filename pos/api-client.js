@@ -131,10 +131,12 @@ class APIClient {
     }
 
     // AUTH
-    async register(name, email, password) {
+    // `tz`: zona horaria IANA del equipo. El backend la guarda en settings.tz y la
+    // usa para cortar el día en stats y en los resúmenes automáticos.
+    async register(name, email, password, tz) {
         const data = await this.request('/auth/register', {
             method: 'POST',
-            body: { name, email, password }
+            body: { name, email, password, ...(tz ? { tz } : {}) }
         });
         if (data.token) {
             this.setToken(data.token);
@@ -143,6 +145,16 @@ class APIClient {
             this.setRefreshToken(data.refreshToken);
         }
         return data;
+    }
+
+    // Reenviar el correo de confirmación de cuenta (política suave)
+    async resendVerification() {
+        return this.request('/auth/resend-verification', { method: 'POST' });
+    }
+
+    // Solicitar correo de recuperación de contraseña (respuesta genérica anti-enumeración)
+    async forgotPassword(email) {
+        return this.request('/auth/forgot-password', { method: 'POST', body: { email } });
     }
 
     async login(username, password) {

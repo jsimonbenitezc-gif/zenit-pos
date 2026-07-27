@@ -179,6 +179,7 @@ async function sincronizarDesdeBackend() {
                 if (recetas) await window.api.syncRecetas(recetas);
             }
             if (descuentos) await window.api.syncDescuentos(descuentos);
+            await _reconciliarDescuentosLocales(descuentos);
             if (combos) await window.api.syncCombos(combos);
         }
 
@@ -197,6 +198,48 @@ async function sincronizarDesdeBackend() {
     }
 }
 
+// Los descuentos locales que NO existen en el backend (los sembrados al instalar,
+// o los creados sin conexión) tienen un id que el backend desconoce. Como el id es
+// la autorización del descuento en la venta (ver subirPedidosPendientes), mandarlo
+// daría 404 y la venta quedaría atascada en la cola. Aquí se suben al backend y se
+// re-indexan localmente con el id real, de modo que el id siempre sea válido.
+async function _reconciliarDescuentosLocales(descuentosBackend) {
+    if (!modoConectado || !apiClient || !tokenActual) return;
+    try {
+        const locales = await window.api.obtenerDescuentos();
+        if (!locales || locales.length === 0) return;
+        const idsBackend = new Set((descuentosBackend || []).map(d => d.id));
+        const huerfanos = locales.filter(d => !idsBackend.has(d.id));
+        if (huerfanos.length === 0) return;
+
+        for (const d of huerfanos) {
+            try {
+                const creado = await apiClient.request('/offers/discounts', {
+                    method: 'POST',
+                    body: {
+                        name: d.nombre,
+                        type: d.tipo === 'porcentaje' ? 'percentage' : 'fixed',
+                        value: d.valor,
+                        applies_to: 'all',
+                        requires_pin: !!d.requires_pin
+                    }
+                });
+                if (creado && creado.id) {
+                    await window.api.agregarDescuentoConId(creado.id, {
+                        nombre: d.nombre, tipo: d.tipo, valor: d.valor, requires_pin: !!d.requires_pin
+                    });
+                    // Quitar la fila con el id viejo (el nuevo ya quedó insertado)
+                    if (creado.id !== d.id) await window.api.eliminarDescuentoDefinitivo(d.id);
+                }
+            } catch (e) {
+                console.warn(`No se pudo reconciliar el descuento "${d.nombre}":`, e.message);
+            }
+        }
+    } catch (e) {
+        console.warn('No se pudieron reconciliar los descuentos locales:', e.message);
+    }
+}
+
 async function subirPedidosPendientes() {
     if (!modoConectado || !apiClient || !tokenActual) return;
     try {
@@ -210,7 +253,16 @@ async function subirPedidosPendientes() {
                     customer_id: pedido.cliente_id || null,
                     customer_temp_info: pedido.info_cliente_temp || null,
                     total: pedido.total,
+                    // Descuento de promoción + su autorización. El backend exige un
+                    // discount_id válido (o PIN) para aceptar el monto; mandamos el id
+                    // guardado con la venta para no tener que almacenar el PIN en claro.
                     discount_amount: pedido.descuento_monto || 0,
+                    discount_id: pedido.descuento_id || null,
+                    // Canje de puntos: va aparte porque NO requiere autorización.
+                    // El backend lo topa a puntos_usados × puntos_valor y descuenta
+                    // los puntos del cliente en la misma transacción.
+                    loyalty_discount_amount: pedido.descuento_puntos_monto || 0,
+                    loyalty_points_used: pedido.puntos_usados || 0,
                     payment_method: pedido.metodo_pago,
                     order_type: (pedido.tipo_pedido === 'mesa' ? 'comer' : pedido.tipo_pedido) || 'comer',
                     reference: pedido.referencia || null,

@@ -297,6 +297,7 @@ async function actualizarPanelPuntosVenta() {
     if (!clienteSeleccionadoVenta || !clienteSeleccionadoVenta.enFidelidad) {
         panel.style.display = 'none';
         puntosUsadosVenta = 0;
+        descuentoPuntosVenta = 0;
         return;
     }
     const aj = await window.api.obtenerAjustes().catch(() => ({}));
@@ -336,7 +337,10 @@ async function toggleUsarPuntosVenta() {
         const subtotal = carrito.reduce((s, i) => s + i.precio, 0);
         const descMax = parseFloat((puntos * valorPunto).toFixed(2));
         puntosUsadosVenta = puntos;
-        descuentoActual = Math.min(descMax, subtotal);
+        // El canje va en su propia variable (NO en descuentoActual): el backend trata
+        // el descuento de empleado y el canje de puntos como cosas distintas — el
+        // primero exige autorización, el segundo no. Se topa a lo que queda por pagar.
+        descuentoPuntosVenta = Math.min(descMax, Math.max(0, subtotal - descuentoActual));
         if (btn) {
             btn.style.background = '#7c3aed';
             btn.style.color = 'white';
@@ -344,9 +348,10 @@ async function toggleUsarPuntosVenta() {
             btn.innerHTML = '<span>✓ Descuento de puntos activo</span><span style="font-size:1.15em;line-height:1;">●</span>';
         }
     } else {
-        // Desactivar
+        // Desactivar: solo se quita el canje de puntos, NO un descuento de
+        // promoción que el cajero haya aplicado aparte.
         puntosUsadosVenta = 0;
-        descuentoActual = 0;
+        descuentoPuntosVenta = 0;
         if (btn) {
             btn.style.background = 'white';
             btn.style.color = '#7c3aed';
