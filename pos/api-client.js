@@ -434,15 +434,26 @@ class APIClient {
         return await this.request(`/tables/${id}`, { method: 'DELETE' });
     }
 
-    async openTableOrder(tableId, guests, notes, branchId) {
+    // clientUuid: idempotencia. Si el mesero toca "abrir" dos veces con red lenta,
+    // el backend reconoce el segundo intento y devuelve el MISMO pedido en vez de
+    // abrir dos comandas para la misma mesa.
+    async openTableOrder(tableId, guests, notes, branchId, clientUuid) {
         return await this.request('/orders', {
             method: 'POST',
-            body: { table_id: tableId, guests: guests || null, notes: notes || null, items: [], branch_id: branchId || null }
+            body: {
+                table_id: tableId, guests: guests || null, notes: notes || null,
+                items: [], branch_id: branchId || null, client_uuid: clientUuid || null
+            }
         });
     }
 
-    async addItemsToOrder(orderId, items) {
-        return await this.request(`/orders/${orderId}/items`, { method: 'POST', body: { items } });
+    // clientUuid identifica el ENVÍO completo: un reenvío no vuelve a agregar los
+    // productos ni a descontar los insumos otra vez.
+    async addItemsToOrder(orderId, items, clientUuid) {
+        return await this.request(`/orders/${orderId}/items`, {
+            method: 'POST',
+            body: { items, client_uuid: clientUuid || null }
+        });
     }
 
     async removeOrderItem(orderId, itemId) {

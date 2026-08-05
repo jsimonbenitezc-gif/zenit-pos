@@ -12,6 +12,13 @@ let _zonaActivaMesas = 'Todas';
 let _carritoMesa = {};        // { producto_id: { nombre, precio, cantidad } }
 let _notasDebounceTimer = null;
 let _categoriaActivaMesa = null;
+// Idempotencia (BLOQUE 5). Un uuid por INTENCIÓN, no por clic: sobrevive a los
+// reintentos del mismo envío para que el backend los reconozca, y se descarta
+// en cuanto la acción se completa o el contenido cambia.
+let _uuidAperturaMesa = {};   // { mesa_id: uuid } — abrir mesa
+let _uuidEnvioMesa = null;    // lote de productos que se está agregando
+let _abriendoMesa = false;
+let _enviandoItemsMesa = false;
 
 const _fmtMesa = (v) => '$' + parseFloat(v || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -188,31 +195,45 @@ function seleccionarMesaLibre(mesa_id) {
 }
 
 function cerrarModalAbrirMesa() {
+    // El uuid de idempotencia vale solo mientras esta apertura sigue en curso. Si
+    // se guardara para siempre, reabrir la misma mesa mañana con ese uuid haría
+    // que el backend devolviera el pedido viejo en vez de abrir uno nuevo.
+    if (_mesaActivaId) delete _uuidAperturaMesa[_mesaActivaId];
     document.getElementById('modal-abrir-mesa').classList.add('hidden');
 }
 
 async function confirmarAbrirMesa() {
     if (!_mesaActivaId) return;
+    if (_abriendoMesa) return; // doble clic mientras la primera apertura va en camino
     // Abrir mesa crea un pedido: aplica la misma regla de sucursal que una venta
     if (await bloquearSiVistaAjena()) return;
     if (!(await verificarSucursalParaRegistrar())) return;
     const comensales = parseInt(document.getElementById('mesa-comensales').value) || 1;
     const notas = document.getElementById('mesa-notas-apertura').value.trim();
+    const mesaId = _mesaActivaId;
+    _abriendoMesa = true;
     try {
-        const mesaAbrir = _mesasData.find(m => m.id === _mesaActivaId);
+        const mesaAbrir = _mesasData.find(m => m.id === mesaId);
         if (modoConectado && apiClient && tokenActual) {
-            const order = await apiClient.openTableOrder(_mesaActivaId, comensales, notas || null, sucursalIdActual);
-            _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(order);
+            // Mismo uuid mientras se sigue intentando abrir ESTA mesa: si la
+            // respuesta se pierde pero el pedido sí se creó, el reintento
+            // devuelve ese pedido en vez de abrir una segunda comanda.
+            if (!_uuidAperturaMesa[mesaId]) _uuidAperturaMesa[mesaId] = _generarUuid();
+            const order = await apiClient.openTableOrder(mesaId, comensales, notas || null, sucursalIdActual, _uuidAperturaMesa[mesaId]);
+            _pedidosMesa[mesaId] = _normalizarPedidoApi(order);
+            delete _uuidAperturaMesa[mesaId];
         } else {
-            await window.api.abrirPedidoMesa(_mesaActivaId, mesaAbrir?.nombre || '', nombreActivo || 'Cajero', comensales, notas || null);
+            await window.api.abrirPedidoMesa(mesaId, mesaAbrir?.nombre || '', nombreActivo || 'Cajero', comensales, notas || null);
         }
         cerrarModalAbrirMesa();
         await cargarVistaMesas();
         // Abrir panel de la mesa recién abierta
-        abrirPanelMesa(_mesaActivaId);
+        abrirPanelMesa(mesaId);
     } catch(e) {
         console.error('Error abriendo mesa:', e);
         mostrarNotificacionExito('Error al abrir la mesa', 'Error');
+    } finally {
+        _abriendoMesa = false;
     }
 }
 
@@ -344,6 +365,7 @@ async function abrirModalAgregarProductosMesa() {
 function cerrarModalAgregarProductosMesa() {
     document.getElementById('modal-agregar-productos-mesa').classList.add('hidden');
     _carritoMesa = {};
+    _uuidEnvioMesa = null; // el carrito se vació: el próximo envío es otro lote
 }
 
 function _renderizarCategoriasMesa() {
@@ -418,6 +440,7 @@ function _renderizarProductoresMesa(lista) {
 function _toggleProductoMesa(id, nombre, precio) {
     if (!_carritoMesa[id]) _carritoMesa[id] = { nombre, precio, cantidad: 0 };
     _carritoMesa[id].cantidad++;
+    _uuidEnvioMesa = null; // el envío cambió: ya no es el mismo lote
     _actualizarResumenCarritoMesa();
     filtrarProductosMesa(document.getElementById('mesa-prod-busqueda')?.value || '');
 }
@@ -426,6 +449,7 @@ function _quitarProductoMesa(id) {
     if (!_carritoMesa[id]) return;
     _carritoMesa[id].cantidad--;
     if (_carritoMesa[id].cantidad <= 0) delete _carritoMesa[id];
+    _uuidEnvioMesa = null;
     _actualizarResumenCarritoMesa();
     filtrarProductosMesa(document.getElementById('mesa-prod-busqueda')?.value || '');
 }
@@ -459,8 +483,10 @@ function _actualizarResumenCarritoMesa() {
 
 async function confirmarAgregarProductosMesa() {
     if (!_pedidoMesaActivo) return;
+    if (_enviandoItemsMesa) return; // doble clic: la primera comanda ya va en camino
     const items = Object.entries(_carritoMesa).filter(([,v]) => v.cantidad > 0);
     if (items.length === 0) { cerrarModalAgregarProductosMesa(); return; }
+    _enviandoItemsMesa = true;
     try {
         // `updated` declarado aquí (fuera del if) para que esté en scope al marcar el tracker
         let updated = null;
@@ -469,7 +495,11 @@ async function confirmarAgregarProductosMesa() {
                 product_id: parseInt(prod_id),
                 quantity: item.cantidad,
             }));
-            updated = await apiClient.addItemsToOrder(_pedidoMesaActivo.id, apiItems);
+            // Un uuid por LOTE, estable mientras el carrito no cambie: si el envío
+            // se corta después de que el backend lo guardó, reintentar no duplica
+            // los productos de la mesa ni descuenta los insumos dos veces.
+            if (!_uuidEnvioMesa) _uuidEnvioMesa = _generarUuid();
+            updated = await apiClient.addItemsToOrder(_pedidoMesaActivo.id, apiItems, _uuidEnvioMesa);
             // Marcar inmediatamente (antes de kdsNuevoPedido) para que el polling no reenvíe
             _kdsMarcarEnviado(updated.id, updated.updatedAt, updated.items);
             _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(updated);
@@ -495,9 +525,13 @@ async function confirmarAgregarProductosMesa() {
         mostrarNotificacionExito('Comanda enviada a cocina', 'Enviado');
         // Refrescar badges de stock tras descontar insumos (local e inmediato, sin esperar SSE)
         _refrescarStockBadges();
+        _uuidEnvioMesa = null; // lote cerrado: el próximo envío es otro
     } catch(e) {
         console.error('Error agregando productos a mesa:', e);
         mostrarNotificacionExito('Error al agregar productos', 'Error');
+        // El uuid NO se limpia: si el envío sí llegó, el reintento lo deduplica.
+    } finally {
+        _enviandoItemsMesa = false;
     }
 }
 

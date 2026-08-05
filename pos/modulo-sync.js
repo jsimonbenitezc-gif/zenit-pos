@@ -240,6 +240,22 @@ async function _reconciliarDescuentosLocales(descuentosBackend) {
     }
 }
 
+// SQLite guarda las fechas del POS con datetime('now','localtime'): un texto
+// 'YYYY-MM-DD HH:MM:SS' SIN zona, en la hora del equipo. `new Date('...T...')`
+// (sin la Z) lo interpreta como hora local, que es justo lo que queremos, y
+// toISOString() lo convierte al instante universal que espera el backend.
+// Devuelve null ante cualquier valor raro: el backend cae a su propia hora.
+function _fechaLocalAIso(fecha) {
+    if (!fecha) return null;
+    if (fecha instanceof Date) return isNaN(fecha) ? null : fecha.toISOString();
+    const texto = String(fecha).trim();
+    // Ya viene con zona (ISO con Z u offset): usarlo tal cual.
+    const d = /[zZ]|[+-]\d{2}:?\d{2}$/.test(texto)
+        ? new Date(texto)
+        : new Date(texto.replace(' ', 'T'));
+    return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 async function subirPedidosPendientes() {
     if (!modoConectado || !apiClient || !tokenActual) return;
     try {
@@ -271,6 +287,12 @@ async function subirPedidosPendientes() {
                     notes: pedido.notas_generales || null,
                     branch_id: sucursalIdActual || null,
                     client_uuid: pedido.client_uuid || null,
+                    // Hora REAL de la venta (BLOQUE 5). Sin esto, una venta hecha
+                    // sin internet quedaba con la hora en que se recuperó la red:
+                    // caía en el día y el turno equivocados. El backend la acepta
+                    // junto al client_uuid y respeta también el unit_price de abajo,
+                    // que es el precio que de verdad se cobró.
+                    sold_at: _fechaLocalAIso(pedido.fecha_pedido),
                     // La venta YA se concretó localmente; no dejar que un aviso de
                     // stock del backend bloquee su subida (evita marcarla como
                     // sincronizada sin haberse creado en el backend).

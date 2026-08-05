@@ -1274,7 +1274,10 @@ function cerrarTurno(id, efectivoContado, notas, cb) {
             const diferencia = efectivoContado - efectivoEsperado;
             db.run(
                 `UPDATE turnos SET
-                    cierre = CURRENT_TIMESTAMP,
+                    -- Hora LOCAL: 'apertura' se guarda con datetime('now','localtime'),
+                    -- así que con CURRENT_TIMESTAMP (UTC) la duración del turno salía
+                    -- desfasada tantas horas como el huso del negocio.
+                    cierre = datetime('now','localtime'),
                     efectivo_contado = ?,
                     diferencia = ?,
                     total_pedidos = ?,
@@ -1571,8 +1574,12 @@ function obtenerPedidoAbiertoPorMesa(mesa_id, cb) {
 function abrirPedidoMesa(mesa_id, mesa_nombre, cajero, comensales, notas, cb) {
     const infoCliente = mesa_nombre ? `Mesa: ${mesa_nombre}` : null;
     db.run(
-        `INSERT INTO pedidos (mesa_id, total, estado, tipo_pedido, cajero, comensales, notas_generales, pendiente_sync, info_cliente_temp)
-         VALUES (?, 0, 'abierto', 'mesa', ?, ?, ?, 0, ?)`,
+        // fecha_pedido explícita en hora LOCAL: el DEFAULT de la columna es
+        // CURRENT_TIMESTAMP (UTC) y dejaba la mesa "abierta hace 6 horas" en México,
+        // además de mandar una hora equivocada al sincronizar. Todo el POS local
+        // guarda y consulta en hora local (ver crearPedido y las stats con 'localtime').
+        `INSERT INTO pedidos (mesa_id, total, estado, tipo_pedido, cajero, comensales, notas_generales, pendiente_sync, info_cliente_temp, fecha_pedido)
+         VALUES (?, 0, 'abierto', 'mesa', ?, ?, ?, 0, ?, datetime('now','localtime'))`,
         [mesa_id, cajero, comensales || 0, notas || null, infoCliente],
         function(err) { cb(err, this?.lastID); }
     );
@@ -1607,7 +1614,10 @@ function eliminarItemMesa(item_id, pedido_id, cb) {
 
 function cerrarPedidoMesa(pedido_id, metodo_pago, cb) {
     db.run(
-        "UPDATE pedidos SET estado='completado', metodo_pago=?, pendiente_sync=1, fecha_pedido=CURRENT_TIMESTAMP WHERE id=?",
+        // Hora LOCAL, igual que crearPedido. Con CURRENT_TIMESTAMP (UTC) la venta de
+        // la mesa quedaba fechada horas en el futuro respecto al resto del día y
+        // viajaba así al backend al sincronizar.
+        "UPDATE pedidos SET estado='completado', metodo_pago=?, pendiente_sync=1, fecha_pedido=datetime('now','localtime') WHERE id=?",
         [metodo_pago, pedido_id], cb
     );
 }
