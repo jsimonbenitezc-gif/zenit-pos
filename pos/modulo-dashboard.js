@@ -39,6 +39,21 @@ async function cargarDashboard() {
             document.getElementById('dash-ventas-comp').innerText = 'Primer día';
         }
 
+        // Impuesto recaudado hoy (BLOQUE 8). Le interesa al administrador: de lo
+        // cobrado hoy, cuánto es suyo y cuánto le corresponde al fisco.
+        const impuestoHoy = parseFloat(stats.ventasHoy.impuesto_total || 0) || 0;
+        const filaImp = document.getElementById('dash-impuesto-fila');
+        if (filaImp) {
+            if (impuestoHoy > 0) {
+                filaImp.classList.remove('hidden');
+                const neto = ventasHoy - impuestoHoy;
+                document.getElementById('dash-impuesto-hoy').innerText =
+                    `${configImpuesto.nombre}: $${impuestoHoy.toFixed(2)} · Neto: $${neto.toFixed(2)}`;
+            } else {
+                filaImp.classList.add('hidden');
+            }
+        }
+
         // Ticket Promedio
         const ticketProm = stats.ventasHoy.ticket_promedio || 0;
         document.getElementById('dash-ticket-prom').innerText = `$${ticketProm.toFixed(2)}`;

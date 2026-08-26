@@ -1020,6 +1020,11 @@ async function cargarAjustesInstalados() {
             movPinItem.title = esDueno ? '' : 'Solo el administrador puede cambiar esta opción';
         }
 
+        // Impuesto (BLOQUE 8). Ajuste de la CUENTA: lo decide el dueño y aplica a
+        // todos los equipos. Se pinta desde los ajustes LOCALES, así que la caja
+        // sabe qué cobra aunque esté sin internet.
+        _pintarConfigImpuesto(ajustes);
+
         // Modo oscuro
         if(ajustes.dark_mode === 'true') {
             const checkDark = document.getElementById('adj-darkmode');
@@ -1243,6 +1248,24 @@ function agregarListenersGuardadoAjustes() {
         });
     }
 
+    // Impuesto: mostrar/ocultar el detalle y refrescar el ejemplo en vivo
+    const elImpActivo = document.getElementById('adj-impuesto-activo');
+    if (elImpActivo) {
+        elImpActivo.addEventListener('change', () => {
+            const grupo = document.getElementById('grupo-impuesto');
+            if (grupo) grupo.style.display = elImpActivo.checked ? '' : 'none';
+            // Apagarlo se guarda de inmediato (tasa 0 = sin impuesto); encenderlo
+            // espera al botón, porque hace falta la tasa para que signifique algo.
+            if (!elImpActivo.checked) guardarConfigImpuesto({ apagar: true });
+            else _actualizarEjemploImpuesto();
+        });
+    }
+    ['adj-impuesto-tasa', 'adj-impuesto-modo', 'adj-impuesto-nombre'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', _actualizarEjemploImpuesto);
+        if (el) el.addEventListener('change', _actualizarEjemploImpuesto);
+    });
+
     // Sistema de puntos
     const elPuntosActivos = document.getElementById('aj-puntos-activos');
     if (elPuntosActivos) {
@@ -1327,6 +1350,111 @@ function toggleDarkMode(isChecked) {
 // SISTEMA DE IMPRESIÓN DE TICKETS
 // ==========================================
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IMPUESTO (BLOQUE 8) — configuración de la cuenta, solo el dueño
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Pinta la tarjeta de impuestos con los ajustes (locales o de la nube). */
+function _pintarConfigImpuesto(ajustes = {}) {
+    const cfg = leerConfigImpuesto(ajustes);
+    const elActivo = document.getElementById('adj-impuesto-activo');
+    const grupo    = document.getElementById('grupo-impuesto');
+    const elTasa   = document.getElementById('adj-impuesto-tasa');
+    const elModo   = document.getElementById('adj-impuesto-modo');
+    const elNombre = document.getElementById('adj-impuesto-nombre');
+    if (!elActivo) return;
+
+    // El interruptor manda; la tasa que se muestra es la GUARDADA, no la efectiva,
+    // para que apagar y volver a encender no obligue a teclearla de nuevo.
+    elActivo.checked = cfg.activo;
+    if (grupo) grupo.style.display = cfg.activo ? '' : 'none';
+    if (elTasa)   elTasa.value   = cfg.tasaConfigurada > 0 ? cfg.tasaConfigurada : '';
+    if (elModo)   elModo.value   = cfg.incluido ? 'incluido' : 'agregado';
+    if (elNombre) elNombre.value = cfg.nombre;
+
+    // Solo el administrador puede tocarlo (el backend además responde 403).
+    const esDueno = (rolActivo === 'dueno');
+    const card = document.getElementById('card-impuestos');
+    [elActivo, elTasa, elModo, elNombre].forEach(el => { if (el) el.disabled = !esDueno; });
+    if (card) {
+        card.style.opacity = esDueno ? '' : '0.55';
+        card.title = esDueno ? '' : 'Solo el administrador puede cambiar el impuesto';
+    }
+    _actualizarEjemploImpuesto();
+}
+
+/**
+ * Ejemplo en vivo con un producto de $100. Es la única forma de que "incluido"
+ * vs "agregado" se entienda sin explicaciones: se ve qué va a cobrar la caja.
+ */
+function _actualizarEjemploImpuesto() {
+    const el = document.getElementById('adj-impuesto-ejemplo');
+    if (!el) return;
+    const tasa = parseFloat(document.getElementById('adj-impuesto-tasa')?.value) || 0;
+    const incluido = document.getElementById('adj-impuesto-modo')?.value === 'incluido';
+    const nombre = (document.getElementById('adj-impuesto-nombre')?.value || '').trim() || 'IVA';
+    if (tasa <= 0) { el.innerText = ''; return; }
+    const d = desglosarImpuesto(100, { tasa, incluido, nombre });
+    el.innerText = incluido
+        ? `Un producto de $100 se cobra en $100, de los cuales $${d.impuesto.toFixed(2)} son ${nombre}.`
+        : `Un producto de $100 se cobra en $${d.total.toFixed(2)} ($100 + $${d.impuesto.toFixed(2)} de ${nombre}).`;
+}
+
+/** Guarda la config de impuesto: en la nube (si hay) y SIEMPRE en local. */
+async function guardarConfigImpuesto(opciones = {}) {
+    if (rolActivo !== 'dueno') {
+        alertaZenit('Solo el administrador puede cambiar el impuesto.', 'Sin permiso');
+        return;
+    }
+
+    const apagar = opciones.apagar === true;
+    // Apagar NO borra la tasa: se guarda el interruptor y la configuración queda
+    // intacta para cuando el negocio quiera volver a cobrar impuesto.
+    const tasa = parseFloat(document.getElementById('adj-impuesto-tasa')?.value) || 0;
+    const incluido = document.getElementById('adj-impuesto-modo')?.value === 'incluido';
+    const nombre = (document.getElementById('adj-impuesto-nombre')?.value || '').trim().slice(0, 20) || 'IVA';
+
+    if (!apagar && (tasa <= 0 || tasa > 100)) {
+        alertaZenit('La tasa debe ser un número mayor a 0 y hasta 100.', 'Tasa inválida');
+        return;
+    }
+
+    // Avisar la consecuencia ANTES: en modo AGREGADO los tickets suben de precio
+    // desde la siguiente venta, y eso lo nota el cliente en la caja.
+    if (!apagar && !incluido) {
+        const ok = await confirmarZenit(
+            `A partir de ahora se cobrará ${tasa}% de ${nombre} SOBRE el precio de cada producto. ` +
+            `Un producto de $100 pasará a cobrarse en $${desglosarImpuesto(100, { tasa, incluido }).total.toFixed(2)}.`,
+            '¿Aplicar el impuesto?',
+            { textoOk: 'Sí, aplicar' }
+        );
+        if (!ok) return;
+    }
+
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            await apiClient.saveSettings({
+                tax_enabled: !apagar, tax_rate: tasa, tax_included: incluido, tax_name: nombre
+            });
+        } catch (e) {
+            alertaZenit(e?.message || 'No se pudo guardar el impuesto en la nube.', 'Error');
+            return;
+        }
+    }
+    // Local también: la caja tiene que cobrar bien sin internet.
+    await window.api.guardarAjuste('tax_enabled', apagar ? 'false' : 'true');
+    await window.api.guardarAjuste('tax_rate', String(tasa));
+    await window.api.guardarAjuste('tax_included', incluido ? 'true' : 'false');
+    await window.api.guardarAjuste('tax_name', nombre);
+    await cargarConfigImpuesto();
+    if (typeof renderizarCarrito === 'function' && Array.isArray(carrito)) renderizarCarrito();
+
+    mostrarNotificacionExito(
+        apagar ? 'Las ventas dejan de llevar impuesto' : `${nombre} del ${tasa}% aplicado`,
+        'Impuesto'
+    );
+}
+
 async function imprimirTicket(pedidoId) {
     try {
         // 1. Obtener datos del pedido
@@ -1364,6 +1492,33 @@ async function imprimirTicket(pedidoId) {
         const moneda = ajustes.currency_symbol || '$';
         const rutaLogo = ajustes.logo_path || './assets/logo/montana.png';
         const ubicacion = [ciudadNegocio, estadoNegocio].filter(Boolean).join(', ');
+
+        // Desglose del impuesto (BLOQUE 8). Se toma del PEDIDO, no de la config de
+        // hoy: reimprimir un ticket viejo debe dar el mismo papel que salió el día
+        // que se cobró, aunque el dueño haya cambiado la tasa después.
+        const desgloseTicket = (() => {
+            const d = typeof desgloseDePedido === 'function'
+                ? desgloseDePedido({ ...pedido, tax_name: ajustes.tax_name })
+                : { impuesto: 0 };
+            if (!d.impuesto || d.impuesto <= 0) return { filas: '' };
+            const nombre = (typeof ajustes.tax_name === 'string' && ajustes.tax_name.trim()) || 'IVA';
+            const tasaTxt = d.tasa ? ` (${d.tasa}%)` : '';
+            const descuento = parseFloat(pedido.descuento_monto || 0) || 0;
+            // "Subtotal" en el ticket = lo que suman los productos, que es lo que el
+            // cliente puede verificar con los renglones de arriba. La base gravable
+            // (ya sin descuento) no se imprime: confundiría más de lo que explica.
+            //   AGREGADO: subtotal − descuento + impuesto = TOTAL
+            //   INCLUIDO: subtotal − descuento = TOTAL, y el impuesto es informativo
+            const sumaProductos = d.incluido ? d.total + descuento : d.subtotal + descuento;
+            const filas = [
+                `<div class="total-line"><span>Subtotal:</span><span>${moneda}${sumaProductos.toFixed(2)}</span></div>`,
+                descuento > 0
+                    ? `<div class="total-line"><span>Descuento:</span><span>-${moneda}${descuento.toFixed(2)}</span></div>`
+                    : '',
+                `<div class="total-line"><span>${nombre}${tasaTxt}${d.incluido ? ' incluido' : ''}:</span><span>${moneda}${d.impuesto.toFixed(2)}</span></div>`,
+            ].filter(Boolean).join('');
+            return { filas };
+        })();
 
         // 3. Convertir logo a base64 si existe
         let logoBase64 = '';
@@ -1573,6 +1728,7 @@ async function imprimirTicket(pedidoId) {
                     <div class="separator"></div>
 
                     <div class="totales">
+                        ${desgloseTicket.filas}
                         <div class="total-line final">
                             <span>TOTAL:</span>
                             <span>${moneda}${pedido.total.toFixed(2)}</span>

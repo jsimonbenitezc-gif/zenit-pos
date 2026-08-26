@@ -242,6 +242,13 @@ function inicializarTablas() {
     db.run("ALTER TABLE mesas ADD COLUMN branch_id INTEGER", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN mesa_id INTEGER", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN comensales INTEGER DEFAULT 0", () => {});
+    // Impuesto (BLOQUE 8). Igual que en el backend: total = subtotal + impuesto.
+    // `tasa_impuesto` e `impuesto_incluido` quedan CONGELADOS con lo que tenía el
+    // equipo al cobrar, para que la venta que sube tarde conserve su desglose.
+    db.run("ALTER TABLE pedidos ADD COLUMN subtotal REAL", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN impuesto REAL DEFAULT 0", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN tasa_impuesto REAL DEFAULT 0", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN impuesto_incluido INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN puntos INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN en_fidelidad INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE promociones ADD COLUMN requires_pin INTEGER DEFAULT 0", () => {});
@@ -322,6 +329,9 @@ function inicializarTablas() {
     db.run('ALTER TABLE turnos ADD COLUMN total_depositos REAL DEFAULT 0', () => {});
     db.run('ALTER TABLE turnos ADD COLUMN total_retiros REAL DEFAULT 0', () => {});
     db.run('ALTER TABLE turnos ADD COLUMN total_gastos REAL DEFAULT 0', () => {});
+    // Impuesto recaudado en el turno (BLOQUE 8). Congelado al cerrar, igual que
+    // los movimientos: es la cifra que el dueño leyó en ese corte.
+    db.run('ALTER TABLE turnos ADD COLUMN total_impuesto REAL DEFAULT 0', () => {});
 
     // KDS — Dispositivos de confianza
     db.run(`CREATE TABLE IF NOT EXISTS kds_trusted_devices (
@@ -503,9 +513,13 @@ async function crearPedido(datos, items, callback, opciones) {
             descuento_id,
             descuento_puntos_monto,
             puntos_usados,
+            subtotal,
+            impuesto,
+            tasa_impuesto,
+            impuesto_incluido,
             fecha_pedido
         )
-        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
     `;
 
     const skipStock = opciones && opciones.skipStock;
@@ -531,7 +545,13 @@ async function crearPedido(datos, items, callback, opciones) {
             datos.descuento_monto || 0,
             datos.descuento_id || null,
             datos.descuento_puntos_monto || 0,
-            datos.puntos_usados || 0
+            datos.puntos_usados || 0,
+            // Un pedido sin impuesto guarda subtotal = total: el invariante
+            // total = subtotal + impuesto se cumple también en la base local.
+            datos.subtotal !== undefined && datos.subtotal !== null ? datos.subtotal : datos.total,
+            datos.impuesto || 0,
+            datos.tasa_impuesto || 0,
+            datos.impuesto_incluido ? 1 : 0
         ]);
         const pedidoId = resultadoPedido.lastID;
 
@@ -595,6 +615,13 @@ function obtenerPedidos(filtro, callback) {
                 ELSE 'General'
             END as telefono,
             p.total,
+            -- Desglose del impuesto y descuento (BLOQUE 8): el ticket los imprime,
+            -- y en modo local esta consulta es la única fuente que tiene.
+            p.subtotal,
+            p.impuesto,
+            p.tasa_impuesto,
+            p.impuesto_incluido,
+            p.descuento_monto,
             p.metodo_pago,
             p.estado,
             p.fecha_pedido as fecha
@@ -676,7 +703,11 @@ function obtenerEstadisticasDashboard(callback) {
         SELECT 
             COUNT(*) as total_pedidos, 
             COALESCE(SUM(total), 0) as monto_total,
-            COALESCE(AVG(total), 0) as ticket_promedio
+            COALESCE(AVG(total), 0) as ticket_promedio,
+            -- BLOQUE 8: impuesto recaudado hoy. monto_total sigue siendo lo COBRADO
+            -- (el número que el dueño ya conoce) y de ahí sale lo neto.
+            COALESCE(SUM(impuesto), 0) as impuesto_total,
+            COALESCE(SUM(total), 0) - COALESCE(SUM(impuesto), 0) as monto_neto
         FROM pedidos 
         WHERE DATE(fecha_pedido) = DATE('now', 'localtime')
     `, (err, hoy) => {
@@ -1284,7 +1315,11 @@ function calcularTotalesTurno(fechaApertura, cb) {
             COALESCE(SUM(total), 0) as total_ventas,
             COALESCE(SUM(CASE WHEN metodo_pago = 'efectivo' THEN total ELSE 0 END), 0) as total_efectivo,
             COALESCE(SUM(CASE WHEN metodo_pago IN ('debito','credito','tarjeta') THEN total ELSE 0 END), 0) as total_tarjeta,
-            COALESCE(SUM(CASE WHEN metodo_pago = 'transferencia' THEN total ELSE 0 END), 0) as total_transferencia
+            COALESCE(SUM(CASE WHEN metodo_pago = 'transferencia' THEN total ELSE 0 END), 0) as total_transferencia,
+            -- BLOQUE 8: el impuesto va DENTRO del total cobrado, así que no cambia
+            -- el efectivo esperado; es informativo para el administrador.
+            COALESCE(SUM(impuesto), 0) as total_impuesto,
+            COALESCE(SUM(total), 0) - COALESCE(SUM(impuesto), 0) as total_ventas_netas
         FROM pedidos
         WHERE fecha_pedido >= ? AND estado != 'cancelado'
     `, [fechaApertura], cb);
@@ -1370,12 +1405,14 @@ function cerrarTurno(id, efectivoContado, notas, cb) {
                         total_depositos = ?,
                         total_retiros = ?,
                         total_gastos = ?,
+                        total_impuesto = ?,
                         notas = ?,
                         estado = 'cerrado'
                     WHERE id = ?`,
                     [efectivoContado, diferencia, totales.total_pedidos, totales.total_ventas,
                      totales.total_efectivo, totales.total_tarjeta, totales.total_transferencia,
                      movs.total_depositos, movs.total_retiros, movs.total_gastos,
+                     totales.total_impuesto || 0,
                      notas, id],
                     cb
                 );
@@ -1658,17 +1695,63 @@ function obtenerPedidoAbiertoPorMesa(mesa_id, cb) {
     );
 }
 
-function abrirPedidoMesa(mesa_id, mesa_nombre, cajero, comensales, notas, cb) {
+function abrirPedidoMesa(mesa_id, mesa_nombre, cajero, comensales, notas, impuesto, cb) {
     const infoCliente = mesa_nombre ? `Mesa: ${mesa_nombre}` : null;
+    // Impuesto CONGELADO al abrir la mesa (BLOQUE 8): si el dueño cambia la tasa a
+    // media comida, la cuenta que el cliente ya vio no se mueve. Sin esto, una
+    // mesa en modo local se cobraba SIN impuesto mientras la venta de mostrador de
+    // al lado sí lo llevaba.
+    const tasa = parseFloat(impuesto?.tasa) || 0;
+    const incluido = impuesto?.incluido ? 1 : 0;
     db.run(
         // fecha_pedido explícita en hora LOCAL: el DEFAULT de la columna es
         // CURRENT_TIMESTAMP (UTC) y dejaba la mesa "abierta hace 6 horas" en México,
         // además de mandar una hora equivocada al sincronizar. Todo el POS local
         // guarda y consulta en hora local (ver crearPedido y las stats con 'localtime').
-        `INSERT INTO pedidos (mesa_id, total, estado, tipo_pedido, cajero, comensales, notas_generales, pendiente_sync, info_cliente_temp, fecha_pedido)
-         VALUES (?, 0, 'abierto', 'mesa', ?, ?, ?, 0, ?, datetime('now','localtime'))`,
-        [mesa_id, cajero, comensales || 0, notas || null, infoCliente],
+        `INSERT INTO pedidos (mesa_id, total, subtotal, impuesto, tasa_impuesto, impuesto_incluido, estado, tipo_pedido, cajero, comensales, notas_generales, pendiente_sync, info_cliente_temp, fecha_pedido)
+         VALUES (?, 0, 0, 0, ?, ?, 'abierto', 'mesa', ?, ?, ?, 0, ?, datetime('now','localtime'))`,
+        [mesa_id, tasa, incluido, cajero, comensales || 0, notas || null, infoCliente],
         function(err) { cb(err, this?.lastID); }
+    );
+}
+
+/**
+ * Recalcula subtotal, impuesto y total de una mesa a partir de sus items y de la
+ * tasa CONGELADA del pedido. Misma fórmula que utils/impuestos.js del backend y
+ * modulo-impuestos.js del renderer (BLOQUE 8): si alguna se desvía, la cuenta que
+ * ve el cliente y la que registra el sistema dejan de coincidir.
+ */
+function _recalcularTotalesMesa(pedido_id, cb) {
+    db.get(
+        `SELECT
+            COALESCE(p.tasa_impuesto, 0)     AS tasa,
+            COALESCE(p.impuesto_incluido, 0) AS incluido,
+            (SELECT COALESCE(SUM(subtotal), 0) FROM pedido_items WHERE pedido_id = p.id) AS suma
+         FROM pedidos p WHERE p.id = ?`,
+        [pedido_id],
+        (err, row) => {
+            if (err || !row) return cb(err || null);
+            const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+            const suma = r2(parseFloat(row.suma) || 0);
+            const tasa = parseFloat(row.tasa) || 0;
+
+            let subtotal = suma, impuesto = 0, total = suma;
+            if (tasa > 0 && suma > 0) {
+                if (row.incluido) {
+                    impuesto = r2(suma - suma / (1 + tasa / 100));
+                    subtotal = r2(suma - impuesto);
+                    total    = suma;
+                } else {
+                    impuesto = r2(suma * tasa / 100);
+                    subtotal = suma;
+                    total    = r2(suma + impuesto);
+                }
+            }
+            db.run(
+                'UPDATE pedidos SET total = ?, subtotal = ?, impuesto = ? WHERE id = ?',
+                [total, subtotal, impuesto, pedido_id], cb
+            );
+        }
     );
 }
 
@@ -1681,10 +1764,7 @@ function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb) {
             if (err) return cb(err);
             // Descontar insumos según la receta del producto (igual que en Nueva Venta)
             descontarInsumosDeVenta(producto_id, cantidad).catch(() => { /* ignorar: mantiene comportamiento fire-and-forget */ });
-            db.run(
-                "UPDATE pedidos SET total=(SELECT COALESCE(SUM(subtotal),0) FROM pedido_items WHERE pedido_id=?) WHERE id=?",
-                [pedido_id, pedido_id], cb
-            );
+            _recalcularTotalesMesa(pedido_id, cb);
         }
     );
 }
@@ -1692,10 +1772,7 @@ function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb) {
 function eliminarItemMesa(item_id, pedido_id, cb) {
     db.run("DELETE FROM pedido_items WHERE id=?", [item_id], (err) => {
         if (err) return cb(err);
-        db.run(
-            "UPDATE pedidos SET total=(SELECT COALESCE(SUM(subtotal),0) FROM pedido_items WHERE pedido_id=?) WHERE id=?",
-            [pedido_id, pedido_id], cb
-        );
+        _recalcularTotalesMesa(pedido_id, cb);
     });
 }
 

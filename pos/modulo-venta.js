@@ -302,16 +302,33 @@ function agregarAlCarrito(productoId) {
     renderizarCarrito();
 }
 
+// Base gravable de la venta en curso: lo que suman los productos menos los
+// descuentos (promoción + canje de puntos). El impuesto se calcula SOBRE ella,
+// nunca sobre el precio de lista. Ver BLOQUE 8 / modulo-impuestos.js.
+function _baseGravableCarrito() {
+    const suma = carrito.reduce((sum, i) => sum + i.precio, 0);
+    return suma - descuentoActual - descuentoPuntosVenta;
+}
+
+/** Total a cobrar de la venta en curso (ya con impuesto, si el negocio lo cobra). */
+function _totalACobrar() {
+    return desglosarImpuesto(_baseGravableCarrito()).total;
+}
+
 function renderizarCarrito() {
     const contenedor = document.getElementById('carrito-items');
     const subtotalEl = document.getElementById('subtotal-venta');
     const descuentoEl = document.getElementById('descuento-aplicado');
     const totalEl = document.getElementById('total-venta');
+    const filaImpuestoEl = document.getElementById('fila-impuesto-venta');
+    const impuestoEl = document.getElementById('impuesto-venta');
+    const etiquetaImpuestoEl = document.getElementById('etiqueta-impuesto-venta');
 
     if (carrito.length === 0) {
         contenedor.innerHTML = '<div class="empty-cart-msg">El carrito está vacío</div>';
         if (subtotalEl) subtotalEl.innerText = '$0.00';
         if (descuentoEl) descuentoEl.innerText = '-$0.00';
+        if (filaImpuestoEl) filaImpuestoEl.classList.add('hidden');
         totalEl.innerText = '$0.00';
         return;
     }
@@ -341,9 +358,19 @@ function renderizarCarrito() {
     // Actualizar subtotal, descuento y total. El renglón "descuento" muestra la suma
     // (promoción + puntos), que es lo que el cliente percibe; internamente van separados.
     const descuentoVisible = descuentoActual + descuentoPuntosVenta;
-    const totalFinal = subtotal - descuentoVisible;
+    const desglose = desglosarImpuesto(subtotal - descuentoVisible);
+    const totalFinal = desglose.total;
     if (subtotalEl) subtotalEl.innerText = `$${subtotal.toFixed(2)}`;
     if (descuentoEl) descuentoEl.innerText = `-$${descuentoVisible.toFixed(2)}`;
+    if (filaImpuestoEl && impuestoEl) {
+        if (hayImpuesto()) {
+            filaImpuestoEl.classList.remove('hidden');
+            if (etiquetaImpuestoEl) etiquetaImpuestoEl.innerText = `${etiquetaImpuesto()}:`;
+            impuestoEl.innerText = `$${desglose.impuesto.toFixed(2)}`;
+        } else {
+            filaImpuestoEl.classList.add('hidden');
+        }
+    }
     totalEl.innerText = `$${totalFinal.toFixed(2)}`;
 
     // Actualizar panel de puntos si hay cliente inscrito
@@ -424,7 +451,7 @@ async function procesarVenta() {
     // incluso si se registró offline). Se avisa ANTES de cobrar. Ver CLAUDE.md §24.
     if (!(await verificarSucursalParaRegistrar())) return;
 
-    const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual - descuentoPuntosVenta;
+    const total = _totalACobrar();
     document.getElementById('pago-total-display').innerText = `$${total.toFixed(2)}`;
 
     // Mostrar información del cliente en el modal
@@ -468,7 +495,8 @@ function seleccionarMetodo(metodo) {
 
 // --- CALCULAR CAMBIO EN TIEMPO REAL ---
 function calcularCambio() {
-    const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual - descuentoPuntosVenta;
+    // El cambio se calcula sobre lo que el cliente PAGA, impuesto incluido.
+    const total = _totalACobrar();
     const inputRecibido = document.getElementById('efectivo-recibido').value;
 
     // Limpiar el valor: permitir solo números y punto decimal
@@ -515,7 +543,8 @@ async function ejecutarVenta() {
     const btnFinal = document.getElementById('btn-confirmar-final');
     if (btnFinal) btnFinal.disabled = true;
 
-    const total = carrito.reduce((sum, i) => sum + i.precio, 0) - descuentoActual - descuentoPuntosVenta;
+    const desgloseVenta = desglosarImpuesto(_baseGravableCarrito());
+    const total = desgloseVenta.total;
 
     // Determinar el cliente_id (solo si hay un cliente seleccionado Y REGISTRADO)
     let clienteId = null;
@@ -542,6 +571,13 @@ async function ejecutarVenta() {
             descuento_id: descuentoIdActual || null,
             descuento_puntos_monto: descuentoPuntosVenta || 0,
             puntos_usados: descuentoPuntosVenta > 0 ? (puntosUsadosVenta || 0) : 0,
+            // Desglose del impuesto (BLOQUE 8). La tasa viaja CONGELADA con la venta:
+            // si sube tarde y el dueño ya cambió el impuesto, el backend respeta la
+            // que se cobró en el ticket que el cliente ya se llevó.
+            subtotal: desgloseVenta.subtotal,
+            impuesto: desgloseVenta.impuesto,
+            tasa_impuesto: configImpuesto.tasa || 0,
+            impuesto_incluido: configImpuesto.incluido ? 1 : 0,
             metodo_pago: metodoSeleccionado,
             tipo_pedido: tipoPedidoActual || 'comer',
             referencia: document.getElementById('pedido-referencia')?.value || '',

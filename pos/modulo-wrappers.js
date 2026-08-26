@@ -137,6 +137,14 @@ async function obtenerPedidosWrapper(filtro) {
                 id: o.id,
                 cliente_id: o.customer_id,
                 total: parseFloat(o.total),
+                // Desglose del impuesto (BLOQUE 8) para el ticket y el detalle. Un
+                // pedido anterior al bloque llega sin subtotal: ahí el total ES lo
+                // cobrado y no se muestra renglón de impuesto.
+                subtotal: o.subtotal !== undefined && o.subtotal !== null ? parseFloat(o.subtotal) : null,
+                impuesto: parseFloat(o.tax_amount || 0),
+                tasa_impuesto: o.tax_rate !== undefined && o.tax_rate !== null ? parseFloat(o.tax_rate) : 0,
+                impuesto_incluido: o.tax_included === true || o.tax_included === 'true' ? 1 : 0,
+                descuento_monto: parseFloat(o.discount_amount || 0),
                 estado: o.status,
                 metodo_pago: o.payment_method,
                 tipo_pedido: o.order_type,

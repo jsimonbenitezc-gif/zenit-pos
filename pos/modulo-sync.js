@@ -262,6 +262,25 @@ async function sincronizarDesdeBackend() {
             );
         }
 
+        // Config del impuesto (BLOQUE 8). Se guarda local para poder cobrarlo bien
+        // SIN internet: si no estuviera, la caja offline cobraría sin impuesto y el
+        // ticket saldría por un monto distinto al que registra el backend.
+        if (ajustesNegocio) {
+            if (ajustesNegocio.tax_enabled !== undefined) {
+                await window.api.guardarAjuste('tax_enabled', ajustesNegocio.tax_enabled === true || ajustesNegocio.tax_enabled === 'true' ? 'true' : 'false');
+            }
+            if (ajustesNegocio.tax_rate !== undefined) {
+                await window.api.guardarAjuste('tax_rate', String(ajustesNegocio.tax_rate ?? 0));
+            }
+            if (ajustesNegocio.tax_included !== undefined) {
+                await window.api.guardarAjuste('tax_included', ajustesNegocio.tax_included === true || ajustesNegocio.tax_included === 'true' ? 'true' : 'false');
+            }
+            if (ajustesNegocio.tax_name !== undefined) {
+                await window.api.guardarAjuste('tax_name', String(ajustesNegocio.tax_name || 'IVA'));
+            }
+            if (typeof cargarConfigImpuesto === 'function') await cargarConfigImpuesto();
+        }
+
         if (pedidosBackend) {
             await window.api.syncPedidos((pedidosBackend && pedidosBackend.data) ? pedidosBackend.data : []);
         }
@@ -368,6 +387,12 @@ async function subirPedidosPendientes() {
                     // junto al client_uuid y respeta también el unit_price de abajo,
                     // que es el precio que de verdad se cobró.
                     sold_at: _fechaLocalAIso(pedido.fecha_pedido),
+                    // Impuesto CONGELADO de la venta (BLOQUE 8): la tasa con la que
+                    // se cobró el ticket, no la que el negocio tenga hoy. El backend
+                    // solo la acepta en ventas diferidas y recalcula el monto —
+                    // nunca se le cree el importe al cliente.
+                    tax_rate: pedido.tasa_impuesto || 0,
+                    tax_included: !!pedido.impuesto_incluido,
                     // La venta YA se concretó localmente; no dejar que un aviso de
                     // stock del backend bloquee su subida (evita marcarla como
                     // sincronizada sin haberse creado en el backend).

@@ -196,6 +196,20 @@ async function cargarVistaTurno() {
             document.getElementById('turno-total-efectivo').textContent      = fmt(totales.total_efectivo || 0);
             document.getElementById('turno-total-tarjeta').textContent       = fmt(totales.total_tarjeta || 0);
             document.getElementById('turno-total-transferencia').textContent = fmt(totales.total_transferencia || 0);
+            // Impuesto recaudado (BLOQUE 8). Solo se muestra si hay: el cajero de un
+            // negocio sin impuesto no tiene por qué ver un renglón en cero.
+            const statImp = document.getElementById('turno-stat-impuesto');
+            if (statImp) {
+                const imp = parseFloat(totales.total_impuesto || 0) || 0;
+                if (imp > 0 || hayImpuesto()) {
+                    statImp.classList.remove('hidden');
+                    document.getElementById('turno-total-impuesto').textContent = fmt(imp);
+                    const lbl = document.getElementById('turno-lbl-impuesto');
+                    if (lbl) lbl.textContent = `${configImpuesto.nombre} recaudado`;
+                } else {
+                    statImp.classList.add('hidden');
+                }
+            }
         } catch(e) { console.error('Error calculando totales turno:', e); }
 
         await cargarMovimientosCaja();
@@ -530,6 +544,11 @@ async function verReporteTurno(id) {
         : totales;
     const esperado = _efectivoEsperado(turno.fondo_inicial, { ...totales, ...movs });
     const difColor = (turno.diferencia || 0) < 0 ? '#ef4444' : (turno.diferencia || 0) > 0 ? '#10b981' : '#111827';
+    // El impuesto de un turno cerrado también está congelado (BLOQUE 8): su corte
+    // ya lo leyó el dueño y no debe cambiar aunque hoy la tasa sea otra.
+    const impuestoTurno = parseFloat(
+        (turno.estado === 'cerrado' ? turno.total_impuesto : totales.total_impuesto) || 0
+    ) || 0;
 
     let html = seccion('Información del turno');
     html += fila('# Turno', `#${turno.id}`);
@@ -544,6 +563,12 @@ async function verReporteTurno(id) {
     html += fila('Efectivo', fmtMonto(totales.total_efectivo));
     if ((totales.total_tarjeta || 0) > 0)       html += fila('Tarjeta / Débito', fmtMonto(totales.total_tarjeta));
     if ((totales.total_transferencia || 0) > 0) html += fila('Transferencia', fmtMonto(totales.total_transferencia));
+    // Impuesto recaudado (BLOQUE 8): informativo para el administrador. Va DENTRO
+    // del total vendido, por eso se muestra junto con las ventas netas del negocio.
+    if ((impuestoTurno || 0) > 0) {
+        html += fila(`${configImpuesto.nombre} recaudado`, fmtMonto(impuestoTurno));
+        html += fila('Ventas netas', fmtMonto((parseFloat(totales.total_ventas) || 0) - impuestoTurno));
+    }
 
     if (turno.estado === 'cerrado') {
         html += seccion('Corte de caja');
@@ -594,6 +619,9 @@ async function imprimirReporteTurno() {
         : totales;
     const esperado = _efectivoEsperado(turno.fondo_inicial, { ...totales, ...movs });
     const difColor = (turno.diferencia || 0) < 0 ? '#ef4444' : (turno.diferencia || 0) > 0 ? '#10b981' : '#000';
+    const impuestoTurnoTicket = parseFloat(
+        (turno.estado === 'cerrado' ? turno.total_impuesto : totales.total_impuesto) || 0
+    ) || 0;
 
     const fila = (lbl, val, bold=false, color='#000') =>
         `<div style="display:flex;justify-content:space-between;margin:2px 0;">
@@ -625,6 +653,8 @@ async function imprimirReporteTurno() {
     ${fila('Efectivo:', fmtMonto(totales.total_efectivo))}
     ${(totales.total_tarjeta||0)>0 ? fila('Tarjeta:', fmtMonto(totales.total_tarjeta)) : ''}
     ${(totales.total_transferencia||0)>0 ? fila('Transfer.:', fmtMonto(totales.total_transferencia)) : ''}
+    ${(impuestoTurnoTicket||0) > 0 ? fila(`${configImpuesto.nombre}:`, fmtMonto(impuestoTurnoTicket)) : ''}
+    ${(impuestoTurnoTicket||0) > 0 ? fila('Ventas netas:', fmtMonto((parseFloat(totales.total_ventas)||0) - impuestoTurnoTicket)) : ''}
     ${turno.estado === 'cerrado' ? `
     <div class="sep"></div>
     <div class="titulo-sec">Corte de Caja</div>

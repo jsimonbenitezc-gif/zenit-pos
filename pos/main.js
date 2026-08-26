@@ -967,8 +967,8 @@ ipcMain.handle('eliminar-mesa', (_, id) =>
     new Promise((res, rej) => db.eliminarMesa(id, (e) => e ? rej(e) : res(true))));
 ipcMain.handle('obtener-pedido-mesa', (_, mesa_id) =>
     new Promise((res, rej) => db.obtenerPedidoAbiertoPorMesa(mesa_id, (e, r) => e ? rej(e) : res(r))));
-ipcMain.handle('abrir-pedido-mesa', (_, mesa_id, mesa_nombre, cajero, comensales, notas) =>
-    new Promise((res, rej) => db.abrirPedidoMesa(mesa_id, mesa_nombre, cajero, comensales, notas, (e, id) => e ? rej(e) : res(id))));
+ipcMain.handle('abrir-pedido-mesa', (_, mesa_id, mesa_nombre, cajero, comensales, notas, impuesto) =>
+    new Promise((res, rej) => db.abrirPedidoMesa(mesa_id, mesa_nombre, cajero, comensales, notas, impuesto, (e, id) => e ? rej(e) : res(id))));
 ipcMain.handle('agregar-item-mesa', (_, pedido_id, producto_id, cantidad, precio, nota) =>
     new Promise((res, rej) => db.agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, (e) => e ? rej(e) : res(true))));
 ipcMain.handle('eliminar-item-mesa', (_, item_id, pedido_id) =>

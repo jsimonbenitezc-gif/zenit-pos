@@ -223,7 +223,11 @@ async function confirmarAbrirMesa() {
             _pedidosMesa[mesaId] = _normalizarPedidoApi(order);
             delete _uuidAperturaMesa[mesaId];
         } else {
-            await window.api.abrirPedidoMesa(mesaId, mesaAbrir?.nombre || '', nombreActivo || 'Cajero', comensales, notas || null);
+            // La mesa congela el impuesto vigente al abrirse (BLOQUE 8).
+            await window.api.abrirPedidoMesa(
+                mesaId, mesaAbrir?.nombre || '', nombreActivo || 'Cajero', comensales, notas || null,
+                { tasa: configImpuesto.tasa || 0, incluido: !!configImpuesto.incluido }
+            );
         }
         cerrarModalAbrirMesa();
         await cargarVistaMesas();
@@ -280,7 +284,9 @@ function _renderizarPanelMesa() {
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
             </button>
         </div>
-    `).join('') + `<div style="padding:8px 16px;text-align:right;font-weight:700;font-size:1em;border-top:2px solid #e5e7eb;margin-top:4px;">
+    `).join('') + `${_d.impuesto > 0 ? `<div style="padding:6px 16px 0;text-align:right;font-size:0.82em;color:#6b7280;">
+        Subtotal: ${_fmtMesa(_d.cfg.incluido ? _d.total : _d.suma)} · ${esc(_d.cfg.nombre)} (${_d.cfg.tasa}%)${_d.cfg.incluido ? ' incl.' : ''}: ${_fmtMesa(_d.impuesto)}
+    </div>` : ''}<div style="padding:8px 16px;text-align:right;font-weight:700;font-size:1em;border-top:2px solid #e5e7eb;margin-top:4px;">
         Total: ${_fmtMesa(total)}
     </div>`;
 }
@@ -541,7 +547,8 @@ async function imprimirCuentaMesa() {
     if (!_pedidoMesaActivo) return;
     const mesa = _mesasData.find(m => m.id === _mesaActivaId);
     const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
-    const total = items.reduce((s, i) => s + i.subtotal, 0);
+    const _d = _desgloseMesa(items);
+    const total = _d.total;
     const ajustes = await window.api.obtenerAjustes();
     const negocio = ajustes.nombre_negocio || 'Negocio';
     const impresora = ajustes.impresora || '';
@@ -565,6 +572,10 @@ async function imprimirCuentaMesa() {
         <div class="linea"></div>
         <table>${itemsHtml}</table>
         <div class="linea"></div>
+        ${_d.impuesto > 0 ? `<table>
+            <tr><td>Subtotal</td><td style="text-align:right">${_fmtMesa(_d.cfg.incluido ? _d.total : _d.suma)}</td></tr>
+            <tr><td>${esc(_d.cfg.nombre)} (${_d.cfg.tasa}%)${_d.cfg.incluido ? ' incl.' : ''}</td><td style="text-align:right">${_fmtMesa(_d.impuesto)}</td></tr>
+        </table>` : ''}
         <table><tr><td class="total">TOTAL</td><td style="text-align:right" class="total">${_fmtMesa(total)}</td></tr></table>
         <div class="linea"></div>
         <div class="centro" style="font-size:11px;">Impreso: ${ahora}</div>
@@ -582,7 +593,8 @@ async function imprimirCuentaMesa() {
 async function abrirModalCobrarMesa() {
     if (!_pedidoMesaActivo) return;
     const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
-    const total = items.reduce((s, i) => s + i.subtotal, 0);
+    // Lo que se cobra ya trae el impuesto: el cajero debe pedir ese monto exacto.
+    const total = _desgloseMesa(items).total;
     document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(total);
     document.getElementById('cobrar-mesa-metodo').value = 'efectivo';
     document.getElementById('modal-cobrar-mesa').classList.remove('hidden');
@@ -614,7 +626,8 @@ async function confirmarCobrarMesa() {
     const metodo = document.getElementById('cobrar-mesa-metodo').value;
     const pedidoSnap = { ..._pedidoMesaActivo };
     const itemsSnap  = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
-    const totalSnap  = itemsSnap.reduce((s, i) => s + i.subtotal, 0);
+    const desgloseSnap = _desgloseMesa(itemsSnap);
+    const totalSnap  = desgloseSnap.total;
     try {
         if (modoConectado && apiClient && tokenActual) {
             await apiClient.closeTableOrder(pedidoSnap.id, metodo);
@@ -625,6 +638,12 @@ async function confirmarCobrarMesa() {
             try {
                 await apiClient?.createOrder({
                     total: totalSnap,
+                    // Tasa con la que se cobró la mesa (BLOQUE 8). El backend solo
+                    // la acepta si la venta llega como diferida; en este camino
+                    // recalcula con la config del negocio, que es la misma salvo
+                    // que el dueño la haya cambiado con la mesa ya abierta.
+                    tax_rate: desgloseSnap.cfg.tasa || 0,
+                    tax_included: !!desgloseSnap.cfg.incluido,
                     payment_method: metodo,
                     order_type: 'comer',
                     notes: pedidoSnap.notas_generales || null,

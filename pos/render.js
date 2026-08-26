@@ -563,6 +563,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Cargar configuración de modo
     try { await cargarConfiguracionModo(); } catch(e) { console.error('Error cargarConfiguracionModo:', e); }
 
+    // Impuesto (BLOQUE 8): se lee de los ajustes LOCALES antes de que se pueda
+    // cobrar nada, para que el primer carrito ya salga con el desglose correcto
+    // aunque el equipo esté sin internet.
+    try { await cargarConfigImpuesto(); } catch(e) { console.error('Error cargarConfigImpuesto:', e); }
+
     // Sincronizar desde backend si hay sesión activa
     if (modoConectado) {
         subirPedidosPendientes().catch(e => console.warn('subirPendientes:', e));
@@ -790,6 +795,11 @@ async function _sincronizarAjustesDesdeCloud() {
             const elMovPin = document.getElementById('adj-mov-caja-pin');
             if (elMovPin) elMovPin.checked = !(s.movimientos_caja_pin === false || s.movimientos_caja_pin === 'false');
         }
+        // Impuesto (ajuste de la cuenta, llega por SSE): el dueño lo cambia desde
+        // el celular y las cajas del local tienen que empezar a cobrarlo YA.
+        if (s.tax_enabled !== undefined || s.tax_rate !== undefined || s.tax_included !== undefined || s.tax_name !== undefined) {
+            if (typeof _pintarConfigImpuesto === 'function') _pintarConfigImpuesto(s);
+        }
         // Venta sin turno (también sincronizar variable global)
         if (s.venta_sin_turno !== undefined) {
             ventaSinTurno = !(s.venta_sin_turno === false || s.venta_sin_turno === 'false');
@@ -809,9 +819,20 @@ async function _sincronizarAjustesDesdeCloud() {
             show_instagram: s.show_instagram, show_rfc: s.show_rfc,
             venta_sin_turno: s.venta_sin_turno,
             movimientos_caja_pin: s.movimientos_caja_pin,
+            tax_enabled: s.tax_enabled, tax_rate: s.tax_rate,
+            tax_included: s.tax_included, tax_name: s.tax_name,
         };
         for (const [k, v] of Object.entries(guardables)) {
             if (v !== undefined) window.api.guardarAjuste(k, String(v)).catch(() => {});
+        }
+        // Releer la config de impuesto ya guardada y repintar el carrito abierto:
+        // el cajero no debe cobrar con la tasa vieja el resto del turno.
+        if (s.tax_enabled !== undefined || s.tax_rate !== undefined || s.tax_included !== undefined || s.tax_name !== undefined) {
+            if (typeof cargarConfigImpuesto === 'function') {
+                cargarConfigImpuesto().then(() => {
+                    if (typeof renderizarCarrito === 'function' && Array.isArray(carrito) && carrito.length) renderizarCarrito();
+                }).catch(() => {});
+            }
         }
         // También actualizar permisos de puestos si el tab está abierto
         // Pasamos los ajustes ya descargados para evitar una segunda llamada a la nube
