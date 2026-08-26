@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('api', {
 // BACKUPS
     crearBackupManual: () => ipcRenderer.invoke('crear-backup-manual'),
     listarBackups: () => ipcRenderer.invoke('listar-backups'),
+    restaurarBackup: (nombre) => ipcRenderer.invoke('restaurar-backup', nombre),
     obtenerRutaBackups: () => ipcRenderer.invoke('obtener-ruta-backups'),
     abrirCarpetaBackups: () => ipcRenderer.invoke('abrir-carpeta-backups'),
 

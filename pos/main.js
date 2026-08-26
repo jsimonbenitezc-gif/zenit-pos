@@ -6,7 +6,7 @@ const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const db = require('../database/db');
-const { crearBackup, listarBackups } = require('./backup'); 
+const { crearBackup, listarBackups, restaurarBackup } = require('./backup');
 
 let mainWindow;
 
@@ -82,6 +82,15 @@ app.whenReady().then(() => {
 
 // Backup automático al iniciar la app
     crearBackup().catch(err => console.error('Error en backup automático:', err));
+
+    // Red de seguridad para el equipo que nunca se apaga: sin esto, un POS abierto
+    // toda la semana se quedaba con UN solo respaldo, el del día que lo encendieron.
+    // El respaldo "de verdad" es el de cerrar turno (fin del día); este cubre al
+    // negocio que no cierra caja o que deja la caja abierta varios días.
+    const HORAS_ENTRE_RESPALDOS = 12;
+    setInterval(() => {
+        crearBackup().catch(err => console.error('Error en backup periódico:', err));
+    }, HORAS_ENTRE_RESPALDOS * 60 * 60 * 1000);
     
     if (app.isPackaged) {
         setTimeout(() => {
@@ -535,6 +544,22 @@ ipcMain.handle('listar-backups', async () => {
     }
 });
 
+// Restaurar un respaldo. Es una acción de DUEÑO: reemplaza toda la base local
+// (ventas, turnos, inventario) del equipo. Antes de pisarla se guarda una copia
+// de lo que hay ahora, y al terminar la app se reinicia porque la conexión SQLite
+// queda cerrada y los módulos tendrían datos viejos en memoria.
+ipcMain.handle('restaurar-backup', async (_, nombre) => {
+    try {
+        verificarPermisoDueno();
+        const resultado = await restaurarBackup(nombre);
+        // Margen para que el renderer alcance a mostrar el aviso antes del reinicio.
+        setTimeout(() => { app.relaunch(); app.exit(0); }, 1200);
+        return { ok: true, ...resultado };
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+});
+
 ipcMain.handle('obtener-ruta-backups', async () => {
     const { app } = require('electron');
     const path = require('path');
@@ -711,7 +736,12 @@ ipcMain.handle('calcular-totales-turno', (event, fechaApertura) => {
 ipcMain.handle('cerrar-turno', (event, id, efectivoContado, notas) => {
     return new Promise((resolve, reject) => {
         db.cerrarTurno(id, efectivoContado, notas, (err) => {
-            if (err) reject(err); else resolve(true);
+            if (err) return reject(err);
+            // Respaldo al cerrar caja: es el momento natural de "fin del día" y
+            // asegura una copia diaria aunque el equipo nunca se reinicie.
+            // No bloquea el cierre: si el respaldo falla, el turno igual se cierra.
+            crearBackup().catch(e => console.error('Error en backup tras cerrar turno:', e));
+            resolve(true);
         });
     });
 });

@@ -31,6 +31,72 @@ async function abrirCarpetaBackups() {
     await window.api.abrirCarpetaBackups();
 }
 
+// ── Restaurar un respaldo ────────────────────────────────────────────────────
+// El archivo se llama backup-2026-08-05T18-25-54-123Z.db (ISO con los ':' y '.'
+// cambiados por '-'). Se rearma el ISO para mostrar la fecha en hora local.
+function _etiquetaRespaldo(nombre) {
+    const esPrevio = nombre.startsWith('pre-restauracion-');
+    const crudo = nombre.replace(/^(backup-|pre-restauracion-)/, '').replace(/\.db$/, '');
+    const [fecha, hora] = crudo.split('T');
+    let texto = crudo;
+    if (fecha && hora) {
+        const partes = hora.split('-');            // HH MM SS mmmZ
+        const iso = `${fecha}T${partes[0]}:${partes[1]}:${partes[2]}.${partes[3] || '000Z'}`;
+        const d = new Date(iso);
+        if (!isNaN(d)) texto = d.toLocaleString();
+    }
+    return esPrevio ? `${texto} (copia previa a una restauración)` : texto;
+}
+
+async function mostrarRestaurarRespaldo() {
+    const bloque = document.getElementById('bloque-restaurar-backup');
+    const select = document.getElementById('select-backup');
+    if (!bloque || !select) return;
+
+    const backups = await window.api.listarBackups();
+    if (!backups || backups.length === 0) {
+        alertaZenit('Todavía no hay respaldos en este equipo. Crea uno con "Crear Respaldo Ahora".', 'Sin respaldos');
+        return;
+    }
+
+    select.innerHTML = backups
+        .map(n => `<option value="${n}">${_etiquetaRespaldo(n)}</option>`)
+        .join('');
+    bloque.style.display = 'block';
+}
+
+async function restaurarRespaldoSeleccionado() {
+    const select = document.getElementById('select-backup');
+    const btn = document.getElementById('btn-restaurar-backup');
+    const nombre = select?.value;
+    if (!nombre) return;
+
+    const confirmado = await confirmarZenit(
+        `Se reemplazarán TODOS los datos de este equipo (ventas, turnos, inventario) por los del respaldo del ${_etiquetaRespaldo(nombre)}.\n\n` +
+        'Se guardará antes una copia de los datos actuales, por si te equivocas de respaldo. La aplicación se reiniciará.\n\n' +
+        'Si este equipo tiene una cuenta vinculada, es posible que tengas que iniciar sesión de nuevo.',
+        '¿Restaurar este respaldo?',
+        { textoOk: 'Restaurar y reiniciar', textoCancelar: 'Cancelar', peligro: true }
+    );
+    if (!confirmado) return;
+
+    if (btn) { btn.disabled = true; btn.innerText = 'Restaurando...'; }
+    try {
+        const resultado = await window.api.restaurarBackup(nombre);
+        if (resultado.ok) {
+            // La app se reinicia sola en ~1s (main.js): este aviso es el último
+            // que alcanza a verse, así que no espera respuesta.
+            alertaZenit('Respaldo restaurado. La aplicación se reiniciará.', 'Listo');
+        } else {
+            alertaZenit('No se pudo restaurar: ' + resultado.error, 'Error');
+        }
+    } catch (e) {
+        alertaZenit('No se pudo restaurar el respaldo.', 'Error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerText = 'Restaurar y reiniciar'; }
+    }
+}
+
 // ============================================
 // SINCRONIZACIÓN LOCAL → NUBE
 // ============================================

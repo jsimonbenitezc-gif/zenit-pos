@@ -62,15 +62,66 @@ function limpiarBackupsAntiguos() {
     });
 }
 
-function restaurarBackup(nombre) {
-    const backupPath = path.join(backupDir, nombre);
-    if (!fs.existsSync(backupPath)) return;
+// Prefijo de la copia que se guarda ANTES de restaurar (deshacer un restore
+// equivocado). Se distingue del respaldo normal para poder etiquetarla en la UI.
+const PREFIJO_PRE_RESTAURACION = 'pre-restauracion-';
 
-    fs.copyFileSync(backupPath, dbPath);
+/** Solo nombres de archivo dentro de la carpeta de respaldos: sin rutas ni '..'. */
+function _rutaDeRespaldo(nombre) {
+    if (typeof nombre !== 'string' || !nombre.endsWith('.db')) return null;
+    if (path.basename(nombre) !== nombre) return null;
+    const ruta = path.join(backupDir, nombre);
+    return fs.existsSync(ruta) ? ruta : null;
+}
+
+/**
+ * Restaura un respaldo sobre la base local.
+ *
+ * ⚠️ Deja la conexión SQLite CERRADA: quien llame debe reiniciar la app
+ * (main.js lo hace con app.relaunch()). Intentar seguir operando con la base
+ * cambiada bajo los pies dejaría datos viejos en memoria.
+ */
+async function restaurarBackup(nombre) {
+    const origen = _rutaDeRespaldo(nombre);
+    if (!origen) throw new Error('No se encontró ese respaldo.');
+
+    // 1. Copia de lo que hay AHORA. Si el usuario restaura el respaldo equivocado,
+    //    el día de hoy no se pierde. VACUUM INTO funciona con la base abierta.
+    let respaldoPrevio = null;
+    if (fs.existsSync(dbPath)) {
+        const marca = new Date().toISOString().replace(/[:.]/g, '-');
+        respaldoPrevio = path.join(backupDir, `${PREFIJO_PRE_RESTAURACION}${marca}.db`);
+        const rutaEscapada = respaldoPrevio.replace(/'/g, "''");
+        await new Promise((resolve, reject) => {
+            db.run(`VACUUM INTO '${rutaEscapada}'`, (err) => err ? reject(err) : resolve());
+        });
+    }
+
+    // 2. Cerrar la conexión: Windows bloquea el archivo mientras SQLite lo tiene
+    //    abierto, así que sin esto el copyFileSync falla con EBUSY.
+    await new Promise((resolve) => db.close(() => resolve()));
+
+    // 3. Reemplazar la base
+    fs.copyFileSync(origen, dbPath);
+
+    // 4. Borrar restos del diario: si sobreviven, al abrir la base pueden deshacer
+    //    o rehacer transacciones del archivo VIEJO sobre el recién restaurado.
+    for (const sufijo of ['-journal', '-wal', '-shm']) {
+        const resto = dbPath + sufijo;
+        if (fs.existsSync(resto)) {
+            try { fs.unlinkSync(resto); } catch (_) { /* ignorar */ }
+        }
+    }
+
+    return {
+        restaurado: nombre,
+        respaldoPrevio: respaldoPrevio ? path.basename(respaldoPrevio) : null
+    };
 }
 
 module.exports = {
     crearBackup,
     listarBackups,
-    restaurarBackup
+    restaurarBackup,
+    PREFIJO_PRE_RESTAURACION
 };

@@ -1116,6 +1116,18 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:5px;"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
                     Ver carpeta de respaldos
                 </button>
+                <button class="btn-secondary" onclick="mostrarRestaurarRespaldo()" style="margin-top:8px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:5px;"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                    Restaurar un respaldo
+                </button>
+                <div id="bloque-restaurar-backup" style="display:none; margin-top:10px;">
+                    <p style="font-size:12px; color:#6b7280; margin-bottom:6px; line-height:1.4;">
+                        Los datos actuales de este equipo se reemplazarán por los del respaldo.
+                        Antes se guarda una copia de lo que hay ahora y la aplicación se reiniciará.
+                    </p>
+                    <select id="select-backup" style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; margin-bottom:8px;"></select>
+                    <button class="btn-danger" onclick="restaurarRespaldoSeleccionado()" id="btn-restaurar-backup">Restaurar y reiniciar</button>
+                </div>
             </div>
         </div>
 
