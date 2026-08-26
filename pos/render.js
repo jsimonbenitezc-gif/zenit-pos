@@ -785,6 +785,11 @@ async function _sincronizarAjustesDesdeCloud() {
             const el = document.getElementById(id);
             if (el && val !== undefined) el.checked = (val === true || val === 'true');
         }
+        // PIN en movimientos de caja (ajuste de la cuenta, llega por SSE)
+        if (s.movimientos_caja_pin !== undefined) {
+            const elMovPin = document.getElementById('adj-mov-caja-pin');
+            if (elMovPin) elMovPin.checked = !(s.movimientos_caja_pin === false || s.movimientos_caja_pin === 'false');
+        }
         // Venta sin turno (también sincronizar variable global)
         if (s.venta_sin_turno !== undefined) {
             ventaSinTurno = !(s.venta_sin_turno === false || s.venta_sin_turno === 'false');
@@ -803,6 +808,7 @@ async function _sincronizarAjustesDesdeCloud() {
             show_email: s.show_email, show_website: s.show_website,
             show_instagram: s.show_instagram, show_rfc: s.show_rfc,
             venta_sin_turno: s.venta_sin_turno,
+            movimientos_caja_pin: s.movimientos_caja_pin,
         };
         for (const [k, v] of Object.entries(guardables)) {
             if (v !== undefined) window.api.guardarAjuste(k, String(v)).catch(() => {});

@@ -253,6 +253,15 @@ async function sincronizarDesdeBackend() {
             await window.api.guardarAjuste('permisos_roles', JSON.stringify(ajustesNegocio.permisos_roles));
         }
 
+        // Si el dueño pide PIN para los movimientos de caja se guarda localmente,
+        // para que el equipo lo siga pidiendo aunque se caiga el internet.
+        if (ajustesNegocio && ajustesNegocio.movimientos_caja_pin !== undefined) {
+            await window.api.guardarAjuste(
+                'movimientos_caja_pin',
+                ajustesNegocio.movimientos_caja_pin === false ? 'false' : 'true'
+            );
+        }
+
         if (pedidosBackend) {
             await window.api.syncPedidos((pedidosBackend && pedidosBackend.data) ? pedidosBackend.data : []);
         }

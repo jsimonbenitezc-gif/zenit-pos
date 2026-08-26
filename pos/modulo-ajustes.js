@@ -1006,6 +1006,20 @@ async function cargarAjustesInstalados() {
         if(document.getElementById('adj-venta-sin-turno'))
             document.getElementById('adj-venta-sin-turno').checked = ventaSinTurno;
 
+        // PIN en movimientos de caja (default encendido). Es un ajuste de la CUENTA:
+        // lo decide el dueño y aplica a todos los equipos del negocio.
+        const movPinEl = document.getElementById('adj-mov-caja-pin');
+        if (movPinEl)
+            movPinEl.checked = !(ajustes.movimientos_caja_pin === false || ajustes.movimientos_caja_pin === 'false');
+        // Solo el administrador puede cambiarlo (el backend además lo rechaza con 403).
+        const movPinItem = document.getElementById('setting-mov-caja-pin');
+        if (movPinItem && movPinEl) {
+            const esDueno = (rolActivo === 'dueno');
+            movPinEl.disabled = !esDueno;
+            movPinItem.style.opacity = esDueno ? '' : '0.55';
+            movPinItem.title = esDueno ? '' : 'Solo el administrador puede cambiar esta opción';
+        }
+
         // Modo oscuro
         if(ajustes.dark_mode === 'true') {
             const checkDark = document.getElementById('adj-darkmode');
@@ -1208,6 +1222,23 @@ function agregarListenersGuardadoAjustes() {
             await window.api.guardarAjuste('venta_sin_turno', ventaSinTurnoEl.checked ? 'true' : 'false');
             if (modoConectado && apiClient && tokenActual) {
                 apiClient.saveSettings({ venta_sin_turno: ventaSinTurnoEl.checked }).catch(() => {});
+            }
+        });
+    }
+
+    // PIN en movimientos de caja (solo administrador)
+    const movCajaPinEl = document.getElementById('adj-mov-caja-pin');
+    if (movCajaPinEl) {
+        movCajaPinEl.addEventListener('change', async () => {
+            if (rolActivo !== 'dueno') {
+                movCajaPinEl.checked = !movCajaPinEl.checked; // revertir
+                alertaZenit('Solo el administrador puede cambiar esta opción.', 'Sin permiso');
+                return;
+            }
+            const activo = movCajaPinEl.checked;
+            await window.api.guardarAjuste('movimientos_caja_pin', activo ? 'true' : 'false');
+            if (modoConectado && apiClient && tokenActual) {
+                apiClient.saveSettings({ movimientos_caja_pin: activo }).catch(() => {});
             }
         });
     }

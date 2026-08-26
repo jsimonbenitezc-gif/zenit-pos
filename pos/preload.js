@@ -152,6 +152,13 @@ contextBridge.exposeInMainWorld('api', {
     calcularTotalesTurno: (fecha) => ipcRenderer.invoke('calcular-totales-turno', fecha),
     cerrarTurno: (id, efectivo, notas) => ipcRenderer.invoke('cerrar-turno', id, efectivo, notas),
 
+    // MOVIMIENTOS DE CAJA (retiros, gastos, depósitos del turno)
+    registrarMovimientoCaja: (turnoId, tipo, monto, motivo, empleado) =>
+        ipcRenderer.invoke('registrar-movimiento-caja', turnoId, tipo, monto, motivo, empleado),
+    obtenerMovimientosCaja: (turnoId) => ipcRenderer.invoke('obtener-movimientos-caja', turnoId),
+    anularMovimientoCaja: (id, empleado, motivo) => ipcRenderer.invoke('anular-movimiento-caja', id, empleado, motivo),
+    totalesMovimientosCaja: (turnoId) => ipcRenderer.invoke('totales-movimientos-caja', turnoId),
+
     // ALERTAS
     calcularAlertas: () => ipcRenderer.invoke('calcular-alertas'),
 

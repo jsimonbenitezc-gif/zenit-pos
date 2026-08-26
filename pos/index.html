@@ -561,6 +561,19 @@
                             </div>
                         </div>
                     </div>
+                    <!-- Movimientos de caja: dinero que entra o sale por fuera de las ventas -->
+                    <div class="table-card" style="margin-top:16px;">
+                        <div class="table-header" style="display:flex;align-items:center;justify-content:space-between;">
+                            <h2 style="margin:0;">Movimientos de Caja</h2>
+                            <button class="btn-secondary small" onclick="abrirModalMovimientoCaja()" style="display:flex;align-items:center;gap:6px;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                Registrar movimiento
+                            </button>
+                        </div>
+                        <div id="turno-mov-totales" class="turno-mov-totales"></div>
+                        <div id="turno-mov-lista" class="turno-mov-lista"></div>
+                    </div>
+
                     <div style="margin-top:16px; text-align:right; display:flex; gap:8px; justify-content:flex-end;">
                         <button class="btn-secondary" onclick="verReporteTurnoActivo()" style="display:flex;align-items:center;gap:6px;">
                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
@@ -1062,6 +1075,16 @@
                 </div>
                 <label class="switch">
                     <input type="checkbox" id="adj-venta-sin-turno" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="setting-item" id="setting-mov-caja-pin">
+                <div>
+                    <span>PIN en Movimientos de Caja</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Pide el PIN del puesto para registrar retiros y gastos, y deja constancia de quién los hizo. Los depósitos nunca lo piden.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-mov-caja-pin" checked>
                     <span class="slider"></span>
                 </label>
             </div>
@@ -2009,6 +2032,82 @@
     </div>
 </div>
 
+<!-- Modal movimiento de caja (retiro / gasto / depósito) -->
+<div id="modal-movimiento-caja" class="modal hidden">
+    <div class="modal-content" style="max-width:440px;">
+        <div class="modal-header">
+            <h2 id="mov-caja-titulo">Movimiento de Caja</h2>
+            <button class="modal-close" onclick="cerrarModalMovimientoCaja()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="mov-tipo-selector">
+                <button type="button" class="mov-tipo-btn" data-tipo="retiro" onclick="seleccionarTipoMovimiento('retiro')">
+                    <span class="mov-tipo-icono">↑</span>
+                    <span class="mov-tipo-lbl">Retiro</span>
+                    <span class="mov-tipo-desc">Sale dinero de la caja</span>
+                </button>
+                <button type="button" class="mov-tipo-btn" data-tipo="gasto" onclick="seleccionarTipoMovimiento('gasto')">
+                    <span class="mov-tipo-icono">🧾</span>
+                    <span class="mov-tipo-lbl">Gasto</span>
+                    <span class="mov-tipo-desc">Pago de algo</span>
+                </button>
+                <button type="button" class="mov-tipo-btn" data-tipo="deposito" onclick="seleccionarTipoMovimiento('deposito')">
+                    <span class="mov-tipo-icono">↓</span>
+                    <span class="mov-tipo-lbl">Depósito</span>
+                    <span class="mov-tipo-desc">Entra dinero</span>
+                </button>
+            </div>
+            <div class="input-group" style="margin-top:14px;">
+                <label>Monto</label>
+                <input type="number" id="mov-caja-monto" placeholder="0.00" min="0.01" step="0.01">
+            </div>
+            <div class="input-group" style="margin-top:10px;">
+                <label>Motivo</label>
+                <input type="text" id="mov-caja-motivo" placeholder="Ej: Compra de cilantro" maxlength="120" autocomplete="off">
+            </div>
+            <div class="input-group" id="mov-caja-pin-group" style="margin-top:10px; display:none;">
+                <label>PIN de tu puesto</label>
+                <input type="password" id="mov-caja-pin" placeholder="••••" maxlength="8" autocomplete="off">
+                <p style="margin:4px 0 0; font-size:0.78em; color:#9ca3af;">Sacar dinero de la caja queda registrado a tu nombre.</p>
+            </div>
+            <p id="mov-caja-error" class="text-danger" style="display:none; margin-top:8px; font-size:0.85em;"></p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="cerrarModalMovimientoCaja()">Cancelar</button>
+            <button class="btn-primary" id="mov-caja-confirmar" onclick="confirmarMovimientoCaja()">Registrar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal anular movimiento de caja -->
+<div id="modal-anular-movimiento" class="modal hidden">
+    <div class="modal-content" style="max-width:400px;">
+        <div class="modal-header">
+            <h2>Anular Movimiento</h2>
+            <button class="modal-close" onclick="cerrarModalAnularMovimiento()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="color:#6b7280;font-size:0.9em;margin-bottom:14px;">
+                El movimiento quedará marcado como anulado y dejará de contar en el cierre.
+                No se borra: seguirá visible en la lista con el motivo.
+            </p>
+            <div class="input-group" id="mov-anular-pin-group">
+                <label>PIN de tu puesto</label>
+                <input type="password" id="mov-anular-pin" placeholder="••••" maxlength="8" autocomplete="off">
+            </div>
+            <div class="input-group" style="margin-top:10px;">
+                <label>Motivo de la anulación (opcional)</label>
+                <input type="text" id="mov-anular-motivo" placeholder="Ej: Monto equivocado" maxlength="120" autocomplete="off">
+            </div>
+            <p id="mov-anular-error" class="text-danger" style="display:none;margin-top:8px;font-size:0.85em;"></p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="cerrarModalAnularMovimiento()">Cancelar</button>
+            <button class="btn-danger" onclick="confirmarAnularMovimiento()">Anular</button>
+        </div>
+    </div>
+</div>
+
 <!-- Modal cierre de turno -->
 <div id="modal-cierre-turno" class="modal hidden">
     <div class="modal-content" style="max-width:480px;">
@@ -2020,6 +2119,9 @@
             <div class="turno-cierre-resumen">
                 <div class="turno-cierre-fila"><span>Fondo inicial</span><strong id="cierre-fondo">$0.00</strong></div>
                 <div class="turno-cierre-fila"><span>Ventas en efectivo</span><strong id="cierre-efectivo-ventas">$0.00</strong></div>
+                <div class="turno-cierre-fila" id="cierre-depositos-row" style="display:none;"><span>+ Depósitos</span><strong id="cierre-depositos">$0.00</strong></div>
+                <div class="turno-cierre-fila" id="cierre-retiros-row" style="display:none;"><span>− Retiros</span><strong id="cierre-retiros">$0.00</strong></div>
+                <div class="turno-cierre-fila" id="cierre-gastos-row" style="display:none;"><span>− Gastos</span><strong id="cierre-gastos">$0.00</strong></div>
                 <div class="turno-cierre-fila turno-cierre-esperado"><span>Efectivo esperado en caja</span><strong id="cierre-esperado">$0.00</strong></div>
             </div>
             <div id="cierre-digitales-section" style="display:none; margin-top:12px; padding:10px 12px; background:#f8fafc; border-radius:8px; border:1px solid #e5e7eb;">

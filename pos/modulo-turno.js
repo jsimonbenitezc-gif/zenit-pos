@@ -2,6 +2,16 @@
 // MÓDULO: Turnos / Corte de Caja
 // ============================================
 
+// `fmt` formatea moneda en toda esta vista. Estaba EN USO (14 llamadas) pero sin
+// definir en ningún archivo cargado por index.html, así que `cargarVistaTurno()`
+// reventaba con ReferenceError en la primera línea que lo usa (el fondo inicial) y
+// la vista quedaba a medio pintar: sin totales del turno y sin historial, porque la
+// excepción cortaba la función antes de llegar a ellos.
+// Mismo formato que `_fmtMesa` en modulo-mesas.js.
+function fmt(v) {
+    return '$' + (parseFloat(v) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 // ─── Helpers turno: cloud si está conectado, local si no ─────────────────────
 async function _turnoGetActivo() {
     if (modoConectado && apiClient) return apiClient.getTurnoActivo(sucursalIdActual).catch(() => null);
@@ -9,7 +19,32 @@ async function _turnoGetActivo() {
 }
 async function _turnoGetTotales(apertura, turnoId) {
     if (modoConectado && apiClient && turnoId) return apiClient.getTurnoTotales(turnoId);
-    return window.api.calcularTotalesTurno(apertura);
+    const totales = await window.api.calcularTotalesTurno(apertura);
+    // El backend ya devuelve los movimientos de caja junto con las ventas; en modo
+    // local se agregan aquí para que el resto de la vista no tenga que distinguir
+    // el modo al calcular el efectivo esperado.
+    if (turnoId) {
+        try {
+            const movs = await window.api.totalesMovimientosCaja(turnoId);
+            totales.total_depositos = movs?.total_depositos || 0;
+            totales.total_retiros   = movs?.total_retiros   || 0;
+            totales.total_gastos    = movs?.total_gastos    || 0;
+        } catch(e) { /* sin movimientos: los totales quedan en 0 */ }
+    }
+    return totales;
+}
+
+/**
+ * Efectivo que debe haber en el cajón:
+ *   fondo_inicial + ventas_efectivo + depósitos − retiros − gastos
+ * Misma fórmula que utils/cashMovements.js en el backend (ver CLAUDE.md §28).
+ */
+function _efectivoEsperado(fondoInicial, totales) {
+    return (parseFloat(fondoInicial) || 0)
+         + (parseFloat(totales?.total_efectivo) || 0)
+         + (parseFloat(totales?.total_depositos) || 0)
+         - (parseFloat(totales?.total_retiros) || 0)
+         - (parseFloat(totales?.total_gastos) || 0);
 }
 async function _turnoAbrir(nombre, rol, fondo) {
     if (modoConectado && apiClient) return apiClient.abrirTurno(nombre, rol, fondo, sucursalIdActual);
@@ -19,6 +54,44 @@ async function _turnoCerrar(id, contado, notas) {
     if (modoConectado && apiClient) return apiClient.cerrarTurno(id, contado, notas);
     return window.api.cerrarTurno(id, contado, notas);
 }
+// ── Movimientos de caja (BLOQUE 7) ───────────────────────────────────────────
+// Mismo patrón que el resto del turno: en modo conectado viven en el backend, en
+// modo local en la SQLite. No se sincronizan entre sí, igual que los turnos.
+async function _movGetLista(turnoId) {
+    if (modoConectado && apiClient) {
+        const r = await apiClient.getMovimientosCaja(turnoId);
+        return { movimientos: r.movimientos || [], totales: r.totales || {} };
+    }
+    const movs = await window.api.obtenerMovimientosCaja(turnoId);
+    const totales = await window.api.totalesMovimientosCaja(turnoId);
+    // La SQLite usa nombres propios; se normalizan al formato del backend para que
+    // el render sea uno solo.
+    return {
+        movimientos: (movs || []).map(m => ({
+            id: m.id,
+            tipo: m.tipo,
+            monto: parseFloat(m.monto) || 0,
+            motivo: m.motivo,
+            employee_name: m.empleado_nombre,
+            anulado: !!m.anulado,
+            anulado_por_nombre: m.anulado_por_nombre,
+            motivo_anulacion: m.motivo_anulacion,
+            createdAt: m.fecha
+        })),
+        totales: totales || {}
+    };
+}
+
+async function _movRegistrar(turnoId, datos) {
+    if (modoConectado && apiClient) return apiClient.registrarMovimientoCaja(turnoId, datos);
+    return window.api.registrarMovimientoCaja(turnoId, datos.tipo, datos.monto, datos.motivo, datos.employee_name);
+}
+
+async function _movAnular(turnoId, movId, datos) {
+    if (modoConectado && apiClient) return apiClient.anularMovimientoCaja(turnoId, movId, datos);
+    return window.api.anularMovimientoCaja(movId, datos.employee_name, datos.motivo);
+}
+
 async function _turnoGetHistorial() {
     if (modoConectado && apiClient) return apiClient.getHistorialTurnos(sucursalIdActual).catch(() => []);
     return window.api.obtenerTurnos();
@@ -124,6 +197,8 @@ async function cargarVistaTurno() {
             document.getElementById('turno-total-tarjeta').textContent       = fmt(totales.total_tarjeta || 0);
             document.getElementById('turno-total-transferencia').textContent = fmt(totales.total_transferencia || 0);
         } catch(e) { console.error('Error calculando totales turno:', e); }
+
+        await cargarMovimientosCaja();
     } else {
         panelSin.classList.remove('hidden');
         panelActivo.classList.add('hidden');
@@ -134,6 +209,254 @@ async function cargarVistaTurno() {
 
     // Cargar historial
     await cargarHistorialTurnos();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MOVIMIENTOS DE CAJA — UI (BLOQUE 7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const MOV_ETIQUETA = { retiro: 'Retiro', gasto: 'Gasto', deposito: 'Depósito' };
+let _movTipoSeleccionado = 'retiro';
+let _movGuardando = false;
+
+/**
+ * ¿Hay que pedir el PIN del puesto para sacar dinero?
+ * Es una decisión del dueño (`movimientos_caja_pin`, ajuste de la CUENTA). Se lee
+ * de la SQLite local para que funcione igual sin internet; el default es pedirlo.
+ */
+async function _movPinRequerido(tipo) {
+    if (tipo === 'deposito') return false;
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        return !(ajustes.movimientos_caja_pin === 'false' || ajustes.movimientos_caja_pin === false);
+    } catch(e) {
+        return true; // ante la duda, se pide
+    }
+}
+
+async function cargarMovimientosCaja() {
+    const contLista   = document.getElementById('turno-mov-lista');
+    const contTotales = document.getElementById('turno-mov-totales');
+    if (!contLista || !contTotales || !turnoActivo) return;
+
+    try {
+        const { movimientos, totales } = await _movGetLista(turnoActivo.id);
+
+        contTotales.innerHTML = `
+            <div class="turno-mov-total"><span>Depósitos</span><strong class="text-success">+${fmt(totales.total_depositos || 0)}</strong></div>
+            <div class="turno-mov-total"><span>Retiros</span><strong class="text-danger">−${fmt(totales.total_retiros || 0)}</strong></div>
+            <div class="turno-mov-total"><span>Gastos</span><strong class="text-danger">−${fmt(totales.total_gastos || 0)}</strong></div>
+        `;
+
+        if (!movimientos.length) {
+            contLista.innerHTML = '<p class="turno-mov-vacio">Sin movimientos en este turno.</p>';
+            return;
+        }
+
+        contLista.innerHTML = movimientos.map(m => {
+            const signo  = m.tipo === 'deposito' ? '+' : '−';
+            const color  = m.tipo === 'deposito' ? 'text-success' : 'text-danger';
+            const hora   = m.createdAt ? new Date(m.createdAt).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '';
+            const quien  = m.employee_name ? esc(m.employee_name) : 'Sin identificar';
+            const motivo = m.motivo ? esc(m.motivo) : 'Sin motivo';
+            const detalleAnulado = m.anulado
+                ? `<div class="turno-mov-item-motivo">Anulado${m.anulado_por_nombre ? ' por ' + esc(m.anulado_por_nombre) : ''}${m.motivo_anulacion ? ' · ' + esc(m.motivo_anulacion) : ''}</div>`
+                : '';
+            return `
+                <div class="turno-mov-item ${m.anulado ? 'anulado' : ''}">
+                    <span class="turno-mov-badge">${MOV_ETIQUETA[m.tipo] || esc(m.tipo)}</span>
+                    <div class="turno-mov-item-info">
+                        <div>${motivo}</div>
+                        <div class="turno-mov-item-motivo">${hora} · ${quien}</div>
+                        ${detalleAnulado}
+                    </div>
+                    <span class="turno-mov-item-monto ${color}">${signo}${fmt(m.monto)}</span>
+                    ${m.anulado ? '' : `<button class="btn-secondary small" onclick="anularMovimientoCajaUI(${m.id})" title="Anular movimiento">Anular</button>`}
+                </div>`;
+        }).join('');
+    } catch(e) {
+        console.error('Error cargando movimientos de caja:', e);
+        contLista.innerHTML = '<p class="turno-mov-vacio">No se pudieron cargar los movimientos.</p>';
+    }
+}
+
+async function abrirModalMovimientoCaja() {
+    if (!turnoActivo) {
+        mostrarNotificacionExito('Abre un turno para registrar movimientos de caja', 'Sin turno');
+        return;
+    }
+    // Registrar aquí un movimiento mientras se mira otra sucursal cruzaría las
+    // cajas de ambas (ver CLAUDE.md §24).
+    if (typeof bloquearSiVistaAjena === 'function' && await bloquearSiVistaAjena()) return;
+
+    document.getElementById('mov-caja-monto').value  = '';
+    document.getElementById('mov-caja-motivo').value = '';
+    const pinEl = document.getElementById('mov-caja-pin');
+    if (pinEl) pinEl.value = '';
+    document.getElementById('mov-caja-error').style.display = 'none';
+    await seleccionarTipoMovimiento('retiro');
+    document.getElementById('modal-movimiento-caja').classList.remove('hidden');
+    setTimeout(() => document.getElementById('mov-caja-monto')?.focus(), 50);
+}
+
+function cerrarModalMovimientoCaja() {
+    document.getElementById('modal-movimiento-caja').classList.add('hidden');
+}
+
+async function seleccionarTipoMovimiento(tipo) {
+    _movTipoSeleccionado = tipo;
+    document.querySelectorAll('.mov-tipo-btn').forEach(btn => {
+        btn.classList.toggle('activo', btn.getAttribute('data-tipo') === tipo);
+    });
+    const titulo = document.getElementById('mov-caja-titulo');
+    if (titulo) titulo.textContent = MOV_ETIQUETA[tipo] || 'Movimiento de Caja';
+
+    // El campo de PIN aparece solo cuando de verdad hace falta.
+    const grupoPin = document.getElementById('mov-caja-pin-group');
+    if (grupoPin) grupoPin.style.display = (await _movPinRequerido(tipo)) ? '' : 'none';
+}
+
+function _movMostrarError(msg) {
+    const el = document.getElementById('mov-caja-error');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = '';
+}
+
+/**
+ * Valida el PIN del puesto activo contra el hash guardado en los ajustes locales.
+ * Sin conexión es la única validación posible, y una caja no puede quedarse sin
+ * poder registrar un gasto porque se cayó el internet.
+ */
+async function _movVerificarPinLocal(pin) {
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        const efectivos = (sucursalIdActual && guardados[`__b_${sucursalIdActual}`])
+            ? guardados[`__b_${sucursalIdActual}`]
+            : Object.fromEntries(Object.entries(guardados).filter(([k]) => !k.startsWith('__b_')));
+        const perfil = efectivos[rolActivo];
+        // Puesto sin PIN configurado: no hay nada contra qué validar.
+        if (!perfil?.pin_set || !perfil?.pin) return true;
+        return (await hashPin(pin)) === perfil.pin;
+    } catch(e) {
+        return true;
+    }
+}
+
+async function confirmarMovimientoCaja() {
+    if (!turnoActivo || _movGuardando) return;
+
+    const monto  = parseFloat(document.getElementById('mov-caja-monto')?.value);
+    const motivo = document.getElementById('mov-caja-motivo')?.value?.trim() || '';
+    const pin    = document.getElementById('mov-caja-pin')?.value || '';
+    const tipo   = _movTipoSeleccionado;
+
+    if (isNaN(monto) || monto <= 0) {
+        _movMostrarError('Ingresa un monto mayor a cero');
+        return;
+    }
+    const pinRequerido = await _movPinRequerido(tipo);
+    if (pinRequerido && !pin) {
+        _movMostrarError('Ingresa el PIN de tu puesto');
+        return;
+    }
+    // En modo local el backend no está para validar el PIN: se valida contra el
+    // hash del puesto guardado en los ajustes.
+    if (pinRequerido && !(modoConectado && apiClient && tokenActual)) {
+        if (!(await _movVerificarPinLocal(pin))) {
+            _movMostrarError('PIN incorrecto');
+            return;
+        }
+    }
+
+    _movGuardando = true;
+    const btn = document.getElementById('mov-caja-confirmar');
+    if (btn) btn.disabled = true;
+
+    try {
+        await _movRegistrar(turnoActivo.id, {
+            tipo,
+            monto,
+            motivo: motivo || null,
+            role: rolActivo || null,
+            pin: pinRequerido ? pin : undefined,
+            employee_name: nombreActivo || '',
+            // Idempotencia: si se pierde la respuesta, el reintento no saca el
+            // dinero dos veces (ver CLAUDE.md §19.7).
+            client_uuid: typeof _generarUuid === 'function' ? _generarUuid() : undefined
+        });
+        cerrarModalMovimientoCaja();
+        await cargarMovimientosCaja();
+        mostrarNotificacionExito(`${MOV_ETIQUETA[tipo]} de ${fmt(monto)} registrado`, '¡Listo!');
+    } catch(e) {
+        _movMostrarError(e.message || 'No se pudo registrar el movimiento');
+    } finally {
+        _movGuardando = false;
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ── Anulación ───────────────────────────────────────────────────────────────
+let _movAnularResolve = null;
+let _movAnularId      = null;
+
+/**
+ * Anula un movimiento: queda visible, marcado, y deja de contar en el cierre.
+ * Nunca se borra — un registro de dinero que se puede borrar sin rastro no sirve
+ * como control.
+ */
+async function anularMovimientoCajaUI(movId) {
+    if (!turnoActivo) return;
+    if (typeof bloquearSiVistaAjena === 'function' && await bloquearSiVistaAjena()) return;
+
+    _movAnularId = movId;
+    const pinRequerido = await _movPinRequerido('retiro');
+    document.getElementById('mov-anular-pin-group').style.display = pinRequerido ? '' : 'none';
+    document.getElementById('mov-anular-pin').value    = '';
+    document.getElementById('mov-anular-motivo').value = '';
+    document.getElementById('mov-anular-error').style.display = 'none';
+    document.getElementById('modal-anular-movimiento').classList.remove('hidden');
+    setTimeout(() => document.getElementById(pinRequerido ? 'mov-anular-pin' : 'mov-anular-motivo')?.focus(), 50);
+}
+
+function cerrarModalAnularMovimiento() {
+    document.getElementById('modal-anular-movimiento').classList.add('hidden');
+    _movAnularId = null;
+}
+
+async function confirmarAnularMovimiento() {
+    if (!turnoActivo || !_movAnularId) return;
+    const pin    = document.getElementById('mov-anular-pin')?.value || '';
+    const motivo = document.getElementById('mov-anular-motivo')?.value?.trim() || '';
+    const errEl  = document.getElementById('mov-anular-error');
+
+    const pinRequerido = await _movPinRequerido('retiro');
+    if (pinRequerido && !pin) {
+        errEl.textContent = 'Ingresa el PIN de tu puesto';
+        errEl.style.display = '';
+        return;
+    }
+    if (pinRequerido && !(modoConectado && apiClient && tokenActual) && !(await _movVerificarPinLocal(pin))) {
+        errEl.textContent = 'PIN incorrecto';
+        errEl.style.display = '';
+        return;
+    }
+
+    try {
+        await _movAnular(turnoActivo.id, _movAnularId, {
+            role: rolActivo || null,
+            pin: pinRequerido ? pin : undefined,
+            employee_name: nombreActivo || '',
+            motivo: motivo || null
+        });
+        cerrarModalAnularMovimiento();
+        await cargarMovimientosCaja();
+        mostrarNotificacionExito('Movimiento anulado', 'Listo');
+    } catch(e) {
+        errEl.textContent = e.message || 'No se pudo anular el movimiento';
+        errEl.style.display = '';
+    }
 }
 
 async function cargarHistorialTurnos() {
@@ -200,7 +523,12 @@ async function verReporteTurno(id) {
     const seccion = (titulo) =>
         `<p style="font-weight:700;font-size:0.8em;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin:16px 0 6px;">${titulo}</p>`;
 
-    const esperado = (turno.fondo_inicial || 0) + (totales.total_efectivo || 0);
+    // Un turno CERRADO guarda sus totales de movimientos congelados; uno abierto
+    // los trae en vivo.
+    const movs = turno.estado === 'cerrado'
+        ? { total_depositos: turno.total_depositos, total_retiros: turno.total_retiros, total_gastos: turno.total_gastos }
+        : totales;
+    const esperado = _efectivoEsperado(turno.fondo_inicial, { ...totales, ...movs });
     const difColor = (turno.diferencia || 0) < 0 ? '#ef4444' : (turno.diferencia || 0) > 0 ? '#10b981' : '#111827';
 
     let html = seccion('Información del turno');
@@ -221,6 +549,9 @@ async function verReporteTurno(id) {
         html += seccion('Corte de caja');
         html += fila('Fondo inicial', fmtMonto(turno.fondo_inicial));
         html += fila('Efectivo en ventas', fmtMonto(totales.total_efectivo));
+        if ((movs.total_depositos || 0) > 0) html += fila('+ Depósitos', fmtMonto(movs.total_depositos));
+        if ((movs.total_retiros || 0)   > 0) html += fila('− Retiros',   fmtMonto(movs.total_retiros));
+        if ((movs.total_gastos || 0)    > 0) html += fila('− Gastos',    fmtMonto(movs.total_gastos));
         html += fila('Efectivo esperado', fmtMonto(esperado));
         html += fila('Efectivo contado', fmtMonto(turno.efectivo_contado));
         html += fila('Diferencia', fmtMonto(turno.diferencia), difColor);
@@ -258,7 +589,10 @@ async function imprimirReporteTurno() {
     const fmtFecha = (d) => d ? new Date(d).toLocaleString('es-MX', { dateStyle:'short', timeStyle:'short' }) : '—';
     const fmtMonto = (v) => '$' + parseFloat(v || 0).toLocaleString('es-MX', { minimumFractionDigits:2, maximumFractionDigits:2 });
     const sep = '─'.repeat(32);
-    const esperado = (turno.fondo_inicial || 0) + (totales.total_efectivo || 0);
+    const movs = turno.estado === 'cerrado'
+        ? { total_depositos: turno.total_depositos, total_retiros: turno.total_retiros, total_gastos: turno.total_gastos }
+        : totales;
+    const esperado = _efectivoEsperado(turno.fondo_inicial, { ...totales, ...movs });
     const difColor = (turno.diferencia || 0) < 0 ? '#ef4444' : (turno.diferencia || 0) > 0 ? '#10b981' : '#000';
 
     const fila = (lbl, val, bold=false, color='#000') =>
@@ -296,6 +630,9 @@ async function imprimirReporteTurno() {
     <div class="titulo-sec">Corte de Caja</div>
     ${fila('Fondo inicial:', fmtMonto(turno.fondo_inicial))}
     ${fila('Efvo. ventas:', fmtMonto(totales.total_efectivo))}
+    ${(movs.total_depositos||0) > 0 ? fila('+ Depositos:', fmtMonto(movs.total_depositos)) : ''}
+    ${(movs.total_retiros||0)   > 0 ? fila('- Retiros:',   fmtMonto(movs.total_retiros)) : ''}
+    ${(movs.total_gastos||0)    > 0 ? fila('- Gastos:',    fmtMonto(movs.total_gastos)) : ''}
     ${fila('Esperado:', fmtMonto(esperado))}
     ${fila('Contado:', fmtMonto(turno.efectivo_contado))}
     ${fila('DIFERENCIA:', fmtMonto(turno.diferencia), true, difColor)}
@@ -468,10 +805,27 @@ async function abrirModalCierre() {
         const efectivoVentas = totales.total_efectivo || 0;
         const tarjeta        = totales.total_tarjeta || 0;
         const transferencia  = totales.total_transferencia || 0;
-        const esperado       = fondoInicial + efectivoVentas;
+        const depositos      = totales.total_depositos || 0;
+        const retiros        = totales.total_retiros || 0;
+        const gastos         = totales.total_gastos || 0;
+        const esperado       = _efectivoEsperado(fondoInicial, totales);
 
         document.getElementById('cierre-fondo').textContent           = fmt(fondoInicial);
         document.getElementById('cierre-efectivo-ventas').textContent = fmt(efectivoVentas);
+
+        // Las filas de movimientos solo aparecen si hubo: un turno sin retiros ni
+        // gastos ve exactamente el mismo cierre de siempre.
+        const filaMov = (idFila, idValor, monto) => {
+            const fila = document.getElementById(idFila);
+            if (!fila) return;
+            fila.style.display = monto > 0 ? '' : 'none';
+            const el = document.getElementById(idValor);
+            if (el) el.textContent = fmt(monto);
+        };
+        filaMov('cierre-depositos-row', 'cierre-depositos', depositos);
+        filaMov('cierre-retiros-row',   'cierre-retiros',   retiros);
+        filaMov('cierre-gastos-row',    'cierre-gastos',    gastos);
+
         document.getElementById('cierre-esperado').textContent        = fmt(esperado);
         document.getElementById('cierre-efectivo-contado').value      = '';
         document.getElementById('cierre-diferencia').textContent      = '$0.00';
@@ -519,6 +873,7 @@ async function confirmarCierreTurno() {
 
     try {
         await _turnoCerrar(turnoActivo.id, contado, notas);
+        document.getElementById('modal-movimiento-caja')?.classList.add('hidden');
         document.getElementById('modal-cierre-turno').classList.add('hidden');
         turnoActivo = null;
         aplicarPermisos();

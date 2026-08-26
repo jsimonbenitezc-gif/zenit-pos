@@ -297,6 +297,32 @@ function inicializarTablas() {
         notas TEXT
     )`);
 
+    // MOVIMIENTOS DE CAJA — Retiros, gastos y depósitos durante el turno (BLOQUE 7)
+    // `fecha` NO lleva DEFAULT CURRENT_TIMESTAMP: en SQLite eso es UTC, y toda esta
+    // base guarda y compara en hora LOCAL (ver CLAUDE.md §26). Se escribe siempre
+    // con datetime('now','localtime').
+    db.run(`CREATE TABLE IF NOT EXISTS movimientos_caja (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        turno_id INTEGER NOT NULL,
+        tipo TEXT NOT NULL,
+        monto REAL NOT NULL,
+        motivo TEXT,
+        empleado_nombre TEXT,
+        anulado INTEGER DEFAULT 0,
+        anulado_por_nombre TEXT,
+        anulado_at DATETIME,
+        motivo_anulacion TEXT,
+        fecha DATETIME,
+        FOREIGN KEY (turno_id) REFERENCES turnos(id)
+    )`);
+    db.run('CREATE INDEX IF NOT EXISTS idx_mov_caja_turno ON movimientos_caja(turno_id)', () => {});
+
+    // Totales de movimientos congelados en el turno cerrado (mismo criterio que el
+    // backend: el reporte de un turno viejo no cambia si después se anula algo).
+    db.run('ALTER TABLE turnos ADD COLUMN total_depositos REAL DEFAULT 0', () => {});
+    db.run('ALTER TABLE turnos ADD COLUMN total_retiros REAL DEFAULT 0', () => {});
+    db.run('ALTER TABLE turnos ADD COLUMN total_gastos REAL DEFAULT 0', () => {});
+
     // KDS — Dispositivos de confianza
     db.run(`CREATE TABLE IF NOT EXISTS kds_trusted_devices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1264,35 +1290,96 @@ function calcularTotalesTurno(fechaApertura, cb) {
     `, [fechaApertura], cb);
 }
 
+// ── Movimientos de caja (BLOQUE 7) ──────────────────────────────────────────
+// Espejo local de `cash_movements` del backend. No se sincronizan: igual que los
+// turnos, en modo conectado viven en el backend y en modo local en esta base.
+
+function registrarMovimientoCaja(turnoId, tipo, monto, motivo, empleadoNombre, cb) {
+    db.run(
+        "INSERT INTO movimientos_caja (turno_id, tipo, monto, motivo, empleado_nombre, fecha) VALUES (?, ?, ?, ?, ?, datetime('now','localtime'))",
+        [turnoId, tipo, monto, motivo || null, empleadoNombre || null],
+        function(err) { cb(err, this?.lastID); }
+    );
+}
+
+function obtenerMovimientosCaja(turnoId, cb) {
+    db.all('SELECT * FROM movimientos_caja WHERE turno_id = ? ORDER BY fecha ASC, id ASC', [turnoId], cb);
+}
+
+/** Anula (nunca borra): el movimiento queda visible y deja de contar en el cierre. */
+function anularMovimientoCaja(id, anuladoPorNombre, motivoAnulacion, cb) {
+    db.run(
+        `UPDATE movimientos_caja
+            SET anulado = 1,
+                anulado_por_nombre = ?,
+                anulado_at = datetime('now','localtime'),
+                motivo_anulacion = ?
+          WHERE id = ? AND anulado = 0`,
+        [anuladoPorNombre || null, motivoAnulacion || null, id],
+        function(err) {
+            if (err) return cb(err);
+            if (this.changes === 0) return cb(new Error('Movimiento no encontrado o ya anulado'));
+            cb(null);
+        }
+    );
+}
+
+/** Suma los movimientos VIGENTES de un turno. `neto` = lo que le suman al esperado. */
+function totalesMovimientosCaja(turnoId, cb) {
+    db.get(`
+        SELECT
+            COALESCE(SUM(CASE WHEN tipo = 'deposito' THEN monto ELSE 0 END), 0) as total_depositos,
+            COALESCE(SUM(CASE WHEN tipo = 'retiro'   THEN monto ELSE 0 END), 0) as total_retiros,
+            COALESCE(SUM(CASE WHEN tipo = 'gasto'    THEN monto ELSE 0 END), 0) as total_gastos
+        FROM movimientos_caja
+        WHERE turno_id = ? AND anulado = 0
+    `, [turnoId], (err, row) => {
+        if (err) return cb(err);
+        const t = row || { total_depositos: 0, total_retiros: 0, total_gastos: 0 };
+        t.neto = t.total_depositos - t.total_retiros - t.total_gastos;
+        cb(null, t);
+    });
+}
+
 function cerrarTurno(id, efectivoContado, notas, cb) {
     db.get("SELECT * FROM turnos WHERE id = ?", [id], (err, turno) => {
         if (err || !turno) return cb(err || new Error('Turno no encontrado'));
         calcularTotalesTurno(turno.apertura, (err2, rows) => {
             if (err2) return cb(err2);
             const totales = rows[0];
-            const efectivoEsperado = turno.fondo_inicial + totales.total_efectivo;
-            const diferencia = efectivoContado - efectivoEsperado;
-            db.run(
-                `UPDATE turnos SET
-                    -- Hora LOCAL: 'apertura' se guarda con datetime('now','localtime'),
-                    -- así que con CURRENT_TIMESTAMP (UTC) la duración del turno salía
-                    -- desfasada tantas horas como el huso del negocio.
-                    cierre = datetime('now','localtime'),
-                    efectivo_contado = ?,
-                    diferencia = ?,
-                    total_pedidos = ?,
-                    total_ventas = ?,
-                    total_efectivo = ?,
-                    total_tarjeta = ?,
-                    total_transferencia = ?,
-                    notas = ?,
-                    estado = 'cerrado'
-                WHERE id = ?`,
-                [efectivoContado, diferencia, totales.total_pedidos, totales.total_ventas,
-                 totales.total_efectivo, totales.total_tarjeta, totales.total_transferencia,
-                 notas, id],
-                cb
-            );
+            totalesMovimientosCaja(id, (err3, movs) => {
+                if (err3) return cb(err3);
+                // BLOQUE 7 — El efectivo que debe haber en el cajón cuenta también lo
+                // que entró y salió por fuera de las ventas. Antes, cada gasto del
+                // turno aparecía como un faltante.
+                const efectivoEsperado = turno.fondo_inicial + totales.total_efectivo + movs.neto;
+                const diferencia = efectivoContado - efectivoEsperado;
+                db.run(
+                    `UPDATE turnos SET
+                        -- Hora LOCAL: 'apertura' se guarda con datetime('now','localtime'),
+                        -- así que con CURRENT_TIMESTAMP (UTC) la duración del turno salía
+                        -- desfasada tantas horas como el huso del negocio.
+                        cierre = datetime('now','localtime'),
+                        efectivo_contado = ?,
+                        diferencia = ?,
+                        total_pedidos = ?,
+                        total_ventas = ?,
+                        total_efectivo = ?,
+                        total_tarjeta = ?,
+                        total_transferencia = ?,
+                        total_depositos = ?,
+                        total_retiros = ?,
+                        total_gastos = ?,
+                        notas = ?,
+                        estado = 'cerrado'
+                    WHERE id = ?`,
+                    [efectivoContado, diferencia, totales.total_pedidos, totales.total_ventas,
+                     totales.total_efectivo, totales.total_tarjeta, totales.total_transferencia,
+                     movs.total_depositos, movs.total_retiros, movs.total_gastos,
+                     notas, id],
+                    cb
+                );
+            });
         });
     });
 }
@@ -1735,6 +1822,10 @@ module.exports = {
     obtenerTurnos,
     calcularTotalesTurno,
     cerrarTurno,
+    registrarMovimientoCaja,
+    obtenerMovimientosCaja,
+    anularMovimientoCaja,
+    totalesMovimientosCaja,
     limpiarDatosLocales,
     limpiarAjustesCuenta,
     agregarInsumoConId,

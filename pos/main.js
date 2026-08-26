@@ -733,6 +733,38 @@ ipcMain.handle('calcular-totales-turno', (event, fechaApertura) => {
     });
 });
 
+// MOVIMIENTOS DE CAJA (BLOQUE 7) — retiros, gastos y depósitos del turno.
+// La autorización (PIN) la resuelve el renderer antes de llamar aquí, igual que
+// el resto de acciones privilegiadas del modo local.
+ipcMain.handle('registrar-movimiento-caja', (event, turnoId, tipo, monto, motivo, empleado) => {
+    return new Promise((resolve, reject) => {
+        db.registrarMovimientoCaja(turnoId, tipo, monto, motivo, empleado, (err, id) => {
+            if (err) reject(err); else resolve(id);
+        });
+    });
+});
+
+ipcMain.handle('obtener-movimientos-caja', (event, turnoId) => {
+    return new Promise((resolve) => {
+        db.obtenerMovimientosCaja(turnoId, (err, movs) => resolve(movs || []));
+    });
+});
+
+ipcMain.handle('anular-movimiento-caja', (event, id, empleado, motivo) => {
+    return new Promise((resolve, reject) => {
+        db.anularMovimientoCaja(id, empleado, motivo, (err) => {
+            if (err) reject(err); else resolve(true);
+        });
+    });
+});
+
+ipcMain.handle('totales-movimientos-caja', (event, turnoId) => {
+    return new Promise((resolve) => {
+        db.totalesMovimientosCaja(turnoId, (err, totales) =>
+            resolve(totales || { total_depositos: 0, total_retiros: 0, total_gastos: 0, neto: 0 }));
+    });
+});
+
 ipcMain.handle('cerrar-turno', (event, id, efectivoContado, notas) => {
     return new Promise((resolve, reject) => {
         db.cerrarTurno(id, efectivoContado, notas, (err) => {

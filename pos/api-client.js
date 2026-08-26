@@ -492,6 +492,19 @@ class APIClient {
         return await this.request(`/turnos/historial${q}`, { method: 'GET' });
     }
 
+    // MOVIMIENTOS DE CAJA (BLOQUE 7)
+    async getMovimientosCaja(turnoId) {
+        return await this.request(`/turnos/${turnoId}/movimientos`, { method: 'GET' });
+    }
+
+    async registrarMovimientoCaja(turnoId, datos) {
+        return await this.request(`/turnos/${turnoId}/movimientos`, { method: 'POST', body: datos });
+    }
+
+    async anularMovimientoCaja(turnoId, movId, datos) {
+        return await this.request(`/turnos/${turnoId}/movimientos/${movId}/anular`, { method: 'POST', body: datos });
+    }
+
     async getTurnoTotales(turnoId) {
         return await this.request(`/turnos/${turnoId}/totales`, { method: 'GET' });
     }
