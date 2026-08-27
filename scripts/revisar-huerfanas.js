@@ -144,7 +144,9 @@ console.log('\n⚠️  LLAMADAS SIN DEFINICIÓN (revisa a mano: hay falsos posit
 for (const [nombre, veces] of sospechosas) {
     console.log(`   ${nombre.padEnd(34)} ${veces} uso${veces === 1 ? '' : 's'}`);
 }
-console.log('\nComprueba cada una con:  grep -rn "function NOMBRE" *.js');
+console.log('\nComprueba cada una desde zenit-pos-desktop/pos con:');
+console.log("   PowerShell:  Select-String 'function NOMBRE' *.js");
+console.log("   Bash:        grep -rn 'function NOMBRE' *.js");
 // Todavía NO se sale con código 1: el prototipo da falsos positivos y rompería
 // cualquier automatización. Cambiarlo al cerrar la tarea 2 del BLOQUE 16.
 process.exit(0);
