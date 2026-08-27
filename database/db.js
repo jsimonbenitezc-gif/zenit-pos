@@ -249,6 +249,10 @@ function inicializarTablas() {
     db.run("ALTER TABLE pedidos ADD COLUMN impuesto REAL DEFAULT 0", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN tasa_impuesto REAL DEFAULT 0", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN impuesto_incluido INTEGER DEFAULT 0", () => {});
+    // Propina (BLOQUE 9). NO entra en `total`: es dinero del cliente para el
+    // empleado que solo pasa por la caja. Lo que se entregó fue total + propina.
+    db.run("ALTER TABLE pedidos ADD COLUMN propina REAL DEFAULT 0", () => {});
+    db.run("ALTER TABLE pedidos ADD COLUMN propina_metodo TEXT", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN puntos INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN en_fidelidad INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE promociones ADD COLUMN requires_pin INTEGER DEFAULT 0", () => {});
@@ -332,6 +336,13 @@ function inicializarTablas() {
     // Impuesto recaudado en el turno (BLOQUE 8). Congelado al cerrar, igual que
     // los movimientos: es la cifra que el dueño leyó en ese corte.
     db.run('ALTER TABLE turnos ADD COLUMN total_impuesto REAL DEFAULT 0', () => {});
+    // Propinas del turno (BLOQUE 9). Se congelan al cerrar, igual que lo anterior.
+    // NO están dentro de total_ventas: son dinero del cliente para el empleado.
+    // Solo la de EFECTIVO entra al efectivo esperado (está en el cajón).
+    db.run('ALTER TABLE turnos ADD COLUMN total_propinas REAL DEFAULT 0', () => {});
+    db.run('ALTER TABLE turnos ADD COLUMN total_propinas_efectivo REAL DEFAULT 0', () => {});
+    db.run('ALTER TABLE turnos ADD COLUMN total_propinas_tarjeta REAL DEFAULT 0', () => {});
+    db.run('ALTER TABLE turnos ADD COLUMN total_propinas_transferencia REAL DEFAULT 0', () => {});
 
     // KDS — Dispositivos de confianza
     db.run(`CREATE TABLE IF NOT EXISTS kds_trusted_devices (
@@ -517,9 +528,11 @@ async function crearPedido(datos, items, callback, opciones) {
             impuesto,
             tasa_impuesto,
             impuesto_incluido,
+            propina,
+            propina_metodo,
             fecha_pedido
         )
-        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        VALUES (?, ?, 'registrado', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
     `;
 
     const skipStock = opciones && opciones.skipStock;
@@ -551,7 +564,10 @@ async function crearPedido(datos, items, callback, opciones) {
             datos.subtotal !== undefined && datos.subtotal !== null ? datos.subtotal : datos.total,
             datos.impuesto || 0,
             datos.tasa_impuesto || 0,
-            datos.impuesto_incluido ? 1 : 0
+            datos.impuesto_incluido ? 1 : 0,
+            // La propina se guarda APARTE del total (BLOQUE 9): `total` es la venta.
+            datos.propina || 0,
+            datos.propina > 0 ? (datos.propina_metodo || datos.metodo_pago || 'efectivo') : null
         ]);
         const pedidoId = resultadoPedido.lastID;
 
@@ -621,6 +637,10 @@ function obtenerPedidos(filtro, callback) {
             p.impuesto,
             p.tasa_impuesto,
             p.impuesto_incluido,
+            -- Propina (BLOQUE 9): el ticket la imprime bajo el total, como lo que
+            -- el cliente entregó de más. No forma parte de la venta.
+            p.propina,
+            p.propina_metodo,
             p.descuento_monto,
             p.metodo_pago,
             p.estado,
@@ -1319,7 +1339,15 @@ function calcularTotalesTurno(fechaApertura, cb) {
             -- BLOQUE 8: el impuesto va DENTRO del total cobrado, así que no cambia
             -- el efectivo esperado; es informativo para el administrador.
             COALESCE(SUM(impuesto), 0) as total_impuesto,
-            COALESCE(SUM(total), 0) - COALESCE(SUM(impuesto), 0) as total_ventas_netas
+            COALESCE(SUM(total), 0) - COALESCE(SUM(impuesto), 0) as total_ventas_netas,
+            -- BLOQUE 9: las propinas van APARTE de las ventas (no son ingreso del
+            -- negocio) y se separan por método porque solo la de efectivo está en
+            -- el cajón. La columna propina_metodo es NULL en los pedidos sin propina
+            -- y en los anteriores al bloque, así que hereda el método del pago.
+            COALESCE(SUM(propina), 0) as total_propinas,
+            COALESCE(SUM(CASE WHEN COALESCE(propina_metodo, metodo_pago) = 'efectivo' THEN propina ELSE 0 END), 0) as total_propinas_efectivo,
+            COALESCE(SUM(CASE WHEN COALESCE(propina_metodo, metodo_pago) IN ('debito','credito','tarjeta') THEN propina ELSE 0 END), 0) as total_propinas_tarjeta,
+            COALESCE(SUM(CASE WHEN COALESCE(propina_metodo, metodo_pago) = 'transferencia' THEN propina ELSE 0 END), 0) as total_propinas_transferencia
         FROM pedidos
         WHERE fecha_pedido >= ? AND estado != 'cancelado'
     `, [fechaApertura], cb);
@@ -1387,7 +1415,11 @@ function cerrarTurno(id, efectivoContado, notas, cb) {
                 // BLOQUE 7 — El efectivo que debe haber en el cajón cuenta también lo
                 // que entró y salió por fuera de las ventas. Antes, cada gasto del
                 // turno aparecía como un faltante.
-                const efectivoEsperado = turno.fondo_inicial + totales.total_efectivo + movs.neto;
+                // BLOQUE 9 — La propina en EFECTIVO también está en el cajón: sin
+                // sumarla, cada propina saldría como un SOBRANTE al contar el dinero.
+                // La de tarjeta no entra (llega en la liquidación del banco).
+                const efectivoEsperado = turno.fondo_inicial + totales.total_efectivo
+                    + (totales.total_propinas_efectivo || 0) + movs.neto;
                 const diferencia = efectivoContado - efectivoEsperado;
                 db.run(
                     `UPDATE turnos SET
@@ -1406,6 +1438,10 @@ function cerrarTurno(id, efectivoContado, notas, cb) {
                         total_retiros = ?,
                         total_gastos = ?,
                         total_impuesto = ?,
+                        total_propinas = ?,
+                        total_propinas_efectivo = ?,
+                        total_propinas_tarjeta = ?,
+                        total_propinas_transferencia = ?,
                         notas = ?,
                         estado = 'cerrado'
                     WHERE id = ?`,
@@ -1413,6 +1449,10 @@ function cerrarTurno(id, efectivoContado, notas, cb) {
                      totales.total_efectivo, totales.total_tarjeta, totales.total_transferencia,
                      movs.total_depositos, movs.total_retiros, movs.total_gastos,
                      totales.total_impuesto || 0,
+                     totales.total_propinas || 0,
+                     totales.total_propinas_efectivo || 0,
+                     totales.total_propinas_tarjeta || 0,
+                     totales.total_propinas_transferencia || 0,
                      notas, id],
                     cb
                 );
@@ -1776,13 +1816,15 @@ function eliminarItemMesa(item_id, pedido_id, cb) {
     });
 }
 
-function cerrarPedidoMesa(pedido_id, metodo_pago, cb) {
+function cerrarPedidoMesa(pedido_id, metodo_pago, propina, propina_metodo, cb) {
+    // La propina (BLOQUE 9) se decide AL COBRAR, no al abrir la mesa, así que se
+    // escribe aquí. NO toca el total: la cuenta es lo que se consumió.
     db.run(
         // Hora LOCAL, igual que crearPedido. Con CURRENT_TIMESTAMP (UTC) la venta de
         // la mesa quedaba fechada horas en el futuro respecto al resto del día y
         // viajaba así al backend al sincronizar.
-        "UPDATE pedidos SET estado='completado', metodo_pago=?, pendiente_sync=1, fecha_pedido=datetime('now','localtime') WHERE id=?",
-        [metodo_pago, pedido_id], cb
+        "UPDATE pedidos SET estado='completado', metodo_pago=?, propina=?, propina_metodo=?, pendiente_sync=1, fecha_pedido=datetime('now','localtime') WHERE id=?",
+        [metodo_pago, propina || 0, (propina > 0 ? (propina_metodo || metodo_pago) : null), pedido_id], cb
     );
 }
 

@@ -228,6 +228,11 @@
                             <div class="kpi-meta hidden" id="dash-impuesto-fila" style="font-size:0.8em;color:#6b7280;">
                                 <span id="dash-impuesto-hoy"></span>
                             </div>
+                            <!-- Propinas (BLOQUE 9): NO están dentro del total de
+                                 arriba — la propina ni siquiera es del negocio. -->
+                            <div class="kpi-meta hidden" id="dash-propinas-fila" style="font-size:0.8em;color:#10b981;">
+                                <span id="dash-propinas-hoy"></span>
+                            </div>
                         </div>
                     </div>
                     
@@ -566,6 +571,9 @@
                                 <div class="turno-stat"><span class="turno-stat-val" id="turno-total-transferencia">$0</span><span class="turno-stat-lbl">Transferencia</span></div>
                                 <!-- Impuesto recaudado (BLOQUE 8): oculto si el negocio no cobra impuesto -->
                                 <div class="turno-stat hidden" id="turno-stat-impuesto"><span class="turno-stat-val" id="turno-total-impuesto">$0</span><span class="turno-stat-lbl" id="turno-lbl-impuesto">Impuesto</span></div>
+                                <!-- Propinas (BLOQUE 9): NO están dentro de "Total Vendido" —
+                                     no son ingreso del negocio. Oculto si no hay propinas. -->
+                                <div class="turno-stat hidden" id="turno-stat-propinas"><span class="turno-stat-val" id="turno-total-propinas">$0</span><span class="turno-stat-lbl">Propinas <span id="turno-propinas-detalle" style="opacity:0.75;"></span></span></div>
                             </div>
                         </div>
                     </div>
@@ -1274,6 +1282,31 @@
                     <p style="margin:4px 0 0; font-size:0.8em; color:#9ca3af;" id="adj-impuesto-ejemplo"></p>
                 </div>
                 <button class="btn-primary" onclick="guardarConfigImpuesto()">Guardar impuesto</button>
+            </div>
+        </div>
+
+        <!-- Propinas (BLOQUE 9) — configuración de la CUENTA, solo el dueño -->
+        <div class="ajustes-card" id="card-propinas" style="position:relative;">
+            <h3>Propinas</h3>
+            <div class="setting-item">
+                <div>
+                    <span>Aceptar propinas en el cobro</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">La propina NO es una venta: no se suma al total del pedido ni paga impuesto. Se registra aparte y sale en el corte de caja. La propina en efectivo sí cuenta en el efectivo esperado, porque está en el cajón.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-propina-activa">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div id="grupo-propinas" style="display:none;">
+                <div class="input-group">
+                    <label>Porcentajes sugeridos (máximo 4)</label>
+                    <input type="text" id="adj-propina-sugerencias" placeholder="10, 15, 20">
+                    <p style="margin:4px 0 0; font-size:0.8em; color:#9ca3af;">
+                        Aparecen como botones rápidos al cobrar. El cajero siempre puede escribir otro monto.
+                    </p>
+                </div>
+                <button class="btn-primary" onclick="guardarConfigPropina()">Guardar propinas</button>
             </div>
         </div>
 
@@ -1986,6 +2019,35 @@
             </button>
         </div>
 
+        <!-- PROPINA (BLOQUE 9). Va DESPUÉS del método de pago porque el porcentaje
+             se calcula sobre el total y porque la propina puede cobrarse por un
+             método distinto (cuenta con tarjeta, propina en efectivo).
+             Toda la sección está oculta si el negocio no tiene propinas activas. -->
+        <div id="seccion-propina-venta" class="hidden" style="margin: 15px 0; padding: 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <span style="font-weight:600;color:#166534;font-size:0.92em;">Propina</span>
+                <span id="propina-monto-display" style="font-weight:700;color:#166534;">$0.00</span>
+            </div>
+            <div id="propina-botones" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <input type="text" id="propina-input" placeholder="Otro monto" inputmode="decimal"
+                       oninput="alCambiarPropinaManual()"
+                       style="flex:1;padding:9px;border:1px solid #d1d5db;border-radius:8px;font-size:0.95em;">
+                <select id="propina-metodo" onchange="alCambiarMetodoPropina()"
+                        style="padding:9px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;">
+                    <option value="efectivo">en efectivo</option>
+                    <option value="tarjeta">en tarjeta</option>
+                    <option value="transferencia">en transferencia</option>
+                </select>
+            </div>
+            <!-- Lo que el cliente ENTREGA. La VENTA del negocio sigue siendo el
+                 total sin propina: este número no se guarda como venta. -->
+            <div id="propina-total-entrega" class="hidden" style="margin-top:10px;padding-top:10px;border-top:1px dashed #bbf7d0;display:flex;justify-content:space-between;font-weight:700;color:#166534;">
+                <span>El cliente entrega:</span>
+                <span id="propina-total-entrega-monto">$0.00</span>
+            </div>
+        </div>
+
         <div id="cambio-section" class="cash-calc hidden">
             <div class="calc-header" style="font-weight: 600; margin-bottom: 10px; color: #374151;">
                 Calculadora de Cambio
@@ -2167,6 +2229,9 @@
             <div class="turno-cierre-resumen">
                 <div class="turno-cierre-fila"><span>Fondo inicial</span><strong id="cierre-fondo">$0.00</strong></div>
                 <div class="turno-cierre-fila"><span>Ventas en efectivo</span><strong id="cierre-efectivo-ventas">$0.00</strong></div>
+                <!-- Propina en efectivo (BLOQUE 9): está en el cajón, así que el
+                     cajero debe encontrarla al contar. La de tarjeta no aparece aquí. -->
+                <div class="turno-cierre-fila" id="cierre-propinas-row" style="display:none;"><span>+ Propinas en efectivo</span><strong id="cierre-propinas">$0.00</strong></div>
                 <div class="turno-cierre-fila" id="cierre-depositos-row" style="display:none;"><span>+ Depósitos</span><strong id="cierre-depositos">$0.00</strong></div>
                 <div class="turno-cierre-fila" id="cierre-retiros-row" style="display:none;"><span>− Retiros</span><strong id="cierre-retiros">$0.00</strong></div>
                 <div class="turno-cierre-fila" id="cierre-gastos-row" style="display:none;"><span>− Gastos</span><strong id="cierre-gastos">$0.00</strong></div>
@@ -2350,6 +2415,7 @@
 <script src="modulo-plan.js"></script>
 <script src="modulo-wrappers.js"></script>
 <script src="modulo-impuestos.js"></script>
+<script src="modulo-propinas.js"></script>
 <script src="modulo-dashboard.js"></script>
 <script src="modulo-productos.js"></script>
 <script src="modulo-venta.js"></script>
@@ -2767,11 +2833,35 @@
             </div>
             <div class="form-group">
                 <label>Método de pago</label>
-                <select id="cobrar-mesa-metodo" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:1em;box-sizing:border-box;">
+                <select id="cobrar-mesa-metodo" onchange="_actualizarDisplayPropinaMesa()" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:1em;box-sizing:border-box;">
                     <option value="efectivo">Efectivo</option>
                     <option value="tarjeta">Tarjeta</option>
                     <option value="transferencia">Transferencia</option>
                 </select>
+            </div>
+            <!-- Propina de la mesa (BLOQUE 9). Se deja al cobrar, no al abrir la
+                 mesa. No entra en la cuenta: es lo que el cliente da de más. -->
+            <div id="seccion-propina-mesa" class="hidden" style="margin-top:14px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <span style="font-weight:600;color:#166534;font-size:0.92em;">Propina</span>
+                    <span id="propina-mesa-monto-display" style="font-weight:700;color:#166534;">$0.00</span>
+                </div>
+                <div id="propina-mesa-botones" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <input type="text" id="propina-mesa-input" placeholder="Otro monto" inputmode="decimal"
+                           oninput="alCambiarPropinaMesaManual()"
+                           style="flex:1;padding:9px;border:1px solid #d1d5db;border-radius:8px;font-size:0.95em;">
+                    <select id="propina-mesa-metodo" onchange="alCambiarMetodoPropinaMesa()"
+                            style="padding:9px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;">
+                        <option value="efectivo">en efectivo</option>
+                        <option value="tarjeta">en tarjeta</option>
+                        <option value="transferencia">en transferencia</option>
+                    </select>
+                </div>
+                <div id="propina-mesa-entrega" class="hidden" style="margin-top:10px;padding-top:10px;border-top:1px dashed #bbf7d0;display:flex;justify-content:space-between;font-weight:700;color:#166534;">
+                    <span>El cliente entrega:</span>
+                    <span id="propina-mesa-entrega-monto">$0.00</span>
+                </div>
             </div>
         </div>
         <div class="modal-footer">

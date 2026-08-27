@@ -54,6 +54,21 @@ async function cargarDashboard() {
             }
         }
 
+        // Propinas de hoy (BLOQUE 9). Aparte por una razón más fuerte que el
+        // impuesto: la propina ni siquiera es ingreso del negocio, así que jamás
+        // está incluida en el total de ventas de arriba.
+        const propinasHoy = parseFloat(stats.ventasHoy.propinas_total || 0) || 0;
+        const filaProp = document.getElementById('dash-propinas-fila');
+        if (filaProp) {
+            if (propinasHoy > 0) {
+                filaProp.classList.remove('hidden');
+                document.getElementById('dash-propinas-hoy').innerText =
+                    `Propinas: $${propinasHoy.toFixed(2)} (no son ventas)`;
+            } else {
+                filaProp.classList.add('hidden');
+            }
+        }
+
         // Ticket Promedio
         const ticketProm = stats.ventasHoy.ticket_promedio || 0;
         document.getElementById('dash-ticket-prom').innerText = `$${ticketProm.toFixed(2)}`;

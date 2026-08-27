@@ -279,6 +279,17 @@ async function sincronizarDesdeBackend() {
                 await window.api.guardarAjuste('tax_name', String(ajustesNegocio.tax_name || 'IVA'));
             }
             if (typeof cargarConfigImpuesto === 'function') await cargarConfigImpuesto();
+
+            // Propinas (BLOQUE 9). Se cachean localmente por la misma razón que el
+            // impuesto: sin esto, la caja sin internet dejaría de pedir propina y el
+            // corte no cuadraría con lo que el cajero tiene en el cajón.
+            if (ajustesNegocio.propinas_activas !== undefined) {
+                await window.api.guardarAjuste('propinas_activas', ajustesNegocio.propinas_activas === true || ajustesNegocio.propinas_activas === 'true' ? 'true' : 'false');
+            }
+            if (ajustesNegocio.propina_sugerencias !== undefined) {
+                await window.api.guardarAjuste('propina_sugerencias', JSON.stringify(normalizarSugerenciasPropina(ajustesNegocio.propina_sugerencias)));
+            }
+            if (typeof cargarConfigPropina === 'function') await cargarConfigPropina();
         }
 
         if (pedidosBackend) {
@@ -393,6 +404,12 @@ async function subirPedidosPendientes() {
                     // nunca se le cree el importe al cliente.
                     tax_rate: pedido.tasa_impuesto || 0,
                     tax_included: !!pedido.impuesto_incluido,
+                    // Propina (BLOQUE 9). Va APARTE del total: `total` es lo que
+                    // vendió el negocio. El backend la descarta si el negocio tiene
+                    // las propinas apagadas, y una propina inválida nunca atasca la
+                    // venta en la cola (cae a 0 y la venta se registra igual).
+                    tip_amount: pedido.propina || 0,
+                    tip_method: pedido.propina_metodo || null,
                     // La venta YA se concretó localmente; no dejar que un aviso de
                     // stock del backend bloquee su subida (evita marcarla como
                     // sincronizada sin haberse creado en el backend).

@@ -36,12 +36,17 @@ async function _turnoGetTotales(apertura, turnoId) {
 
 /**
  * Efectivo que debe haber en el cajón:
- *   fondo_inicial + ventas_efectivo + depósitos − retiros − gastos
- * Misma fórmula que utils/cashMovements.js en el backend (ver CLAUDE.md §28).
+ *   fondo_inicial + ventas_efectivo + propinas_efectivo + depósitos − retiros − gastos
+ * Misma fórmula que utils/cashMovements.js en el backend (ver CLAUDE.md §28 y §30).
+ *
+ * ⚠️ La propina en EFECTIVO se suma porque está físicamente en el cajón (BLOQUE
+ * 9). Sin ella, cada propina saldría como un SOBRANTE al contar el dinero. La de
+ * tarjeta no entra: llega en la liquidación del banco.
  */
 function _efectivoEsperado(fondoInicial, totales) {
     return (parseFloat(fondoInicial) || 0)
          + (parseFloat(totales?.total_efectivo) || 0)
+         + (parseFloat(totales?.total_propinas_efectivo) || 0)
          + (parseFloat(totales?.total_depositos) || 0)
          - (parseFloat(totales?.total_retiros) || 0)
          - (parseFloat(totales?.total_gastos) || 0);
@@ -208,6 +213,26 @@ async function cargarVistaTurno() {
                     if (lbl) lbl.textContent = `${configImpuesto.nombre} recaudado`;
                 } else {
                     statImp.classList.add('hidden');
+                }
+            }
+            // Propinas del turno (BLOQUE 9). Mismo criterio que el impuesto: solo
+            // se muestra si hay algo que mostrar. NO está dentro de "Total Vendido":
+            // la propina no es del negocio.
+            const statProp = document.getElementById('turno-stat-propinas');
+            if (statProp) {
+                const prop = parseFloat(totales.total_propinas || 0) || 0;
+                if (prop > 0 || hayPropinas()) {
+                    statProp.classList.remove('hidden');
+                    document.getElementById('turno-total-propinas').textContent = fmt(prop);
+                    const detalle = document.getElementById('turno-propinas-detalle');
+                    if (detalle) {
+                        const efe = parseFloat(totales.total_propinas_efectivo || 0) || 0;
+                        // Solo la de efectivo está en el cajón: es el dato que le
+                        // sirve al cajero cuando cuenta el dinero.
+                        detalle.textContent = efe > 0 ? `${fmt(efe)} en efectivo` : '';
+                    }
+                } else {
+                    statProp.classList.add('hidden');
                 }
             }
         } catch(e) { console.error('Error calculando totales turno:', e); }
@@ -540,7 +565,10 @@ async function verReporteTurno(id) {
     // Un turno CERRADO guarda sus totales de movimientos congelados; uno abierto
     // los trae en vivo.
     const movs = turno.estado === 'cerrado'
-        ? { total_depositos: turno.total_depositos, total_retiros: turno.total_retiros, total_gastos: turno.total_gastos }
+        ? { total_depositos: turno.total_depositos, total_retiros: turno.total_retiros, total_gastos: turno.total_gastos,
+            // Las propinas de un turno CERRADO también están congeladas (BLOQUE 9).
+            total_propinas: turno.total_propinas, total_propinas_efectivo: turno.total_propinas_efectivo,
+            total_propinas_tarjeta: turno.total_propinas_tarjeta, total_propinas_transferencia: turno.total_propinas_transferencia }
         : totales;
     const esperado = _efectivoEsperado(turno.fondo_inicial, { ...totales, ...movs });
     const difColor = (turno.diferencia || 0) < 0 ? '#ef4444' : (turno.diferencia || 0) > 0 ? '#10b981' : '#111827';
@@ -570,10 +598,29 @@ async function verReporteTurno(id) {
         html += fila('Ventas netas', fmtMonto((parseFloat(totales.total_ventas) || 0) - impuestoTurno));
     }
 
+    // Propinas (BLOQUE 9). Sección PROPIA, no un renglón de ventas: la propina no
+    // es ingreso del negocio y no está dentro de "Total vendido". Se separa por
+    // método porque solo la de efectivo está en el cajón.
+    const propinasTurno = parseFloat(movs.total_propinas ?? totales.total_propinas ?? 0) || 0;
+    if (propinasTurno > 0) {
+        html += seccion('Propinas (no son ventas)');
+        html += fila('Total de propinas', fmtMonto(propinasTurno));
+        const pEfe = parseFloat(movs.total_propinas_efectivo ?? totales.total_propinas_efectivo ?? 0) || 0;
+        const pTar = parseFloat(movs.total_propinas_tarjeta ?? totales.total_propinas_tarjeta ?? 0) || 0;
+        const pTra = parseFloat(movs.total_propinas_transferencia ?? totales.total_propinas_transferencia ?? 0) || 0;
+        if (pEfe > 0) html += fila('En efectivo (está en el cajón)', fmtMonto(pEfe));
+        if (pTar > 0) html += fila('En tarjeta', fmtMonto(pTar));
+        if (pTra > 0) html += fila('En transferencia', fmtMonto(pTra));
+    }
+
     if (turno.estado === 'cerrado') {
         html += seccion('Corte de caja');
         html += fila('Fondo inicial', fmtMonto(turno.fondo_inicial));
         html += fila('Efectivo en ventas', fmtMonto(totales.total_efectivo));
+        // La propina en efectivo entró al cajón, así que forma parte de lo que el
+        // cajero debe encontrar al contar (BLOQUE 9).
+        const pEfeCorte = parseFloat(movs.total_propinas_efectivo ?? totales.total_propinas_efectivo ?? 0) || 0;
+        if (pEfeCorte > 0) html += fila('+ Propinas en efectivo', fmtMonto(pEfeCorte));
         if ((movs.total_depositos || 0) > 0) html += fila('+ Depósitos', fmtMonto(movs.total_depositos));
         if ((movs.total_retiros || 0)   > 0) html += fila('− Retiros',   fmtMonto(movs.total_retiros));
         if ((movs.total_gastos || 0)    > 0) html += fila('− Gastos',    fmtMonto(movs.total_gastos));
@@ -615,13 +662,21 @@ async function imprimirReporteTurno() {
     const fmtMonto = (v) => '$' + parseFloat(v || 0).toLocaleString('es-MX', { minimumFractionDigits:2, maximumFractionDigits:2 });
     const sep = '─'.repeat(32);
     const movs = turno.estado === 'cerrado'
-        ? { total_depositos: turno.total_depositos, total_retiros: turno.total_retiros, total_gastos: turno.total_gastos }
+        ? { total_depositos: turno.total_depositos, total_retiros: turno.total_retiros, total_gastos: turno.total_gastos,
+            // Las propinas de un turno CERRADO también están congeladas (BLOQUE 9).
+            total_propinas: turno.total_propinas, total_propinas_efectivo: turno.total_propinas_efectivo,
+            total_propinas_tarjeta: turno.total_propinas_tarjeta, total_propinas_transferencia: turno.total_propinas_transferencia }
         : totales;
     const esperado = _efectivoEsperado(turno.fondo_inicial, { ...totales, ...movs });
     const difColor = (turno.diferencia || 0) < 0 ? '#ef4444' : (turno.diferencia || 0) > 0 ? '#10b981' : '#000';
     const impuestoTurnoTicket = parseFloat(
         (turno.estado === 'cerrado' ? turno.total_impuesto : totales.total_impuesto) || 0
     ) || 0;
+    // Propinas (BLOQUE 9): las de un turno cerrado están congeladas en `movs`.
+    const propinasTicket    = parseFloat(movs.total_propinas ?? totales.total_propinas ?? 0) || 0;
+    const propinasEfeTicket = parseFloat(movs.total_propinas_efectivo ?? totales.total_propinas_efectivo ?? 0) || 0;
+    const propinasTarTicket = parseFloat(movs.total_propinas_tarjeta ?? totales.total_propinas_tarjeta ?? 0) || 0;
+    const propinasTraTicket = parseFloat(movs.total_propinas_transferencia ?? totales.total_propinas_transferencia ?? 0) || 0;
 
     const fila = (lbl, val, bold=false, color='#000') =>
         `<div style="display:flex;justify-content:space-between;margin:2px 0;">
@@ -655,11 +710,20 @@ async function imprimirReporteTurno() {
     ${(totales.total_transferencia||0)>0 ? fila('Transfer.:', fmtMonto(totales.total_transferencia)) : ''}
     ${(impuestoTurnoTicket||0) > 0 ? fila(`${configImpuesto.nombre}:`, fmtMonto(impuestoTurnoTicket)) : ''}
     ${(impuestoTurnoTicket||0) > 0 ? fila('Ventas netas:', fmtMonto((parseFloat(totales.total_ventas)||0) - impuestoTurnoTicket)) : ''}
+    ${(propinasTicket||0) > 0 ? `
+    <div class="sep"></div>
+    <div class="titulo-sec">Propinas (no son ventas)</div>
+    ${fila('Total:', fmtMonto(propinasTicket), true)}
+    ${(propinasEfeTicket||0) > 0 ? fila('En efectivo:', fmtMonto(propinasEfeTicket)) : ''}
+    ${(propinasTarTicket||0) > 0 ? fila('En tarjeta:', fmtMonto(propinasTarTicket)) : ''}
+    ${(propinasTraTicket||0) > 0 ? fila('En transfer.:', fmtMonto(propinasTraTicket)) : ''}
+    ` : ''}
     ${turno.estado === 'cerrado' ? `
     <div class="sep"></div>
     <div class="titulo-sec">Corte de Caja</div>
     ${fila('Fondo inicial:', fmtMonto(turno.fondo_inicial))}
     ${fila('Efvo. ventas:', fmtMonto(totales.total_efectivo))}
+    ${(propinasEfeTicket||0) > 0 ? fila('+ Propinas efvo:', fmtMonto(propinasEfeTicket)) : ''}
     ${(movs.total_depositos||0) > 0 ? fila('+ Depositos:', fmtMonto(movs.total_depositos)) : ''}
     ${(movs.total_retiros||0)   > 0 ? fila('- Retiros:',   fmtMonto(movs.total_retiros)) : ''}
     ${(movs.total_gastos||0)    > 0 ? fila('- Gastos:',    fmtMonto(movs.total_gastos)) : ''}
@@ -852,6 +916,9 @@ async function abrirModalCierre() {
             const el = document.getElementById(idValor);
             if (el) el.textContent = fmt(monto);
         };
+        // Propina en efectivo (BLOQUE 9): igual que los movimientos, solo aparece
+        // si la hubo. Es dinero que SÍ está en el cajón y que el cajero va a contar.
+        filaMov('cierre-propinas-row',  'cierre-propinas',  parseFloat(totales.total_propinas_efectivo || 0) || 0);
         filaMov('cierre-depositos-row', 'cierre-depositos', depositos);
         filaMov('cierre-retiros-row',   'cierre-retiros',   retiros);
         filaMov('cierre-gastos-row',    'cierre-gastos',    gastos);

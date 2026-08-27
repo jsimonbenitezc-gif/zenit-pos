@@ -315,6 +315,131 @@ function _totalACobrar() {
     return desglosarImpuesto(_baseGravableCarrito()).total;
 }
 
+// ── PROPINA (BLOQUE 9) ──────────────────────────────────────────────────────
+// La propina de la venta en curso. ⚠️ NO entra en `_totalACobrar()` a propósito:
+// ese es el total de la VENTA (lo que el negocio vendió) y es lo que se guarda
+// en el pedido. Lo que el cliente ENTREGA es `_totalConPropina()`, y ese número
+// solo se usa para pedir el dinero, calcular el cambio e imprimir el ticket.
+let propinaActual = 0;
+let propinaMetodoActual = null;
+
+/** Lo que el cliente entrega: venta + propina. Nunca se guarda como venta. */
+function _totalConPropina() {
+    return totalConPropina(_totalACobrar(), propinaActual);
+}
+
+/** Deja la propina en cero. Se llama al abrir el modal y al terminar la venta. */
+function _resetearPropinaVenta() {
+    propinaActual = 0;
+    propinaMetodoActual = null;
+    const input = document.getElementById('propina-input');
+    if (input) input.value = '';
+}
+
+/**
+ * Dibuja la sección de propina del modal de cobro.
+ * Con el interruptor apagado (el default) la sección queda oculta por completo:
+ * un negocio que no recibe propinas no ve un solo renglón extra.
+ */
+function _renderizarSeccionPropina() {
+    const seccion = document.getElementById('seccion-propina-venta');
+    if (!seccion) return;
+
+    if (!hayPropinas()) {
+        seccion.classList.add('hidden');
+        _resetearPropinaVenta();
+        return;
+    }
+    seccion.classList.remove('hidden');
+
+    // Botones de porcentaje sugerido + "Sin propina". Son solo una ayuda para
+    // teclear rápido: el cajero siempre puede escribir el monto a mano.
+    const contenedor = document.getElementById('propina-botones');
+    if (contenedor) {
+        const totalVenta = _totalACobrar();
+        const botones = (configPropina.sugerencias || []).map(pct => {
+            const monto = propinaPorPorcentaje(totalVenta, pct);
+            const activo = propinaActual > 0 && Math.abs(propinaActual - monto) < 0.005;
+            return `<button type="button" onclick="aplicarPropinaPorcentaje(${pct})"
+                        style="flex:1;min-width:64px;padding:8px 6px;border-radius:8px;cursor:pointer;font-size:0.86em;font-weight:600;
+                               border:2px solid ${activo ? '#16a34a' : '#d1d5db'};
+                               background:${activo ? '#16a34a' : 'white'};color:${activo ? 'white' : '#374151'};">
+                        ${pct}%<br><span style="font-size:0.85em;font-weight:500;opacity:0.85;">$${monto.toFixed(2)}</span>
+                    </button>`;
+        }).join('');
+        const sinPropinaActivo = propinaActual <= 0;
+        contenedor.innerHTML = botones + `
+            <button type="button" onclick="quitarPropinaVenta()"
+                    style="flex:1;min-width:64px;padding:8px 6px;border-radius:8px;cursor:pointer;font-size:0.86em;font-weight:600;
+                           border:2px solid ${sinPropinaActivo ? '#6b7280' : '#d1d5db'};
+                           background:${sinPropinaActivo ? '#6b7280' : 'white'};color:${sinPropinaActivo ? 'white' : '#374151'};">
+                    Sin<br><span style="font-size:0.85em;font-weight:500;opacity:0.85;">propina</span>
+            </button>`;
+    }
+
+    _actualizarDisplayPropina();
+}
+
+/** Refresca los montos de la sección de propina y el "el cliente entrega". */
+function _actualizarDisplayPropina() {
+    const display = document.getElementById('propina-monto-display');
+    if (display) display.innerText = `$${propinaActual.toFixed(2)}`;
+
+    // El selector de método solo tiene sentido cuando hay propina. Se preselecciona
+    // con el método del pago, que es el caso normal.
+    const selMetodo = document.getElementById('propina-metodo');
+    if (selMetodo) {
+        selMetodo.value = normalizarMetodoPropina(propinaMetodoActual, metodoSeleccionado);
+        selMetodo.style.display = propinaActual > 0 ? '' : 'none';
+    }
+
+    const fila = document.getElementById('propina-total-entrega');
+    const monto = document.getElementById('propina-total-entrega-monto');
+    if (fila && monto) {
+        if (propinaActual > 0) {
+            fila.classList.remove('hidden');
+            monto.innerText = `$${_totalConPropina().toFixed(2)}`;
+        } else {
+            fila.classList.add('hidden');
+        }
+    }
+
+    // El cliente paga la venta MÁS la propina, así que el cambio y el "total a
+    // cobrar" del modal se calculan sobre ese número.
+    const totalDisplay = document.getElementById('pago-total-display');
+    if (totalDisplay) totalDisplay.innerText = `$${_totalConPropina().toFixed(2)}`;
+    if (metodoSeleccionado === 'efectivo') calcularCambio();
+}
+
+function aplicarPropinaPorcentaje(pct) {
+    propinaActual = propinaPorPorcentaje(_totalACobrar(), pct);
+    propinaMetodoActual = normalizarMetodoPropina(propinaMetodoActual, metodoSeleccionado);
+    const input = document.getElementById('propina-input');
+    if (input) input.value = propinaActual > 0 ? propinaActual.toFixed(2) : '';
+    _renderizarSeccionPropina();
+}
+
+function quitarPropinaVenta() {
+    _resetearPropinaVenta();
+    _renderizarSeccionPropina();
+}
+
+function alCambiarPropinaManual() {
+    const input = document.getElementById('propina-input');
+    if (!input) return;
+    // Mismo saneado que el efectivo recibido: solo números y punto.
+    const limpio = input.value.replace(/[^\d.]/g, '');
+    if (limpio !== input.value) input.value = limpio;
+    propinaActual = normalizarPropina(limpio);
+    if (propinaActual > 0) propinaMetodoActual = normalizarMetodoPropina(propinaMetodoActual, metodoSeleccionado);
+    _renderizarSeccionPropina();
+}
+
+function alCambiarMetodoPropina() {
+    const sel = document.getElementById('propina-metodo');
+    if (sel) propinaMetodoActual = sel.value;
+}
+
 function renderizarCarrito() {
     const contenedor = document.getElementById('carrito-items');
     const subtotalEl = document.getElementById('subtotal-venta');
@@ -459,12 +584,17 @@ async function procesarVenta() {
     actualizarPanelPuntosVenta(); // Refrescar panel de puntos en caso de que el cliente esté en fidelidad
 
     resetearModalPago();
+    // La propina arranca en cero en cada venta: nunca se hereda de la anterior.
+    _resetearPropinaVenta();
+    _renderizarSeccionPropina();
     document.getElementById('modalPago').classList.remove('hidden');
 }
 
 // --- SELECCIONAR MÉTODO DE PAGO ---
 function seleccionarMetodo(metodo) {
     metodoSeleccionado = metodo;
+    // La propina hereda el método del pago mientras el cajero no elija otro.
+    if (!propinaMetodoActual) _actualizarDisplayPropina();
 
     // Quitar selección de todos los botones
     document.querySelectorAll('.method-btn').forEach(btn => {
@@ -495,8 +625,9 @@ function seleccionarMetodo(metodo) {
 
 // --- CALCULAR CAMBIO EN TIEMPO REAL ---
 function calcularCambio() {
-    // El cambio se calcula sobre lo que el cliente PAGA, impuesto incluido.
-    const total = _totalACobrar();
+    // El cambio se calcula sobre lo que el cliente PAGA: impuesto incluido y,
+    // desde el BLOQUE 9, también la propina (es dinero que entrega de más).
+    const total = _totalConPropina();
     const inputRecibido = document.getElementById('efectivo-recibido').value;
 
     // Limpiar el valor: permitir solo números y punto decimal
@@ -578,6 +709,13 @@ async function ejecutarVenta() {
             impuesto: desgloseVenta.impuesto,
             tasa_impuesto: configImpuesto.tasa || 0,
             impuesto_incluido: configImpuesto.incluido ? 1 : 0,
+            // PROPINA (BLOQUE 9). Va APARTE del total: `total` es lo que vendió el
+            // negocio y la propina es dinero del cliente para el empleado. Lo que
+            // se entregó en caja fue `total + propina`, pero eso no es una venta.
+            propina: propinaActual || 0,
+            propina_metodo: propinaActual > 0
+                ? normalizarMetodoPropina(propinaMetodoActual, metodoSeleccionado)
+                : null,
             metodo_pago: metodoSeleccionado,
             tipo_pedido: tipoPedidoActual || 'comer',
             referencia: document.getElementById('pedido-referencia')?.value || '',

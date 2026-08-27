@@ -590,6 +590,112 @@ async function imprimirCuentaMesa() {
 
 // ---- Modal Cobrar ----
 
+// ── PROPINA DE LA MESA (BLOQUE 9) ───────────────────────────────────────────
+// Espejo de la lógica de modulo-venta.js, con su propio estado porque el cobro de
+// mesa es un modal distinto y los dos pueden estar abiertos en momentos distintos.
+// ⚠️ La propina NO entra en el total de la cuenta: la mesa consumió lo que
+// consumió. Lo que el cliente entrega es cuenta + propina.
+let propinaMesaActual = 0;
+let propinaMesaMetodo = null;
+
+function _resetearPropinaMesa() {
+    propinaMesaActual = 0;
+    propinaMesaMetodo = null;
+    const input = document.getElementById('propina-mesa-input');
+    if (input) input.value = '';
+}
+
+/** Total de la mesa que se está cobrando, para calcular los porcentajes. */
+function _totalMesaEnCobro() {
+    if (!_pedidoMesaActivo) return 0;
+    return _desgloseMesa(_parsearItemsMesa(_pedidoMesaActivo.items_raw)).total;
+}
+
+function _renderizarSeccionPropinaMesa(total = _totalMesaEnCobro()) {
+    const seccion = document.getElementById('seccion-propina-mesa');
+    if (!seccion) return;
+
+    if (!hayPropinas()) {
+        seccion.classList.add('hidden');
+        _resetearPropinaMesa();
+        return;
+    }
+    seccion.classList.remove('hidden');
+
+    const contenedor = document.getElementById('propina-mesa-botones');
+    if (contenedor) {
+        const botones = (configPropina.sugerencias || []).map(pct => {
+            const monto = propinaPorPorcentaje(total, pct);
+            const activo = propinaMesaActual > 0 && Math.abs(propinaMesaActual - monto) < 0.005;
+            return `<button type="button" onclick="aplicarPropinaMesaPorcentaje(${pct})"
+                        style="flex:1;min-width:64px;padding:8px 6px;border-radius:8px;cursor:pointer;font-size:0.86em;font-weight:600;
+                               border:2px solid ${activo ? '#16a34a' : '#d1d5db'};
+                               background:${activo ? '#16a34a' : 'white'};color:${activo ? 'white' : '#374151'};">
+                        ${pct}%<br><span style="font-size:0.85em;font-weight:500;opacity:0.85;">${_fmtMesa(monto)}</span>
+                    </button>`;
+        }).join('');
+        const sinPropina = propinaMesaActual <= 0;
+        contenedor.innerHTML = botones + `
+            <button type="button" onclick="quitarPropinaMesa()"
+                    style="flex:1;min-width:64px;padding:8px 6px;border-radius:8px;cursor:pointer;font-size:0.86em;font-weight:600;
+                           border:2px solid ${sinPropina ? '#6b7280' : '#d1d5db'};
+                           background:${sinPropina ? '#6b7280' : 'white'};color:${sinPropina ? 'white' : '#374151'};">
+                    Sin<br><span style="font-size:0.85em;font-weight:500;opacity:0.85;">propina</span>
+            </button>`;
+    }
+    _actualizarDisplayPropinaMesa(total);
+}
+
+function _actualizarDisplayPropinaMesa(total = _totalMesaEnCobro()) {
+    const display = document.getElementById('propina-mesa-monto-display');
+    if (display) display.textContent = _fmtMesa(propinaMesaActual);
+
+    const metodoPago = document.getElementById('cobrar-mesa-metodo')?.value || 'efectivo';
+    const selMetodo = document.getElementById('propina-mesa-metodo');
+    if (selMetodo) {
+        selMetodo.value = normalizarMetodoPropina(propinaMesaMetodo, metodoPago);
+        selMetodo.style.display = propinaMesaActual > 0 ? '' : 'none';
+    }
+
+    const fila = document.getElementById('propina-mesa-entrega');
+    const monto = document.getElementById('propina-mesa-entrega-monto');
+    if (fila && monto) {
+        if (propinaMesaActual > 0) {
+            fila.classList.remove('hidden');
+            monto.textContent = _fmtMesa(totalConPropina(total, propinaMesaActual));
+        } else {
+            fila.classList.add('hidden');
+        }
+    }
+}
+
+function aplicarPropinaMesaPorcentaje(pct) {
+    const total = _totalMesaEnCobro();
+    propinaMesaActual = propinaPorPorcentaje(total, pct);
+    const input = document.getElementById('propina-mesa-input');
+    if (input) input.value = propinaMesaActual > 0 ? propinaMesaActual.toFixed(2) : '';
+    _renderizarSeccionPropinaMesa(total);
+}
+
+function quitarPropinaMesa() {
+    _resetearPropinaMesa();
+    _renderizarSeccionPropinaMesa();
+}
+
+function alCambiarPropinaMesaManual() {
+    const input = document.getElementById('propina-mesa-input');
+    if (!input) return;
+    const limpio = input.value.replace(/[^\d.]/g, '');
+    if (limpio !== input.value) input.value = limpio;
+    propinaMesaActual = normalizarPropina(limpio);
+    _renderizarSeccionPropinaMesa();
+}
+
+function alCambiarMetodoPropinaMesa() {
+    const sel = document.getElementById('propina-mesa-metodo');
+    if (sel) propinaMesaMetodo = sel.value;
+}
+
 async function abrirModalCobrarMesa() {
     if (!_pedidoMesaActivo) return;
     const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
@@ -597,6 +703,9 @@ async function abrirModalCobrarMesa() {
     const total = _desgloseMesa(items).total;
     document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(total);
     document.getElementById('cobrar-mesa-metodo').value = 'efectivo';
+    // La propina arranca en cero en cada cobro: no se hereda de la mesa anterior.
+    _resetearPropinaMesa();
+    _renderizarSeccionPropinaMesa(total);
     document.getElementById('modal-cobrar-mesa').classList.remove('hidden');
 
     // Mostrar puntos a ganar si el sistema está activo
@@ -628,11 +737,17 @@ async function confirmarCobrarMesa() {
     const itemsSnap  = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
     const desgloseSnap = _desgloseMesa(itemsSnap);
     const totalSnap  = desgloseSnap.total;
+    // Propina del cobro (BLOQUE 9). Va APARTE del total: la cuenta es lo que se
+    // consumió y la propina es lo que el cliente dejó de más.
+    const propinaSnap = hayPropinas() ? (propinaMesaActual || 0) : 0;
+    const propinaMetodoSnap = propinaSnap > 0
+        ? normalizarMetodoPropina(propinaMesaMetodo, metodo)
+        : null;
     try {
         if (modoConectado && apiClient && tokenActual) {
-            await apiClient.closeTableOrder(pedidoSnap.id, metodo);
+            await apiClient.closeTableOrder(pedidoSnap.id, metodo, propinaSnap, propinaMetodoSnap);
         } else {
-            await window.api.cerrarPedidoMesa(pedidoSnap.id, metodo);
+            await window.api.cerrarPedidoMesa(pedidoSnap.id, metodo, propinaSnap, propinaMetodoSnap);
 
             // Sincronizar al backend si está conectado (modo local con sync)
             try {
@@ -644,6 +759,10 @@ async function confirmarCobrarMesa() {
                     // que el dueño la haya cambiado con la mesa ya abierta.
                     tax_rate: desgloseSnap.cfg.tasa || 0,
                     tax_included: !!desgloseSnap.cfg.incluido,
+                    // Propina (BLOQUE 9): aparte del total, igual que en la venta
+                    // de mostrador. El backend la descarta si están apagadas.
+                    tip_amount: propinaSnap,
+                    tip_method: propinaMetodoSnap,
                     payment_method: metodo,
                     order_type: 'comer',
                     notes: pedidoSnap.notas_generales || null,
@@ -699,7 +818,8 @@ async function confirmarCobrarMesa() {
         document.querySelector('#modal-cobrar-mesa .modal-header h2').textContent = 'Pago completado';
 
         // Guardar snapshot para imprimir
-        _cobroMesaSnap = { pedido: pedidoSnap, items: itemsSnap, total: totalSnap, metodo };
+        // La propina entra al snapshot para poder imprimirla en el ticket (BLOQUE 9).
+        _cobroMesaSnap = { pedido: pedidoSnap, items: itemsSnap, total: totalSnap, metodo, propina: propinaSnap };
 
         cerrarPanelMesa();
         await cargarVistaMesas();
@@ -740,7 +860,7 @@ function _cerrarCobrarMesaFinal() {
 
 async function imprimirCuentaMesaFinal() {
     if (!_cobroMesaSnap) return;
-    const { pedido, items, total, metodo } = _cobroMesaSnap;
+    const { pedido, items, total, metodo, propina } = _cobroMesaSnap;
     const ajustes = await window.api.obtenerAjustes();
     const negocio = ajustes.nombre_negocio || 'Negocio';
     const impresora = ajustes.impresora || '';
@@ -767,6 +887,8 @@ async function imprimirCuentaMesaFinal() {
         <div class="linea"></div>
         <table>
             <tr><td class="total">TOTAL</td><td style="text-align:right" class="total">${_fmtMesa(total)}</td></tr>
+            ${(propina || 0) > 0 ? `<tr><td>Propina</td><td style="text-align:right">${_fmtMesa(propina)}</td></tr>
+            <tr><td class="total">TOTAL PAGADO</td><td style="text-align:right" class="total">${_fmtMesa(total + propina)}</td></tr>` : ''}
             <tr><td style="color:#555;">Pago</td><td style="text-align:right;color:#555;">${metodosLabel[metodo] || metodo}</td></tr>
         </table>
         <div class="linea"></div>

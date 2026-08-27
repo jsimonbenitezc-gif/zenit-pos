@@ -460,10 +460,17 @@ class APIClient {
         return await this.request(`/orders/${orderId}/items/${itemId}`, { method: 'DELETE' });
     }
 
-    async closeTableOrder(orderId, paymentMethod) {
+    // Cobrar una mesa. El método de pago y la propina se deciden AQUÍ, al cobrar,
+    // no al abrir la mesa (BLOQUE 9). La propina no toca el total del pedido.
+    async closeTableOrder(orderId, paymentMethod, tipAmount = 0, tipMethod = null) {
         return await this.request(`/orders/${orderId}/status`, {
             method: 'PUT',
-            body: { status: 'completado', payment_method: paymentMethod || 'efectivo' }
+            body: {
+                status: 'completado',
+                payment_method: paymentMethod || 'efectivo',
+                tip_amount: tipAmount || 0,
+                tip_method: tipMethod || null
+            }
         });
     }
 

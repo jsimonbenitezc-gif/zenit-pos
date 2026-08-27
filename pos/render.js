@@ -568,6 +568,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // aunque el equipo esté sin internet.
     try { await cargarConfigImpuesto(); } catch(e) { console.error('Error cargarConfigImpuesto:', e); }
 
+    // Propinas (BLOQUE 9): misma razón — el modal de cobro tiene que saber si
+    // debe pedir propina desde la primera venta, con o sin internet.
+    try { await cargarConfigPropina(); } catch(e) { console.error('Error cargarConfigPropina:', e); }
+
     // Sincronizar desde backend si hay sesión activa
     if (modoConectado) {
         subirPedidosPendientes().catch(e => console.warn('subirPendientes:', e));
@@ -800,6 +804,11 @@ async function _sincronizarAjustesDesdeCloud() {
         if (s.tax_enabled !== undefined || s.tax_rate !== undefined || s.tax_included !== undefined || s.tax_name !== undefined) {
             if (typeof _pintarConfigImpuesto === 'function') _pintarConfigImpuesto(s);
         }
+        // Propinas (mismo caso que el impuesto): el dueño las enciende desde el
+        // celular y la caja del local tiene que empezar a pedirlas de inmediato.
+        if (s.propinas_activas !== undefined || s.propina_sugerencias !== undefined) {
+            if (typeof _pintarConfigPropina === 'function') _pintarConfigPropina(s);
+        }
         // Venta sin turno (también sincronizar variable global)
         if (s.venta_sin_turno !== undefined) {
             ventaSinTurno = !(s.venta_sin_turno === false || s.venta_sin_turno === 'false');
@@ -821,6 +830,8 @@ async function _sincronizarAjustesDesdeCloud() {
             movimientos_caja_pin: s.movimientos_caja_pin,
             tax_enabled: s.tax_enabled, tax_rate: s.tax_rate,
             tax_included: s.tax_included, tax_name: s.tax_name,
+            propinas_activas: s.propinas_activas,
+            propina_sugerencias: s.propina_sugerencias === undefined ? undefined : JSON.stringify(s.propina_sugerencias),
         };
         for (const [k, v] of Object.entries(guardables)) {
             if (v !== undefined) window.api.guardarAjuste(k, String(v)).catch(() => {});
@@ -833,6 +844,10 @@ async function _sincronizarAjustesDesdeCloud() {
                     if (typeof renderizarCarrito === 'function' && Array.isArray(carrito) && carrito.length) renderizarCarrito();
                 }).catch(() => {});
             }
+        }
+        // Lo mismo con las propinas: el cobro tiene que reflejar el cambio ya.
+        if (s.propinas_activas !== undefined || s.propina_sugerencias !== undefined) {
+            if (typeof cargarConfigPropina === 'function') cargarConfigPropina().catch(() => {});
         }
         // También actualizar permisos de puestos si el tab está abierto
         // Pasamos los ajustes ya descargados para evitar una segunda llamada a la nube

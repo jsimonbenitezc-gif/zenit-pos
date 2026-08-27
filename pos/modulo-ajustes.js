@@ -1024,6 +1024,7 @@ async function cargarAjustesInstalados() {
         // todos los equipos. Se pinta desde los ajustes LOCALES, así que la caja
         // sabe qué cobra aunque esté sin internet.
         _pintarConfigImpuesto(ajustes);
+        _pintarConfigPropina(ajustes);
 
         // Modo oscuro
         if(ajustes.dark_mode === 'true') {
@@ -1266,6 +1267,18 @@ function agregarListenersGuardadoAjustes() {
         if (el) el.addEventListener('change', _actualizarEjemploImpuesto);
     });
 
+    // Propinas (BLOQUE 9): mismo patrón que el impuesto — apagarlo se guarda de
+    // inmediato (es el estado neutro y no necesita más datos); encenderlo espera
+    // al botón para poder llevarse también los porcentajes sugeridos.
+    const elPropActiva = document.getElementById('adj-propina-activa');
+    if (elPropActiva) {
+        elPropActiva.addEventListener('change', () => {
+            const grupo = document.getElementById('grupo-propinas');
+            if (grupo) grupo.style.display = elPropActiva.checked ? '' : 'none';
+            if (!elPropActiva.checked) guardarConfigPropina({ apagar: true });
+        });
+    }
+
     // Sistema de puntos
     const elPuntosActivos = document.getElementById('aj-puntos-activos');
     if (elPuntosActivos) {
@@ -1383,6 +1396,32 @@ function _pintarConfigImpuesto(ajustes = {}) {
     _actualizarEjemploImpuesto();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PROPINAS (BLOQUE 9) — configuración de la cuenta, solo el dueño
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Pinta la tarjeta de propinas con los ajustes (locales o de la nube). */
+function _pintarConfigPropina(ajustes = {}) {
+    const cfg = leerConfigPropina(ajustes);
+    const elActiva = document.getElementById('adj-propina-activa');
+    const grupo    = document.getElementById('grupo-propinas');
+    const elSug    = document.getElementById('adj-propina-sugerencias');
+    if (!elActiva) return;
+
+    elActiva.checked = cfg.activo;
+    if (grupo) grupo.style.display = cfg.activo ? '' : 'none';
+    if (elSug) elSug.value = cfg.sugerencias.join(', ');
+
+    // Solo el administrador puede tocarlo (el backend además responde 403).
+    const esDueno = (rolActivo === 'dueno');
+    const card = document.getElementById('card-propinas');
+    [elActiva, elSug].forEach(el => { if (el) el.disabled = !esDueno; });
+    if (card) {
+        card.style.opacity = esDueno ? '' : '0.55';
+        card.title = esDueno ? '' : 'Solo el administrador puede cambiar las propinas';
+    }
+}
+
 /**
  * Ejemplo en vivo con un producto de $100. Es la única forma de que "incluido"
  * vs "agregado" se entienda sin explicaciones: se ve qué va a cobrar la caja.
@@ -1455,6 +1494,48 @@ async function guardarConfigImpuesto(opciones = {}) {
     );
 }
 
+/**
+ * Guarda la config de propinas: en la nube (si hay) y SIEMPRE en local.
+ *
+ * Local también, igual que el impuesto: si la caja se queda sin internet tiene
+ * que seguir pidiendo propina, o el efectivo del cajón dejaría de cuadrar con lo
+ * que el corte espera.
+ */
+async function guardarConfigPropina(opciones = {}) {
+    if (rolActivo !== 'dueno') {
+        alertaZenit('Solo el administrador puede cambiar las propinas.', 'Sin permiso');
+        return;
+    }
+
+    const apagar = opciones.apagar === true;
+    // Apagar NO borra los porcentajes: quedan listos para cuando se vuelva a encender.
+    const sugerencias = normalizarSugerenciasPropina(
+        document.getElementById('adj-propina-sugerencias')?.value || ''
+    );
+
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            await apiClient.saveSettings({ propinas_activas: !apagar, propina_sugerencias: sugerencias });
+        } catch (e) {
+            alertaZenit(e?.message || 'No se pudo guardar la configuración de propinas en la nube.', 'Error');
+            return;
+        }
+    }
+    await window.api.guardarAjuste('propinas_activas', apagar ? 'false' : 'true');
+    await window.api.guardarAjuste('propina_sugerencias', JSON.stringify(sugerencias));
+    await cargarConfigPropina();
+
+    // El input se normaliza a lo que realmente quedó guardado, para que el dueño
+    // vea de inmediato si escribió algo que no era un porcentaje válido.
+    const input = document.getElementById('adj-propina-sugerencias');
+    if (input) input.value = sugerencias.join(', ');
+
+    mostrarNotificacionExito(
+        apagar ? 'El cobro deja de pedir propina' : `Propinas activas (${sugerencias.join('%, ')}%)`,
+        'Propinas'
+    );
+}
+
 async function imprimirTicket(pedidoId) {
     try {
         // 1. Obtener datos del pedido
@@ -1518,6 +1599,21 @@ async function imprimirTicket(pedidoId) {
                 `<div class="total-line"><span>${nombre}${tasaTxt}${d.incluido ? ' incluido' : ''}:</span><span>${moneda}${d.impuesto.toFixed(2)}</span></div>`,
             ].filter(Boolean).join('');
             return { filas };
+        })();
+
+        // Propina (BLOQUE 9). Va DESPUÉS del TOTAL, no dentro: el total es lo que
+        // costó la comida y la propina es lo que el cliente dejó de más. Se cierra
+        // con "Total pagado", que es el dinero que realmente entregó.
+        const propinaTicket = (() => {
+            const p = typeof propinaDePedido === 'function'
+                ? propinaDePedido(pedido)
+                : { monto: 0 };
+            if (!p.monto || p.monto <= 0) return '';
+            const totalPagado = (parseFloat(pedido.total) || 0) + p.monto;
+            return [
+                `<div class="total-line"><span>Propina:</span><span>${moneda}${p.monto.toFixed(2)}</span></div>`,
+                `<div class="total-line final"><span>TOTAL PAGADO:</span><span>${moneda}${totalPagado.toFixed(2)}</span></div>`,
+            ].join('');
         })();
 
         // 3. Convertir logo a base64 si existe
@@ -1733,6 +1829,7 @@ async function imprimirTicket(pedidoId) {
                             <span>TOTAL:</span>
                             <span>${moneda}${pedido.total.toFixed(2)}</span>
                         </div>
+                        ${propinaTicket}
                         <div class="total-line">
                             <span>Método de pago:</span>
                             <span>${esc(pedido.metodo_pago || 'N/A')}</span>
