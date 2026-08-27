@@ -1616,6 +1616,27 @@ async function imprimirTicket(pedidoId) {
             ].join('');
         })();
 
+        // Desglose del pago (BLOQUE 10). Solo aparece si la cuenta se repartió
+        // entre varios métodos: en una venta normal sería una línea de ruido.
+        // Es lo que le permite al cliente y al cajero verificar la división.
+        const pagosTicket = (() => {
+            const pagos = typeof pagosDePedido === 'function' ? pagosDePedido(pedido) : [];
+            if (!Array.isArray(pagos) || pagos.length < 2) return '';
+            return '<div class="total-line" style="margin-top:4px;"><span>Pago dividido:</span><span></span></div>'
+                + pagos.map(pago => {
+                    const monto = parseFloat(pago.amount != null ? pago.amount : pago.monto) || 0;
+                    const propina = parseFloat(pago.tip_amount != null ? pago.tip_amount : pago.propina) || 0;
+                    const etiqueta = typeof etiquetaMetodoPago === 'function'
+                        ? etiquetaMetodoPago(pago.method || pago.metodo)
+                        : (pago.method || pago.metodo || 'Efectivo');
+                    // Lo que se entregó en ESE pago es monto + su propina.
+                    const detalle = propina > 0
+                        ? `${moneda}${monto.toFixed(2)} + ${moneda}${propina.toFixed(2)} prop.`
+                        : `${moneda}${monto.toFixed(2)}`;
+                    return `<div class="total-line" style="font-size:0.92em;"><span>&nbsp;&nbsp;${etiqueta}:</span><span>${detalle}</span></div>`;
+                }).join('');
+        })();
+
         // 3. Convertir logo a base64 si existe
         let logoBase64 = '';
         if (mostrarLogo) {
@@ -1830,6 +1851,7 @@ async function imprimirTicket(pedidoId) {
                             <span>${moneda}${pedido.total.toFixed(2)}</span>
                         </div>
                         ${propinaTicket}
+                        ${pagosTicket}
                         <div class="total-line">
                             <span>Método de pago:</span>
                             <span>${esc(pedido.metodo_pago || 'N/A')}</span>

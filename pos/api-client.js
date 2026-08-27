@@ -462,14 +462,19 @@ class APIClient {
 
     // Cobrar una mesa. El método de pago y la propina se deciden AQUÍ, al cobrar,
     // no al abrir la mesa (BLOQUE 9). La propina no toca el total del pedido.
-    async closeTableOrder(orderId, paymentMethod, tipAmount = 0, tipMethod = null) {
+    // `payments` (BLOQUE 10) es el desglose de una cuenta DIVIDIDA. Va null en un
+    // cobro normal y entonces el backend hace lo de siempre: un solo método y
+    // ninguna fila de pago. Si se manda, el backend valida que la suma cuadre con
+    // el total y responde 400 si no — por eso el cliente también lo valida antes.
+    async closeTableOrder(orderId, paymentMethod, tipAmount = 0, tipMethod = null, payments = null) {
         return await this.request(`/orders/${orderId}/status`, {
             method: 'PUT',
             body: {
                 status: 'completado',
                 payment_method: paymentMethod || 'efectivo',
                 tip_amount: tipAmount || 0,
-                tip_method: tipMethod || null
+                tip_method: tipMethod || null,
+                ...(payments ? { payments } : {})
             }
         });
     }
@@ -546,17 +551,20 @@ class APIClient {
         });
     }
 
-    async cancelOrder(orderId, employeeId, pin, employeeName) {
+    // `role` es el PUESTO (cajero, encargado…) y es lo que el backend puede
+    // verificar de verdad: el PIN que teclea el cajero vive en los permisos del
+    // puesto, no en una cuenta. `employeeId` va solo para la auditoría.
+    async cancelOrder(orderId, employeeId, pin, employeeName, role) {
         return await this.request(`/orders/${orderId}/status`, {
             method: 'PUT',
-            body: { status: 'cancelado', employee_id: employeeId, pin, employee_name: employeeName }
+            body: { status: 'cancelado', employee_id: employeeId, pin, employee_name: employeeName, role }
         });
     }
 
-    async updateCustomerWithPin(id, data, employeeId, pin, employeeName) {
+    async updateCustomerWithPin(id, data, employeeId, pin, employeeName, role) {
         return await this.request(`/customers/${id}`, {
             method: 'PUT',
-            body: { ...data, employee_id: employeeId, pin, employee_name: employeeName }
+            body: { ...data, employee_id: employeeId, pin, employee_name: employeeName, role }
         });
     }
 

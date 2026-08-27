@@ -370,6 +370,10 @@ async function subirPedidosPendientes() {
         for (const pedido of pendientes) {
             try {
                 const items = await window.api.obtenerItemsPedido(pedido.id);
+                // Pagos divididos (BLOQUE 10). Si la venta se cobró con varios
+                // métodos, el reparto sube con ella; sin él, el backend la
+                // clasificaría entera por su metodo_pago y el corte no cuadraría.
+                const pagosLocales = await window.api.obtenerPagosPedido(pedido.id).catch(() => []);
                 const datosAPI = {
                     customer_id: pedido.cliente_id || null,
                     customer_temp_info: pedido.info_cliente_temp || null,
@@ -410,6 +414,19 @@ async function subirPedidosPendientes() {
                     // venta en la cola (cae a 0 y la venta se registra igual).
                     tip_amount: pedido.propina || 0,
                     tip_method: pedido.propina_metodo || null,
+                    // Reparto por método (BLOQUE 10). Solo se manda si hay más de un
+                    // pago o si el desglose lleva propinas propias: una venta simple
+                    // no necesita filas y sube exactamente como antes del bloque.
+                    // El backend lo revalida contra el total y, si no cuadra, lo
+                    // DESCARTA en vez de rechazar la venta (es diferida) — así una
+                    // venta nunca se queda atascada en la cola por el reparto.
+                    ...(Array.isArray(pagosLocales) && pagosLocales.length > 0 ? {
+                        payments: pagosLocales.map(p => ({
+                            method: p.metodo,
+                            amount: p.monto,
+                            tip_amount: p.propina || 0,
+                        })),
+                    } : {}),
                     // La venta YA se concretó localmente; no dejar que un aviso de
                     // stock del backend bloquee su subida (evita marcarla como
                     // sincronizada sin haberse creado en el backend).

@@ -253,6 +253,24 @@ function inicializarTablas() {
     // empleado que solo pasa por la caja. Lo que se entregó fue total + propina.
     db.run("ALTER TABLE pedidos ADD COLUMN propina REAL DEFAULT 0", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN propina_metodo TEXT", () => {});
+
+    // Pagos divididos (BLOQUE 10). Los pagos REPARTEN el total del pedido, no lo
+    // aumentan: SUM(monto) = pedidos.total. Un pedido SIN filas aquí es un pedido
+    // de un solo método (todos los anteriores al bloque) y su `metodo_pago` sigue
+    // siendo la verdad — por eso no hay nada que migrar.
+    // ⚠️ `fecha` sin DEFAULT CURRENT_TIMESTAMP: en SQLite eso es UTC y esta base
+    // compara todo en hora local (CLAUDE.md §26). Se escribe con datetime('now','localtime').
+    db.run(`CREATE TABLE IF NOT EXISTS pagos_pedido (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pedido_id INTEGER NOT NULL,
+        metodo TEXT NOT NULL,
+        monto REAL NOT NULL,
+        propina REAL DEFAULT 0,
+        item_ids TEXT,
+        fecha DATETIME,
+        FOREIGN KEY (pedido_id) REFERENCES pedidos(id)
+    )`);
+    db.run('CREATE INDEX IF NOT EXISTS idx_pagos_pedido ON pagos_pedido(pedido_id)', () => {});
     db.run("ALTER TABLE clientes ADD COLUMN puntos INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN en_fidelidad INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE promociones ADD COLUMN requires_pin INTEGER DEFAULT 0", () => {});
@@ -571,6 +589,26 @@ async function crearPedido(datos, items, callback, opciones) {
         ]);
         const pedidoId = resultadoPedido.lastID;
 
+        // PAGOS DIVIDIDOS (BLOQUE 10). Van en la MISMA transacción que la venta:
+        // un pedido cuyo reparto se perdiera a medias descuadraría el corte de
+        // caja sin que nadie pudiera notarlo.
+        if (Array.isArray(datos.pagos) && datos.pagos.length > 0) {
+            for (const pago of datos.pagos) {
+                await runAsync(
+                    `INSERT INTO pagos_pedido (pedido_id, metodo, monto, propina, item_ids, fecha)
+                     VALUES (?, ?, ?, ?, ?, datetime('now','localtime'))`,
+                    [
+                        pedidoId,
+                        pago.metodo || pago.method || 'efectivo',
+                        pago.monto != null ? pago.monto : pago.amount,
+                        pago.propina != null ? pago.propina : (pago.tip_amount || 0),
+                        Array.isArray(pago.item_ids) && pago.item_ids.length
+                            ? JSON.stringify(pago.item_ids) : null,
+                    ]
+                );
+            }
+        }
+
         for (const item of items) {
             await runAsync(
                 'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item) VALUES (?, ?, ?, ?, ?, ?)',
@@ -593,6 +631,18 @@ async function crearPedido(datos, items, callback, opciones) {
     }
 }
 
+/**
+ * Pagos de un pedido (BLOQUE 10). Los usa el sync para mandarle el reparto al
+ * backend y el ticket para imprimir cómo se dividió la cuenta.
+ */
+function obtenerPagosPedido(pedidoId, callback) {
+    db.all(
+        'SELECT * FROM pagos_pedido WHERE pedido_id = ? ORDER BY id',
+        [pedidoId],
+        callback
+    );
+}
+
 function obtenerPedidos(filtro, callback) {
     const limite = Math.min(Math.max(parseInt((filtro && (filtro.limite || filtro.limit)) || 50), 1), 200);
     const pagina = Math.max(parseInt((filtro && (filtro.pagina || filtro.page)) || 1), 1);
@@ -612,9 +662,23 @@ function obtenerPedidos(filtro, callback) {
         SELECT
             COUNT(*) as total_pedidos,
             COALESCE(SUM(p.total), 0) as total_ventas,
-            COALESCE(SUM(CASE WHEN p.metodo_pago = 'efectivo' THEN p.total ELSE 0 END), 0) as efectivo,
-            COALESCE(SUM(CASE WHEN p.metodo_pago IN ('tarjeta','debito','credito') THEN p.total ELSE 0 END), 0) as tarjeta,
-            COALESCE(SUM(CASE WHEN p.metodo_pago = 'transferencia' THEN p.total ELSE 0 END), 0) as transferencia
+            -- BLOQUE 10: un pedido dividido se reparte por sus pagos reales; uno
+            -- sin pagos entra entero por su metodo, como antes del bloque.
+            COALESCE(SUM(CASE
+                WHEN EXISTS (SELECT 1 FROM pagos_pedido pp WHERE pp.pedido_id = p.id)
+                    THEN (SELECT COALESCE(SUM(pp.monto), 0) FROM pagos_pedido pp
+                          WHERE pp.pedido_id = p.id AND pp.metodo = 'efectivo')
+                WHEN p.metodo_pago = 'efectivo' THEN p.total ELSE 0 END), 0) as efectivo,
+            COALESCE(SUM(CASE
+                WHEN EXISTS (SELECT 1 FROM pagos_pedido pp WHERE pp.pedido_id = p.id)
+                    THEN (SELECT COALESCE(SUM(pp.monto), 0) FROM pagos_pedido pp
+                          WHERE pp.pedido_id = p.id AND pp.metodo IN ('tarjeta','debito','credito'))
+                WHEN p.metodo_pago IN ('tarjeta','debito','credito') THEN p.total ELSE 0 END), 0) as tarjeta,
+            COALESCE(SUM(CASE
+                WHEN EXISTS (SELECT 1 FROM pagos_pedido pp WHERE pp.pedido_id = p.id)
+                    THEN (SELECT COALESCE(SUM(pp.monto), 0) FROM pagos_pedido pp
+                          WHERE pp.pedido_id = p.id AND pp.metodo = 'transferencia')
+                WHEN p.metodo_pago = 'transferencia' THEN p.total ELSE 0 END), 0) as transferencia
         FROM pedidos p ${whereSql}
     `;
     const sql = `
@@ -643,6 +707,11 @@ function obtenerPedidos(filtro, callback) {
             p.propina_metodo,
             p.descuento_monto,
             p.metodo_pago,
+            -- Reparto por metodo (BLOQUE 10). Se agrega como texto
+            -- "metodo|monto|propina;;..." porque SQLite no tiene JSON_AGG; el
+            -- cliente lo parsea con _parsearPagosPedido. Vacio = pago simple.
+            (SELECT GROUP_CONCAT(pp.metodo || '|' || pp.monto || '|' || COALESCE(pp.propina, 0), ';;')
+               FROM pagos_pedido pp WHERE pp.pedido_id = p.id) as pagos_raw,
             p.estado,
             p.fecha_pedido as fecha
         FROM pedidos p
@@ -1333,9 +1402,25 @@ function calcularTotalesTurno(fechaApertura, cb) {
         SELECT
             COUNT(*) as total_pedidos,
             COALESCE(SUM(total), 0) as total_ventas,
-            COALESCE(SUM(CASE WHEN metodo_pago = 'efectivo' THEN total ELSE 0 END), 0) as total_efectivo,
-            COALESCE(SUM(CASE WHEN metodo_pago IN ('debito','credito','tarjeta') THEN total ELSE 0 END), 0) as total_tarjeta,
-            COALESCE(SUM(CASE WHEN metodo_pago = 'transferencia' THEN total ELSE 0 END), 0) as total_transferencia,
+            -- BLOQUE 10: un pedido con pagos divididos se reparte por su desglose
+            -- real; uno sin pagos entra entero por su metodo_pago, como siempre.
+            -- Sin esto, una venta mitad efectivo / mitad tarjeta le exigiría al
+            -- cajero un efectivo que nunca entró al cajón.
+            COALESCE(SUM(CASE
+                WHEN EXISTS (SELECT 1 FROM pagos_pedido pp WHERE pp.pedido_id = pedidos.id)
+                    THEN (SELECT COALESCE(SUM(pp.monto), 0) FROM pagos_pedido pp
+                          WHERE pp.pedido_id = pedidos.id AND pp.metodo = 'efectivo')
+                WHEN metodo_pago = 'efectivo' THEN total ELSE 0 END), 0) as total_efectivo,
+            COALESCE(SUM(CASE
+                WHEN EXISTS (SELECT 1 FROM pagos_pedido pp WHERE pp.pedido_id = pedidos.id)
+                    THEN (SELECT COALESCE(SUM(pp.monto), 0) FROM pagos_pedido pp
+                          WHERE pp.pedido_id = pedidos.id AND pp.metodo IN ('debito','credito','tarjeta'))
+                WHEN metodo_pago IN ('debito','credito','tarjeta') THEN total ELSE 0 END), 0) as total_tarjeta,
+            COALESCE(SUM(CASE
+                WHEN EXISTS (SELECT 1 FROM pagos_pedido pp WHERE pp.pedido_id = pedidos.id)
+                    THEN (SELECT COALESCE(SUM(pp.monto), 0) FROM pagos_pedido pp
+                          WHERE pp.pedido_id = pedidos.id AND pp.metodo = 'transferencia')
+                WHEN metodo_pago = 'transferencia' THEN total ELSE 0 END), 0) as total_transferencia,
             -- BLOQUE 8: el impuesto va DENTRO del total cobrado, así que no cambia
             -- el efectivo esperado; es informativo para el administrador.
             COALESCE(SUM(impuesto), 0) as total_impuesto,
@@ -1344,10 +1429,26 @@ function calcularTotalesTurno(fechaApertura, cb) {
             -- negocio) y se separan por método porque solo la de efectivo está en
             -- el cajón. La columna propina_metodo es NULL en los pedidos sin propina
             -- y en los anteriores al bloque, así que hereda el método del pago.
+            -- BLOQUE 10: con pagos divididos, cada pago lleva SU propina, así que
+            -- propina_metodo (que solo alcanza para una) deja de ser la verdad.
+            -- Una propina en efectivo dejada sobre una cuenta pagada con tarjeta
+            -- tiene que entrar al cajón, o volvería a aparecer como sobrante.
             COALESCE(SUM(propina), 0) as total_propinas,
-            COALESCE(SUM(CASE WHEN COALESCE(propina_metodo, metodo_pago) = 'efectivo' THEN propina ELSE 0 END), 0) as total_propinas_efectivo,
-            COALESCE(SUM(CASE WHEN COALESCE(propina_metodo, metodo_pago) IN ('debito','credito','tarjeta') THEN propina ELSE 0 END), 0) as total_propinas_tarjeta,
-            COALESCE(SUM(CASE WHEN COALESCE(propina_metodo, metodo_pago) = 'transferencia' THEN propina ELSE 0 END), 0) as total_propinas_transferencia
+            COALESCE(SUM(CASE
+                WHEN EXISTS (SELECT 1 FROM pagos_pedido pp WHERE pp.pedido_id = pedidos.id)
+                    THEN (SELECT COALESCE(SUM(pp.propina), 0) FROM pagos_pedido pp
+                          WHERE pp.pedido_id = pedidos.id AND pp.metodo = 'efectivo')
+                WHEN COALESCE(propina_metodo, metodo_pago) = 'efectivo' THEN propina ELSE 0 END), 0) as total_propinas_efectivo,
+            COALESCE(SUM(CASE
+                WHEN EXISTS (SELECT 1 FROM pagos_pedido pp WHERE pp.pedido_id = pedidos.id)
+                    THEN (SELECT COALESCE(SUM(pp.propina), 0) FROM pagos_pedido pp
+                          WHERE pp.pedido_id = pedidos.id AND pp.metodo IN ('debito','credito','tarjeta'))
+                WHEN COALESCE(propina_metodo, metodo_pago) IN ('debito','credito','tarjeta') THEN propina ELSE 0 END), 0) as total_propinas_tarjeta,
+            COALESCE(SUM(CASE
+                WHEN EXISTS (SELECT 1 FROM pagos_pedido pp WHERE pp.pedido_id = pedidos.id)
+                    THEN (SELECT COALESCE(SUM(pp.propina), 0) FROM pagos_pedido pp
+                          WHERE pp.pedido_id = pedidos.id AND pp.metodo = 'transferencia')
+                WHEN COALESCE(propina_metodo, metodo_pago) = 'transferencia' THEN propina ELSE 0 END), 0) as total_propinas_transferencia
         FROM pedidos
         WHERE fecha_pedido >= ? AND estado != 'cancelado'
     `, [fechaApertura], cb);
@@ -1961,6 +2062,7 @@ module.exports = {
     syncCombos,
     obtenerPedidosPendientes,
     obtenerItemsPedido,
+    obtenerPagosPedido,
     marcarPedidoSincronizado,
     calcularAlertas,
     syncPedidos,

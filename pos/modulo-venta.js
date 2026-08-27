@@ -584,10 +584,189 @@ async function procesarVenta() {
     actualizarPanelPuntosVenta(); // Refrescar panel de puntos en caso de que el cliente esté en fidelidad
 
     resetearModalPago();
-    // La propina arranca en cero en cada venta: nunca se hereda de la anterior.
+    // El pago dividido y la propina arrancan en cero en cada venta: nunca se
+    // heredan de la anterior (un reparto viejo cobraría mal la venta nueva).
+    _resetearPagoDividido();
     _resetearPropinaVenta();
     _renderizarSeccionPropina();
     document.getElementById('modalPago').classList.remove('hidden');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PAGO DIVIDIDO (BLOQUE 10)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Los pagos REPARTEN el total, no lo aumentan: mientras la suma no cuadre con la
+// cuenta, el botón de confirmar queda bloqueado. La propina de cada pago va
+// aparte de su monto (lo que el cliente entrega en ese pago es monto + propina),
+// así que NO cuenta para el cuadre — igual que en el backend.
+//
+// Arranca apagado: la venta normal de un solo método sigue siendo de dos clics.
+
+let pagoDividido = false;
+let pagosVenta = [];   // [{ method, amount, tip_amount }]
+
+/** Apaga el pago dividido y limpia sus filas. Se llama al abrir y al cerrar. */
+function _resetearPagoDividido() {
+    pagoDividido = false;
+    pagosVenta = [];
+    const seccion = document.getElementById('seccion-pago-dividido');
+    if (seccion) seccion.classList.add('hidden');
+    const btn = document.getElementById('btn-dividir-pago');
+    if (btn) btn.innerText = 'Dividir el pago entre varios métodos';
+}
+
+function alternarPagoDividido() {
+    pagoDividido = !pagoDividido;
+    const seccion = document.getElementById('seccion-pago-dividido');
+    const btn = document.getElementById('btn-dividir-pago');
+
+    if (pagoDividido) {
+        // Se arranca con dos filas porque dividir en una sola no es dividir.
+        if (pagosVenta.length === 0) dividirCuentaEnPartes(2);
+        if (seccion) seccion.classList.remove('hidden');
+        if (btn) btn.innerText = 'Cancelar el pago dividido';
+    } else {
+        pagosVenta = [];
+        if (seccion) seccion.classList.add('hidden');
+        if (btn) btn.innerText = 'Dividir el pago entre varios métodos';
+    }
+    _renderizarPagosDivididos();
+    _actualizarBotonConfirmar();
+}
+
+/** Divide la cuenta en N partes iguales, repartiendo los centavos sobrantes. */
+function dividirCuentaEnPartes(n) {
+    const montos = dividirEnPartes(_totalACobrar(), n);
+    // La primera parte hereda el método ya elegido; el resto arranca en efectivo
+    // para que el cajero solo cambie lo que de verdad cambió.
+    pagosVenta = montos.map((monto, i) => ({
+        method: i === 0 ? (metodoSeleccionado || 'efectivo') : 'efectivo',
+        amount: monto,
+        tip_amount: 0,
+    }));
+    _renderizarPagosDivididos();
+    _actualizarBotonConfirmar();
+}
+
+function agregarPagoDividido() {
+    if (pagosVenta.length >= PAGO_MAX) {
+        alertaZenit('Una venta admite como máximo ' + PAGO_MAX + ' pagos.');
+        return;
+    }
+    // El pago nuevo arranca con lo que falte, que es lo que el cajero va a teclear
+    // el 90% de las veces.
+    const falta = faltantePago(pagosVenta, _totalACobrar());
+    pagosVenta.push({ method: 'efectivo', amount: falta > 0 ? falta : 0, tip_amount: 0 });
+    _renderizarPagosDivididos();
+    _actualizarBotonConfirmar();
+}
+
+function quitarPagoDividido(indice) {
+    pagosVenta.splice(indice, 1);
+    if (pagosVenta.length === 0) { alternarPagoDividido(); return; }
+    _renderizarPagosDivididos();
+    _actualizarBotonConfirmar();
+}
+
+function alCambiarPagoDividido(indice, campo, valor) {
+    if (!pagosVenta[indice]) return;
+    if (campo === 'method') {
+        pagosVenta[indice].method = metodoDePago(valor);
+    } else {
+        const limpio = String(valor || '').replace(/[^\d.]/g, '');
+        pagosVenta[indice][campo] = parseFloat(limpio) || 0;
+    }
+    _actualizarResumenPagosDivididos();
+    _actualizarBotonConfirmar();
+}
+
+function _renderizarPagosDivididos() {
+    const cont = document.getElementById('lista-pagos-divididos');
+    if (!cont) return;
+
+    // La columna de propina solo aparece si el negocio tiene propinas activas
+    // (mismo criterio que el resto del BLOQUE 9: si no las usa, no las ve).
+    const conPropina = hayPropinas();
+
+    cont.innerHTML = pagosVenta.map((pago, i) => {
+        const inputPropina = conPropina
+            ? '<input type="text" inputmode="decimal" value="' + ((pago.tip_amount || 0) > 0 ? pago.tip_amount.toFixed(2) : '') + '"' +
+              ' oninput="alCambiarPagoDividido(' + i + ', \'tip_amount\', this.value)"' +
+              ' placeholder="Propina" title="Propina de este pago. Va aparte del monto."' +
+              ' style="flex:0.9;padding:8px;border:1px solid #bbf7d0;border-radius:8px;font-size:0.88em;text-align:right;background:#f0fdf4;">'
+            : '';
+        return '<div style="display:flex;gap:6px;align-items:center;">' +
+            '<select onchange="alCambiarPagoDividido(' + i + ', \'method\', this.value)"' +
+            ' style="flex:1.2;padding:8px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;">' +
+                '<option value="efectivo"' + (pago.method === 'efectivo' ? ' selected' : '') + '>Efectivo</option>' +
+                '<option value="tarjeta"' + (pago.method === 'tarjeta' ? ' selected' : '') + '>Tarjeta</option>' +
+                '<option value="transferencia"' + (pago.method === 'transferencia' ? ' selected' : '') + '>Transferencia</option>' +
+            '</select>' +
+            '<input type="text" inputmode="decimal" value="' + (pago.amount || 0).toFixed(2) + '"' +
+            ' oninput="alCambiarPagoDividido(' + i + ', \'amount\', this.value)" placeholder="Monto"' +
+            ' style="flex:1;padding:8px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;text-align:right;">' +
+            inputPropina +
+            '<button type="button" onclick="quitarPagoDividido(' + i + ')" title="Quitar este pago"' +
+            ' style="padding:8px 10px;border:none;border-radius:8px;background:#fee2e2;color:#b91c1c;font-weight:700;cursor:pointer;">×</button>' +
+        '</div>';
+    }).join('');
+
+    _actualizarResumenPagosDivididos();
+}
+
+function _actualizarResumenPagosDivididos() {
+    const total = _totalACobrar();
+    const falta = faltantePago(pagosVenta, total);
+
+    const elTotal = document.getElementById('pago-dividido-total');
+    if (elTotal) elTotal.innerText = '$' + total.toFixed(2);
+
+    const elFalta = document.getElementById('pago-dividido-faltante');
+    if (elFalta) {
+        if (Math.abs(falta) <= PAGO_TOLERANCIA + 1e-9) {
+            elFalta.innerText = 'Cuadra ✓';
+            elFalta.style.color = '#16a34a';
+        } else if (falta > 0) {
+            elFalta.innerText = 'Falta $' + falta.toFixed(2);
+            elFalta.style.color = '#1e40af';
+        } else {
+            elFalta.innerText = 'Sobra $' + Math.abs(falta).toFixed(2);
+            elFalta.style.color = '#dc2626';
+        }
+    }
+
+    // La propina total de la venta pasa a ser la suma de las de cada pago.
+    if (pagoDividido) {
+        propinaActual = _redondearVenta(pagosVenta.reduce((a, p) => a + (parseFloat(p.tip_amount) || 0), 0));
+        _actualizarDisplayPropina();
+    }
+}
+
+function _redondearVenta(n) {
+    return parseFloat((Math.round((n + Number.EPSILON) * 100) / 100).toFixed(2));
+}
+
+/**
+ * Habilita el botón de confirmar solo si el cobro está completo.
+ * Con pago dividido manda el cuadre; sin él, la regla de siempre (efectivo pide
+ * que el recibido alcance, los demás métodos no).
+ */
+function _actualizarBotonConfirmar() {
+    const btn = document.getElementById('btn-confirmar-final');
+    if (!btn) return;
+
+    if (pagoDividido) {
+        const ok = pagosVenta.length > 0 && pagosCuadran(pagosVenta, _totalACobrar());
+        btn.classList.toggle('disabled', !ok);
+        btn.disabled = !ok;
+        return;
+    }
+    if (metodoSeleccionado === 'efectivo') { calcularCambio(); return; }
+    if (metodoSeleccionado) {
+        btn.classList.remove('disabled');
+        btn.disabled = false;
+    }
 }
 
 // --- SELECCIONAR MÉTODO DE PAGO ---
@@ -658,9 +837,15 @@ function calcularCambio() {
 
 // --- EJECUTAR VENTA (CONFIRMAR Y REGISTRAR) ---
 async function ejecutarVenta() {
-    if (!metodoSeleccionado) {
+    // Con pago dividido el método sale del reparto ('multiple' si hay varios),
+    // así que no hace falta haber elegido uno de los tres botones.
+    if (!metodoSeleccionado && !pagoDividido) {
         alertaZenit('Selecciona un método de pago');
         return;
+    }
+    if (pagoDividido) {
+        const v = validarPagos(pagosVenta, _totalACobrar());
+        if (!v.ok) { alertaZenit(v.error); return; }
     }
 
     if (tipoPedidoActual === 'domicilio') {
@@ -716,7 +901,19 @@ async function ejecutarVenta() {
             propina_metodo: propinaActual > 0
                 ? normalizarMetodoPropina(propinaMetodoActual, metodoSeleccionado)
                 : null,
-            metodo_pago: metodoSeleccionado,
+            // PAGOS DIVIDIDOS (BLOQUE 10). Con varios métodos el pedido se guarda
+            // como 'multiple' y el reparto real viaja en `pagos`; con uno solo se
+            // guarda ese método y no se crea ninguna fila (venta de siempre).
+            metodo_pago: pagoDividido
+                ? metodoResumenPagos(pagosVenta)
+                : metodoSeleccionado,
+            pagos: pagoDividido
+                ? pagosVenta.map(pago => ({
+                    metodo: pago.method,
+                    monto: pago.amount,
+                    propina: pago.tip_amount || 0,
+                }))
+                : null,
             tipo_pedido: tipoPedidoActual || 'comer',
             referencia: document.getElementById('pedido-referencia')?.value || '',
             direccion_domicilio: document.getElementById('dom-direccion')?.value || '',

@@ -2019,6 +2019,43 @@
             </button>
         </div>
 
+        <!-- PAGO DIVIDIDO (BLOQUE 10). Va justo debajo de los métodos porque es
+             una alternativa a elegir UNO: o se paga con un método, o se reparte.
+             Arranca cerrado para que la venta normal siga siendo de dos clics. -->
+        <div style="margin: 10px 0;">
+            <button type="button" id="btn-dividir-pago" class="btn-secundario" onclick="alternarPagoDividido()"
+                    style="width:100%;padding:9px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;color:#475569;font-size:0.9em;font-weight:600;cursor:pointer;">
+                Dividir el pago entre varios métodos
+            </button>
+        </div>
+
+        <div id="seccion-pago-dividido" class="hidden" style="margin: 15px 0; padding: 14px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <span style="font-weight:600;color:#1e40af;font-size:0.92em;">Pago dividido</span>
+                <span id="pago-dividido-faltante" style="font-weight:700;color:#1e40af;">Falta $0.00</span>
+            </div>
+
+            <!-- Atajos: dividir la cuenta en partes iguales. Lo que más se pide. -->
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
+                <span style="font-size:0.82em;color:#475569;">Partes iguales:</span>
+                <button type="button" class="btn-chip" onclick="dividirCuentaEnPartes(2)" style="padding:5px 12px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;color:#1e40af;font-size:0.85em;cursor:pointer;">2</button>
+                <button type="button" class="btn-chip" onclick="dividirCuentaEnPartes(3)" style="padding:5px 12px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;color:#1e40af;font-size:0.85em;cursor:pointer;">3</button>
+                <button type="button" class="btn-chip" onclick="dividirCuentaEnPartes(4)" style="padding:5px 12px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;color:#1e40af;font-size:0.85em;cursor:pointer;">4</button>
+            </div>
+
+            <div id="lista-pagos-divididos" style="display:flex;flex-direction:column;gap:8px;"></div>
+
+            <button type="button" onclick="agregarPagoDividido()"
+                    style="margin-top:10px;width:100%;padding:8px;border:1px dashed #93c5fd;border-radius:8px;background:#fff;color:#1e40af;font-size:0.88em;font-weight:600;cursor:pointer;">
+                + Agregar otro pago
+            </button>
+
+            <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #bfdbfe;display:flex;justify-content:space-between;font-size:0.85em;color:#1e40af;">
+                <span>Cuenta:</span>
+                <span id="pago-dividido-total">$0.00</span>
+            </div>
+        </div>
+
         <!-- PROPINA (BLOQUE 9). Va DESPUÉS del método de pago porque el porcentaje
              se calcula sobre el total y porque la propina puede cobrarse por un
              método distinto (cuenta con tarjeta, propina en efectivo).
@@ -2416,6 +2453,7 @@
 <script src="modulo-wrappers.js"></script>
 <script src="modulo-impuestos.js"></script>
 <script src="modulo-propinas.js"></script>
+<script src="modulo-pagos.js"></script>
 <script src="modulo-dashboard.js"></script>
 <script src="modulo-productos.js"></script>
 <script src="modulo-venta.js"></script>
@@ -2839,6 +2877,61 @@
                     <option value="transferencia">Transferencia</option>
                 </select>
             </div>
+            <!-- DIVIDIR LA CUENTA (BLOQUE 10). Es lo que más se pide en una mesa:
+                 varios comensales que pagan cada quien lo suyo. Arranca cerrado
+                 para no estorbarle a la mesa que paga de una sola forma. -->
+            <div style="margin-top:12px;">
+                <button type="button" id="btn-dividir-mesa" onclick="alternarDivisionMesa()"
+                        style="width:100%;padding:9px;border:1px dashed #cbd5e1;border-radius:10px;background:#f8fafc;color:#475569;font-size:0.9em;font-weight:600;cursor:pointer;">
+                    Dividir la cuenta
+                </button>
+            </div>
+
+            <div id="seccion-division-mesa" class="hidden" style="margin-top:12px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <span style="font-weight:600;color:#1e40af;font-size:0.92em;">División de la cuenta</span>
+                    <span id="division-mesa-faltante" style="font-weight:700;color:#1e40af;">Falta $0.00</span>
+                </div>
+
+                <!-- Dos formas de dividir. Por items es la que pidió el dueño del
+                     producto; partes iguales es el atajo de siempre. -->
+                <div style="display:flex;gap:6px;margin-bottom:12px;">
+                    <button type="button" id="tab-division-items" onclick="cambiarModoDivisionMesa('items')"
+                            style="flex:1;padding:7px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;color:#1e40af;font-size:0.85em;font-weight:600;cursor:pointer;">Por items</button>
+                    <button type="button" id="tab-division-partes" onclick="cambiarModoDivisionMesa('partes')"
+                            style="flex:1;padding:7px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;color:#1e40af;font-size:0.85em;font-weight:600;cursor:pointer;">Partes iguales</button>
+                </div>
+
+                <!-- POR PARTES IGUALES -->
+                <div id="division-mesa-partes" class="hidden" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+                    <span style="font-size:0.82em;color:#475569;">Entre:</span>
+                    <button type="button" onclick="dividirMesaEnPartes(2)" style="padding:5px 12px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;color:#1e40af;font-size:0.85em;cursor:pointer;">2</button>
+                    <button type="button" onclick="dividirMesaEnPartes(3)" style="padding:5px 12px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;color:#1e40af;font-size:0.85em;cursor:pointer;">3</button>
+                    <button type="button" onclick="dividirMesaEnPartes(4)" style="padding:5px 12px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;color:#1e40af;font-size:0.85em;cursor:pointer;">4</button>
+                    <button type="button" onclick="dividirMesaEnPartes(5)" style="padding:5px 12px;border:1px solid #bfdbfe;border-radius:8px;background:#fff;color:#1e40af;font-size:0.85em;cursor:pointer;">5</button>
+                </div>
+
+                <!-- POR ITEMS: cada renglón de la cuenta se asigna a un pago. -->
+                <div id="division-mesa-items" class="hidden" style="margin-bottom:12px;">
+                    <div style="font-size:0.8em;color:#475569;margin-bottom:8px;">
+                        Asigna cada producto a quien lo paga. Los montos se calculan solos.
+                    </div>
+                    <div id="lista-items-division" style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto;"></div>
+                </div>
+
+                <div id="lista-pagos-mesa" style="display:flex;flex-direction:column;gap:8px;"></div>
+
+                <button type="button" onclick="agregarPagoMesa()"
+                        style="margin-top:10px;width:100%;padding:8px;border:1px dashed #93c5fd;border-radius:8px;background:#fff;color:#1e40af;font-size:0.88em;font-weight:600;cursor:pointer;">
+                    + Agregar otro pago
+                </button>
+
+                <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #bfdbfe;display:flex;justify-content:space-between;font-size:0.85em;color:#1e40af;">
+                    <span>Cuenta:</span>
+                    <span id="division-mesa-total">$0.00</span>
+                </div>
+            </div>
+
             <!-- Propina de la mesa (BLOQUE 9). Se deja al cobrar, no al abrir la
                  mesa. No entra en la cuenta: es lo que el cliente da de más. -->
             <div id="seccion-propina-mesa" class="hidden" style="margin-top:14px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;">
@@ -2866,7 +2959,7 @@
         </div>
         <div class="modal-footer">
             <button class="btn-secondary" onclick="cerrarModalCobrarMesa()">Cancelar</button>
-            <button class="btn-primary" onclick="confirmarCobrarMesa()">Cobrar</button>
+            <button class="btn-primary" id="btn-confirmar-cobrar-mesa" onclick="confirmarCobrarMesa()">Cobrar</button>
         </div>
     </div>
 </div>

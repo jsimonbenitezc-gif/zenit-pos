@@ -702,6 +702,9 @@ ipcMain.handle('obtener-pedidos-pendientes', () => {
 ipcMain.handle('obtener-items-pedido', (_, id) => {
     return new Promise((res, rej) => db.obtenerItemsPedido(id, (err, rows) => err ? rej(err) : res(rows)));
 });
+ipcMain.handle('obtener-pagos-pedido', (_, id) => {
+    return new Promise((res, rej) => db.obtenerPagosPedido(id, (err, rows) => err ? rej(err) : res(rows)));
+});
 ipcMain.handle('marcar-pedido-sincronizado', (_, id) => {
     return new Promise((res, rej) => db.marcarPedidoSincronizado(id, (err) => err ? rej(err) : res(true)));
 });

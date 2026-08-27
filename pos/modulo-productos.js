@@ -248,6 +248,67 @@ async function guardarCategoria() {
     }
 }
 
+/**
+ * Borra un producto del catálogo (botón de la papelera en Productos).
+ *
+ * ⚠️ ESTA FUNCIÓN FALTABA. El botón la llamaba desde su `onclick` y no existía
+ * en ningún archivo, así que borrar un producto no hacía absolutamente nada
+ * (ReferenceError silencioso en la consola).
+ *
+ * El borrado es LÓGICO (`activo = 0`), no físico: los pedidos viejos siguen
+ * apuntando a ese producto y su historial tiene que seguir leyéndose.
+ */
+async function eliminarProductoAdmin(id, nombre) {
+    const ok = await confirmarZenit(
+        `"${nombre}" dejará de aparecer en la pantalla de venta. Los pedidos que ya lo incluyen no se tocan.`,
+        '¿Eliminar este producto?',
+        { textoOk: 'Eliminar', textoCancelar: 'Cancelar', peligro: true }
+    );
+    if (!ok) return;
+
+    try {
+        await eliminarProductoWrapper(id);
+        mostrarNotificacionExito(`"${nombre}" ya no aparece en la venta`, '¡Producto Eliminado!');
+        cargarProductosAdmin();
+    } catch (e) {
+        console.error(e);
+        alertaZenit('No se pudo eliminar el producto. ' + (e?.message || ''), 'Error');
+    }
+}
+
+/**
+ * Borra una categoría (botón de la papelera junto al nombre de la categoría).
+ *
+ * ⚠️ ESTA FUNCIÓN TAMBIÉN FALTABA — mismo caso que `eliminarProductoAdmin`.
+ *
+ * Los productos de la categoría NO se borran: se quedan sin categoría. Se avisa
+ * en el diálogo, porque "eliminar categoría" suena a que se lleva todo dentro.
+ */
+async function eliminarCategoriaAdmin(id, nombre) {
+    const categoria = clasificaciones.find(c => c.id === id);
+    const cuantos = categoria?.productos?.length || 0;
+
+    const detalle = cuantos > 0
+        ? `Sus ${cuantos} producto${cuantos === 1 ? '' : 's'} NO se eliminan: quedan sin categoría y los puedes reasignar después.`
+        : 'La categoría está vacía.';
+
+    const ok = await confirmarZenit(
+        `"${nombre}" dejará de aparecer. ${detalle}`,
+        '¿Eliminar esta categoría?',
+        { textoOk: 'Eliminar', textoCancelar: 'Cancelar', peligro: true }
+    );
+    if (!ok) return;
+
+    try {
+        await eliminarCategoriaWrapper(id);
+        mostrarNotificacionExito(`"${nombre}" eliminada`, '¡Categoría Eliminada!');
+        cargarProductosAdmin();
+    } catch (e) {
+        console.error(e);
+        alertaZenit('No se pudo eliminar la categoría. ' + (e?.message || ''), 'Error');
+    }
+}
+
 function editarCategoria(id) {
     // Buscar la categoría completa (incluida su imagen) en el cache ya cargado
     const cat = clasificaciones.find(c => c.id === id);

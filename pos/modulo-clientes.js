@@ -236,7 +236,10 @@ async function buscarYAutocompletarCliente(telefono) {
             if (document.getElementById('dom-nombre')) {
                 document.getElementById('dom-nombre').value = cliente.nombre;
                 document.getElementById('dom-direccion').value = cliente.direccion || '';
-                mostrarToast("Cliente reconocido: " + cliente.nombre);
+                // `mostrarToast` no existe; el único toast del sistema es este.
+                // Sin esto, autocompletar un cliente por teléfono reventaba y
+                // dejaba el formulario de domicilio a medio llenar.
+                mostrarNotificacionExito(cliente.nombre, 'Cliente reconocido');
             }
         }
     }
@@ -453,8 +456,8 @@ async function actualizarClienteExistente(id) {
             async (employeeId, pin, employeeName, employeeRole) => {
                 try {
                     await window.api.actualizarCliente(id, { telefono, nombre, direccion, notas: '' });
-                    if (employeeId) {
-                        await apiClient.updateCustomerWithPin(id, { phone: telefono, name: nombre, address: direccion }, employeeId, null, employeeName || '').catch(() => {});
+                    if (employeeId || employeeRole) {
+                        await apiClient.updateCustomerWithPin(id, { phone: telefono, name: nombre, address: direccion }, employeeId, pin, employeeName || '', employeeRole || null).catch(() => {});
                     } else {
                         await apiClient.updateCustomer(id, { phone: telefono, name: nombre, address: direccion }).catch(() => {});
                     }

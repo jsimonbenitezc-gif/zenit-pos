@@ -123,6 +123,7 @@ contextBridge.exposeInMainWorld('api', {
     syncPedidos: (datos) => ipcRenderer.invoke('sync-pedidos', datos),
     obtenerPedidosPendientes: () => ipcRenderer.invoke('obtener-pedidos-pendientes'),
     obtenerItemsPedido: (id) => ipcRenderer.invoke('obtener-items-pedido', id),
+    obtenerPagosPedido: (id) => ipcRenderer.invoke('obtener-pagos-pedido', id),
     marcarPedidoSincronizado: (id) => ipcRenderer.invoke('marcar-pedido-sincronizado', id),
 
     // LOGIN

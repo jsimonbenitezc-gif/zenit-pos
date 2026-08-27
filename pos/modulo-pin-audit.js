@@ -82,12 +82,19 @@ async function confirmarPinEmpleado() {
             resetearFallosPin();
         }
 
-        // PIN válido (o perfil sin PIN — solo requiere confirmar)
+        // PIN válido (o perfil sin PIN — solo requiere confirmar).
+        //
+        // ⚠️ EL PIN SE PASA AL CALLBACK, no `null`. La validación de arriba es
+        // LOCAL: sirve para dar respuesta inmediata y para el bloqueo por
+        // intentos, pero el backend tiene que poder verificarlo él mismo, o
+        // cualquiera podría llamar al API sin PIN. Antes se mandaba `null` y el
+        // backend respondía 400: por eso ningún cajero podía cancelar un pedido
+        // ni editar un cliente (CLAUDE.md §12.2).
         const meData = await apiClient.request('/auth/me', { method: 'GET' }).catch(() => null);
         document.getElementById('modal-pin-empleado').classList.add('hidden');
         const cb = _pinEmpleadoPendiente;
         _pinEmpleadoPendiente = null;
-        cb(meData?.id || null, null, nombreActivo || '', rolActivo || '');
+        cb(meData?.id || null, pin || null, nombreActivo || '', rolActivo || '');
     } catch(e) {
         if (errEl) { errEl.textContent = e.message || 'Error al verificar PIN'; errEl.style.display = ''; }
         if (btnEl) btnEl.disabled = false;

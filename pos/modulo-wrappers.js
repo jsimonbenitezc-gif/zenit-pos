@@ -83,6 +83,43 @@ async function actualizarProductoWrapper(id, producto) {
     }
 }
 
+/**
+ * Borra un producto en la nube y en la copia local.
+ *
+ * En modo conectado los ids locales coinciden con los de la nube (los alinea
+ * `syncProductos`), así que el mismo id sirve para ambos lados. Si el backend
+ * falla se borra igual en local: el equipo tiene que poder seguir trabajando, y
+ * la siguiente sincronización reconcilia.
+ */
+async function eliminarProductoWrapper(id) {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            await apiClient.deleteProduct(id);
+        } catch (error) {
+            console.error('Error al eliminar producto en backend:', error);
+        }
+    }
+    return await window.api.eliminarProducto(id);
+}
+
+/**
+ * Borra una categoría en la nube y en la copia local.
+ *
+ * ⚠️ Los productos de esa categoría NO se borran: quedan sin categoría
+ * (`db.eliminarClasificacion` les pone `clasificacion_id = NULL`). Borrar una
+ * categoría no puede llevarse por delante el catálogo.
+ */
+async function eliminarCategoriaWrapper(id) {
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            await apiClient.deleteCategory(id);
+        } catch (error) {
+            console.error('Error al eliminar categoría en backend:', error);
+        }
+    }
+    return await window.api.eliminarClasificacion(id);
+}
+
 // Genera un uuid v4 para idempotencia de la venta. Usa crypto.randomUUID si
 // está disponible (contexto seguro) y cae a un fallback manual si no.
 function _generarUuid() {
@@ -153,6 +190,11 @@ async function obtenerPedidosWrapper(filtro) {
                 notas_generales: o.notes,
                 info_cliente_temp: o.customer_temp_info,
                 cajero: null,
+                // Propina (BLOQUE 9) y reparto por método (BLOQUE 10): el ticket y
+                // el detalle los necesitan para mostrar cómo se pagó la cuenta.
+                propina: parseFloat(o.tip_amount || 0),
+                propina_metodo: o.tip_method || null,
+                payments: Array.isArray(o.payments) ? o.payments : [],
                 fecha: o.createdAt,
                 telefono: o.customer ? o.customer.name : (o.table ? 'Mesa: ' + o.table.name : (o.customer_temp_info || null)),
                 _items: o.items

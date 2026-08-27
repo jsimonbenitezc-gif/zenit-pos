@@ -324,8 +324,8 @@ async function cambiarEstadoPedido(pedidoId, nuevoEstado, selectElement) {
             `Cancelar pedido #${pedidoId}. Esta acción quedará registrada. Ingresa tu PIN para confirmar.`,
             async (employeeId, pin, employeeName, employeeRole) => {
                 try {
-                    if (employeeId) {
-                        await apiClient.cancelOrder(pedidoId, employeeId, null, employeeName || '');
+                    if (employeeId || employeeRole) {
+                        await apiClient.cancelOrder(pedidoId, employeeId, pin, employeeName || '', employeeRole || null);
                     } else {
                         await window.api.actualizarEstadoPedido(pedidoId, 'cancelado');
                     }

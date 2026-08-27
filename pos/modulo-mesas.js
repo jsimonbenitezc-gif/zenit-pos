@@ -63,6 +63,56 @@ function _normalizarMesasApi(tables) {
     }));
 }
 
+/**
+ * Desglose del impuesto de la cuenta de una mesa (BLOQUE 8).
+ *
+ * ⚠️ ESTA FUNCIÓN FALTABA. El Bloque 8 la referenció en cinco lugares
+ * (`_renderizarPanelMesa`, el ticket, `abrirCobrar`, `confirmarCobrarMesa` y el
+ * total de la cuenta) pero nunca se escribió, así que TODA la vista de mesas
+ * reventaba con "ReferenceError: _desgloseMesa is not defined" en cuanto había
+ * un producto en la mesa — con el impuesto encendido o apagado, da igual.
+ *
+ * La tasa sale CONGELADA del pedido (§29): si el dueño cambia el impuesto a
+ * media comida, la cuenta que el cliente ya vio no se mueve. Solo cuando el
+ * pedido no la trae (mesa abierta antes del bloque) se cae a la del negocio.
+ *
+ * @param {Array} items items de la mesa (`_parsearItemsMesa`)
+ * @returns {{suma:number, subtotal:number, impuesto:number, total:number, cfg:object}}
+ *          `suma` = precios de lista sumados. En modo INCLUIDO esa suma YA es lo
+ *          que se cobra; en AGREGADO el impuesto se le suma encima. Es la misma
+ *          fórmula que `_recalcularTotalesMesa` de db.js: si se separaran, el
+ *          panel mostraría un número y la base guardaría otro.
+ */
+function _cfgImpuestoMesa() {
+    const pedido = _pedidoMesaActivo;
+    const tasaCongelada = pedido == null
+        ? null
+        : normalizarTasaImpuesto(pedido.tasa_impuesto ?? pedido.tax_rate);
+
+    // Sin tasa congelada (mesa vieja o pedido sin el dato) se usa la del negocio.
+    if (tasaCongelada === null) return configImpuesto;
+
+    const incluidoCrudo = pedido.impuesto_incluido ?? pedido.tax_included;
+    return {
+        activo: tasaCongelada > 0,
+        tasa: tasaCongelada,
+        tasaConfigurada: tasaCongelada,
+        incluido: incluidoCrudo === undefined || incluidoCrudo === null || incluidoCrudo === ''
+            ? configImpuesto.incluido
+            : (incluidoCrudo === true || incluidoCrudo === 'true' || incluidoCrudo === 1 || incluidoCrudo === '1'),
+        nombre: configImpuesto.nombre,
+    };
+}
+
+function _desgloseMesa(items) {
+    const suma = parseFloat(
+        ((items || []).reduce((s, i) => s + (parseFloat(i.subtotal) || 0), 0)).toFixed(2)
+    );
+    const cfg = _cfgImpuestoMesa();
+    const d = desglosarImpuesto(suma, cfg);
+    return { suma, subtotal: d.subtotal, impuesto: d.impuesto, total: d.total, cfg };
+}
+
 function _normalizarPedidoApi(order) {
     if (!order) return null;
     const items_raw = (order.items || []).map(item =>
@@ -76,6 +126,16 @@ function _normalizarPedidoApi(order) {
         id: order.id,
         cliente_id: order.customer_id || null,
         total: parseFloat(order.total || 0),
+        // Impuesto CONGELADO de la cuenta (BLOQUE 8). Sin esto, una mesa abierta
+        // en modo conectado se desglosaba con la tasa de HOY en vez de con la que
+        // tenía al abrirse, así que cambiar el impuesto a media comida movía la
+        // cuenta que el cliente ya había visto.
+        subtotal: order.subtotal !== undefined && order.subtotal !== null ? parseFloat(order.subtotal) : null,
+        impuesto: parseFloat(order.tax_amount || 0),
+        tasa_impuesto: order.tax_rate !== undefined && order.tax_rate !== null ? parseFloat(order.tax_rate) : null,
+        impuesto_incluido: order.tax_included,
+        // Reparto por método de pago (BLOQUE 10), para el ticket de la cuenta.
+        payments: Array.isArray(order.payments) ? order.payments : [],
         fecha_pedido: order.createdAt,
         comensales: order.guests || 0,
         notas_generales: order.notes || null,
@@ -270,7 +330,11 @@ function _renderizarPanelMesa() {
         el.innerHTML = `<div style="text-align:center;padding:20px;color:#9ca3af;font-size:0.9em;">Sin productos aún</div>`;
         return;
     }
-    const total = items.reduce((s, i) => s + i.subtotal, 0);
+    // `_d` se usa más abajo en la plantilla: el Bloque 8 lo dejó sin declarar y
+    // el panel entero reventaba. El total a mostrar es el del desglose, no la
+    // suma cruda: en modo AGREGADO son números distintos.
+    const _d = _desgloseMesa(items);
+    const total = _d.total;
     el.innerHTML = items.map(it => `
         <div style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid #f3f4f6;">
             <div style="flex:1;min-width:0;">
@@ -703,9 +767,12 @@ async function abrirModalCobrarMesa() {
     const total = _desgloseMesa(items).total;
     document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(total);
     document.getElementById('cobrar-mesa-metodo').value = 'efectivo';
-    // La propina arranca en cero en cada cobro: no se hereda de la mesa anterior.
+    // La propina y la división arrancan en cero en cada cobro: no se heredan de
+    // la mesa anterior (un reparto viejo cobraría mal la cuenta nueva).
     _resetearPropinaMesa();
+    _resetearDivisionMesa();
     _renderizarSeccionPropinaMesa(total);
+    _actualizarBotonCobrarMesa();
     document.getElementById('modal-cobrar-mesa').classList.remove('hidden');
 
     // Mostrar puntos a ganar si el sistema está activo
@@ -730,9 +797,295 @@ function cerrarModalCobrarMesa() {
     document.getElementById('modal-cobrar-mesa').classList.add('hidden');
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// DIVIDIR LA CUENTA (BLOQUE 10)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Dos formas, las dos válidas:
+//   • POR ITEMS  — cada comensal paga lo que consumió. Es lo que más se pide.
+//   • PARTES IGUALES — se parte la cuenta en N y listo.
+//
+// ⚠️ En los dos casos los pagos REPARTEN el total, no lo aumentan: la suma tiene
+// que dar exactamente la cuenta o el backend rechaza el cobro (400). El botón de
+// confirmar queda bloqueado hasta que cuadre, para que el cajero lo vea antes.
+//
+// El monto de un grupo de items se calcula sobre el TOTAL REAL de la cuenta, no
+// sobre la suma de los precios de lista: el total ya trae el impuesto y ya tiene
+// restados los descuentos, así que sumar precios sueltos cobraría de más o de
+// menos y la división nunca cuadraría (ver montoDeItems en modulo-pagos.js).
+
+let divisionMesaActiva = false;
+let modoDivisionMesa = 'items';   // 'items' | 'partes'
+let pagosMesa = [];               // [{ method, amount, tip_amount, item_ids }]
+let asignacionItems = {};         // { itemId: indiceDePago }
+
+function _resetearDivisionMesa() {
+    divisionMesaActiva = false;
+    modoDivisionMesa = 'items';
+    pagosMesa = [];
+    asignacionItems = {};
+    const seccion = document.getElementById('seccion-division-mesa');
+    if (seccion) seccion.classList.add('hidden');
+    const btn = document.getElementById('btn-dividir-mesa');
+    if (btn) btn.innerText = 'Dividir la cuenta';
+}
+
+function alternarDivisionMesa() {
+    divisionMesaActiva = !divisionMesaActiva;
+    const seccion = document.getElementById('seccion-division-mesa');
+    const btn = document.getElementById('btn-dividir-mesa');
+
+    if (divisionMesaActiva) {
+        if (pagosMesa.length === 0) {
+            // Se arranca con dos pagos vacíos y todos los items en el primero:
+            // el cajero solo mueve los que cambian de dueño.
+            pagosMesa = [
+                { method: 'efectivo', amount: 0, tip_amount: 0, item_ids: [] },
+                { method: 'efectivo', amount: 0, tip_amount: 0, item_ids: [] },
+            ];
+            asignacionItems = {};
+            for (const it of _itemsDeLaCuenta()) asignacionItems[it.id] = 0;
+        }
+        if (seccion) seccion.classList.remove('hidden');
+        if (btn) btn.innerText = 'Cancelar la división';
+        cambiarModoDivisionMesa(modoDivisionMesa);
+    } else {
+        pagosMesa = [];
+        asignacionItems = {};
+        if (seccion) seccion.classList.add('hidden');
+        if (btn) btn.innerText = 'Dividir la cuenta';
+    }
+    _actualizarBotonCobrarMesa();
+}
+
+function cambiarModoDivisionMesa(modo) {
+    modoDivisionMesa = modo;
+    const panelItems = document.getElementById('division-mesa-items');
+    const panelPartes = document.getElementById('division-mesa-partes');
+    const tabItems = document.getElementById('tab-division-items');
+    const tabPartes = document.getElementById('tab-division-partes');
+
+    const activo = 'background:#1e40af;color:#fff;';
+    const inactivo = 'background:#fff;color:#1e40af;';
+    const base = 'flex:1;padding:7px;border:1px solid #bfdbfe;border-radius:8px;font-size:0.85em;font-weight:600;cursor:pointer;';
+
+    if (modo === 'items') {
+        if (panelItems) panelItems.classList.remove('hidden');
+        if (panelPartes) panelPartes.classList.add('hidden');
+        if (tabItems) tabItems.style.cssText = base + activo;
+        if (tabPartes) tabPartes.style.cssText = base + inactivo;
+        _recalcularPagosPorItems();
+    } else {
+        if (panelItems) panelItems.classList.add('hidden');
+        if (panelPartes) panelPartes.classList.remove('hidden');
+        if (tabItems) tabItems.style.cssText = base + inactivo;
+        if (tabPartes) tabPartes.style.cssText = base + activo;
+    }
+    _renderizarDivisionMesa();
+}
+
+/** Items de la cuenta abierta, con un id estable para asignarlos. */
+function _itemsDeLaCuenta() {
+    if (!_pedidoMesaActivo) return [];
+    return _parsearItemsMesa(_pedidoMesaActivo.items_raw) || [];
+}
+
+function _totalDeLaCuenta() {
+    return _desgloseMesa(_itemsDeLaCuenta()).total;
+}
+
+function dividirMesaEnPartes(n) {
+    const montos = dividirEnPartes(_totalDeLaCuenta(), n);
+    pagosMesa = montos.map(monto => ({
+        method: 'efectivo', amount: monto, tip_amount: 0, item_ids: [],
+    }));
+    // En partes iguales la asignación por items deja de tener sentido.
+    asignacionItems = {};
+    _renderizarDivisionMesa();
+    _actualizarBotonCobrarMesa();
+}
+
+function agregarPagoMesa() {
+    if (pagosMesa.length >= PAGO_MAX) {
+        alertaZenit('Una cuenta admite como máximo ' + PAGO_MAX + ' pagos.');
+        return;
+    }
+    const falta = faltantePago(pagosMesa, _totalDeLaCuenta());
+    pagosMesa.push({
+        method: 'efectivo',
+        amount: modoDivisionMesa === 'items' ? 0 : (falta > 0 ? falta : 0),
+        tip_amount: 0,
+        item_ids: [],
+    });
+    _renderizarDivisionMesa();
+    _actualizarBotonCobrarMesa();
+}
+
+function quitarPagoMesa(indice) {
+    if (pagosMesa.length <= 1) { alternarDivisionMesa(); return; }
+    pagosMesa.splice(indice, 1);
+    // Los items que pagaba ese comensal pasan al primero, y los índices de los
+    // que estaban después se corren: si no, quedarían apuntando al pago equivocado.
+    for (const id of Object.keys(asignacionItems)) {
+        if (asignacionItems[id] === indice) asignacionItems[id] = 0;
+        else if (asignacionItems[id] > indice) asignacionItems[id] -= 1;
+    }
+    if (modoDivisionMesa === 'items') _recalcularPagosPorItems();
+    _renderizarDivisionMesa();
+    _actualizarBotonCobrarMesa();
+}
+
+function alAsignarItemDivision(itemId, indicePago) {
+    asignacionItems[itemId] = parseInt(indicePago) || 0;
+    _recalcularPagosPorItems();
+    _renderizarDivisionMesa();
+    _actualizarBotonCobrarMesa();
+}
+
+function alCambiarPagoMesa(indice, campo, valor) {
+    if (!pagosMesa[indice]) return;
+    if (campo === 'method') {
+        pagosMesa[indice].method = metodoDePago(valor);
+    } else {
+        const limpio = String(valor || '').replace(/[^\d.]/g, '');
+        pagosMesa[indice][campo] = parseFloat(limpio) || 0;
+    }
+    _actualizarResumenDivisionMesa();
+    _actualizarBotonCobrarMesa();
+}
+
+/** Reparte el total entre los pagos según qué items le tocó pagar a cada uno. */
+function _recalcularPagosPorItems() {
+    const items = _itemsDeLaCuenta();
+    const total = _totalDeLaCuenta();
+
+    for (let i = 0; i < pagosMesa.length; i++) {
+        const idsGrupo = items
+            .filter(it => (asignacionItems[it.id] || 0) === i)
+            .map(it => it.id);
+        pagosMesa[i].item_ids = idsGrupo;
+        pagosMesa[i].amount = montoDeItems(items, idsGrupo, total);
+    }
+    // Las proporciones dejan centavos sueltos: se le cargan al último pago para
+    // que la suma dé exactamente la cuenta (el backend exige que cuadre).
+    cuadrarUltimoPago(pagosMesa, total);
+}
+
+function _renderizarDivisionMesa() {
+    const listaItems = document.getElementById('lista-items-division');
+    if (listaItems && modoDivisionMesa === 'items') {
+        const items = _itemsDeLaCuenta();
+        listaItems.innerHTML = items.map(it => {
+            const opciones = pagosMesa.map((_, i) =>
+                '<option value="' + i + '"' + ((asignacionItems[it.id] || 0) === i ? ' selected' : '') + '>Pago ' + (i + 1) + '</option>'
+            ).join('');
+            return '<div style="display:flex;gap:6px;align-items:center;font-size:0.85em;">' +
+                '<span style="flex:1;color:#334155;">' + (it.cantidad || 1) + '× ' + (it.nombre || 'Producto') + '</span>' +
+                '<span style="color:#64748b;">' + _fmtMesa(it.subtotal || 0) + '</span>' +
+                '<select onchange="alAsignarItemDivision(' + it.id + ', this.value)"' +
+                ' style="padding:4px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">' + opciones + '</select>' +
+            '</div>';
+        }).join('');
+    }
+
+    const listaPagos = document.getElementById('lista-pagos-mesa');
+    if (listaPagos) {
+        const conPropina = hayPropinas();
+        const porItems = modoDivisionMesa === 'items';
+
+        listaPagos.innerHTML = pagosMesa.map((pago, i) => {
+            const inputPropina = conPropina
+                ? '<input type="text" inputmode="decimal" value="' + ((pago.tip_amount || 0) > 0 ? pago.tip_amount.toFixed(2) : '') + '"' +
+                  ' oninput="alCambiarPagoMesa(' + i + ', \'tip_amount\', this.value)" placeholder="Propina"' +
+                  ' title="Propina de este pago. Va aparte del monto."' +
+                  ' style="flex:0.9;padding:8px;border:1px solid #bbf7d0;border-radius:8px;font-size:0.85em;text-align:right;background:#f0fdf4;">'
+                : '';
+            // En modo POR ITEMS el monto lo calcula la asignación, así que se
+            // muestra en solo lectura: editarlo a mano descuadraría la división
+            // sin que el cajero entienda por qué.
+            const inputMonto = porItems
+                ? '<span style="flex:1;padding:8px;text-align:right;font-weight:600;color:#1e40af;font-size:0.88em;">' + _fmtMesa(pago.amount || 0) + '</span>'
+                : '<input type="text" inputmode="decimal" value="' + (pago.amount || 0).toFixed(2) + '"' +
+                  ' oninput="alCambiarPagoMesa(' + i + ', \'amount\', this.value)" placeholder="Monto"' +
+                  ' style="flex:1;padding:8px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;text-align:right;">';
+
+            return '<div style="display:flex;gap:6px;align-items:center;">' +
+                '<span style="font-size:0.78em;color:#64748b;min-width:46px;">Pago ' + (i + 1) + '</span>' +
+                '<select onchange="alCambiarPagoMesa(' + i + ', \'method\', this.value)"' +
+                ' style="flex:1.1;padding:8px;border:1px solid #d1d5db;border-radius:8px;font-size:0.85em;">' +
+                    '<option value="efectivo"' + (pago.method === 'efectivo' ? ' selected' : '') + '>Efectivo</option>' +
+                    '<option value="tarjeta"' + (pago.method === 'tarjeta' ? ' selected' : '') + '>Tarjeta</option>' +
+                    '<option value="transferencia"' + (pago.method === 'transferencia' ? ' selected' : '') + '>Transf.</option>' +
+                '</select>' +
+                inputMonto + inputPropina +
+                '<button type="button" onclick="quitarPagoMesa(' + i + ')" title="Quitar este pago"' +
+                ' style="padding:8px 10px;border:none;border-radius:8px;background:#fee2e2;color:#b91c1c;font-weight:700;cursor:pointer;">×</button>' +
+            '</div>';
+        }).join('');
+    }
+
+    _actualizarResumenDivisionMesa();
+}
+
+function _actualizarResumenDivisionMesa() {
+    const total = _totalDeLaCuenta();
+    const falta = faltantePago(pagosMesa, total);
+
+    const elTotal = document.getElementById('division-mesa-total');
+    if (elTotal) elTotal.textContent = _fmtMesa(total);
+
+    const elFalta = document.getElementById('division-mesa-faltante');
+    if (elFalta) {
+        if (Math.abs(falta) <= PAGO_TOLERANCIA + 1e-9) {
+            elFalta.textContent = 'Cuadra ✓';
+            elFalta.style.color = '#16a34a';
+        } else if (falta > 0) {
+            elFalta.textContent = 'Falta ' + _fmtMesa(falta);
+            elFalta.style.color = '#1e40af';
+        } else {
+            elFalta.textContent = 'Sobra ' + _fmtMesa(Math.abs(falta));
+            elFalta.style.color = '#dc2626';
+        }
+    }
+
+    // Con la cuenta dividida, la propina de la mesa es la suma de las de cada pago.
+    if (divisionMesaActiva && hayPropinas()) {
+        propinaMesaActual = pagosMesa.reduce((a, p) => a + (parseFloat(p.tip_amount) || 0), 0);
+        propinaMesaActual = parseFloat(propinaMesaActual.toFixed(2));
+        _actualizarDisplayPropinaMesa();
+    }
+}
+
+/** Bloquea el cobro mientras la división no cuadre con la cuenta. */
+function _actualizarBotonCobrarMesa() {
+    const btn = document.getElementById('btn-confirmar-cobrar-mesa');
+    if (!btn) return;
+    const ok = !divisionMesaActiva || (pagosMesa.length > 0 && pagosCuadran(pagosMesa, _totalDeLaCuenta()));
+    btn.disabled = !ok;
+    btn.classList.toggle('disabled', !ok);
+}
+
 async function confirmarCobrarMesa() {
     if (!_pedidoMesaActivo) return;
-    const metodo = document.getElementById('cobrar-mesa-metodo').value;
+
+    // Con la cuenta dividida el método sale del reparto ('multiple' si hay
+    // varios); el selector de arriba deja de mandar. Se valida ANTES de cobrar
+    // para que el cajero vea el problema aquí y no como un 400 del backend.
+    let pagosSnap = null;
+    if (divisionMesaActiva) {
+        const v = validarPagos(pagosMesa, _totalDeLaCuenta());
+        if (!v.ok) { alertaZenit(v.error); return; }
+        pagosSnap = pagosMesa.map(pago => ({
+            method: pago.method,
+            amount: pago.amount,
+            tip_amount: pago.tip_amount || 0,
+            item_ids: pago.item_ids || [],
+        }));
+    }
+
+    const metodo = divisionMesaActiva
+        ? metodoResumenPagos(pagosMesa)
+        : document.getElementById('cobrar-mesa-metodo').value;
     const pedidoSnap = { ..._pedidoMesaActivo };
     const itemsSnap  = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
     const desgloseSnap = _desgloseMesa(itemsSnap);
@@ -745,7 +1098,10 @@ async function confirmarCobrarMesa() {
         : null;
     try {
         if (modoConectado && apiClient && tokenActual) {
-            await apiClient.closeTableOrder(pedidoSnap.id, metodo, propinaSnap, propinaMetodoSnap);
+            // BLOQUE 10 — `pagosSnap` es el desglose de la cuenta dividida. Va
+            // null en un cobro normal, y entonces el backend se comporta como
+            // siempre (un solo método, sin filas de pago).
+            await apiClient.closeTableOrder(pedidoSnap.id, metodo, propinaSnap, propinaMetodoSnap, pagosSnap);
         } else {
             await window.api.cerrarPedidoMesa(pedidoSnap.id, metodo, propinaSnap, propinaMetodoSnap);
 
@@ -763,6 +1119,17 @@ async function confirmarCobrarMesa() {
                     // de mostrador. El backend la descarta si están apagadas.
                     tip_amount: propinaSnap,
                     tip_method: propinaMetodoSnap,
+                    // Reparto de la cuenta dividida (BLOQUE 10). Los item_ids no
+                    // viajan por este camino: la venta se crea de cero en el
+                    // backend y sus items todavía no tienen id allá. El cuadre
+                    // lo hacen los montos, que es lo que importa para la caja.
+                    ...(pagosSnap ? {
+                        payments: pagosSnap.map(pago => ({
+                            method: pago.method,
+                            amount: pago.amount,
+                            tip_amount: pago.tip_amount || 0,
+                        })),
+                    } : {}),
                     payment_method: metodo,
                     order_type: 'comer',
                     notes: pedidoSnap.notas_generales || null,
