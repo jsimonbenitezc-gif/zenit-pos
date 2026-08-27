@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PROTOTIPO — Busca funciones LLAMADAS pero nunca DEFINIDAS en el desktop.
+ * Busca funciones LLAMADAS pero nunca DEFINIDAS en el desktop.
  *
  * ─── POR QUÉ EXISTE ──────────────────────────────────────────────────────────
  * El desktop NO tiene pruebas ni paso de compilación, así que una función que se
@@ -16,54 +16,110 @@
  *
  * Las tres se descubrieron por accidente. Este script las encuentra en un segundo.
  *
- * ─── ESTADO: PROTOTIPO, NO TERMINADO ─────────────────────────────────────────
- * ⚠️ El limpiador de cadenas se atraganta con `render.js` (probablemente una
- * expresión regular con comillas dentro), así que reporta como "sin definir"
- * cosas que SÍ existen ahí: `alertaZenit`, `confirmarZenit`,
- * `mostrarNotificacionExito` y compañía. **Arreglar eso antes de darlo por bueno
- * y de engancharlo a `npm run revisar`.** Es la tarea 2 del BLOQUE 16
- * (`PLAN_ARREGLOS_V5.md`).
+ * ─── ESTADO ──────────────────────────────────────────────────────────────────
+ * Funciona y no da falsos positivos (2026-08-27). Verificado en los dos sentidos:
+ * sobre el código actual reporta CERO, y sobre `modulo-mesas.js` de antes del
+ * arreglo detecta `_desgloseMesa` — el bug real que tuvo la vista de mesas rota
+ * un mes. Sale con código 1 si encuentra algo, así que sirve como puerta.
  *
- * Mientras tanto sirve igual: si aparece un nombre que NO está en render.js, es
- * un bug de verdad. Así se encontraron los cuatro botones muertos.
- *
- * Uso:  node scripts/revisar-huerfanas.js     (desde zenit-pos-desktop/pos)
+ * Uso:  npm run revisar
+ *       node scripts/revisar-huerfanas.js
  */
 const fs = require('fs');
 const path = require('path');
 
-/** Quita comentarios y literales de cadena para no contar palabras de prosa. */
+/**
+ * ¿El `/` que hay en `i` empieza una expresión regular, o es una división?
+ *
+ * Se decide por el último carácter significativo: tras un operador, una coma,
+ * un paréntesis de apertura o una palabra clave, lo que sigue es un valor —y por
+ * tanto una regex—; tras un identificador, un número o un cierre, es división.
+ */
+function empiezaRegex(src, i) {
+    let j = i - 1;
+    while (j >= 0 && /\s/.test(src[j])) j--;
+    if (j < 0) return true;
+    const c = src[j];
+    if ('(,=:[!&|?{};+-*~^%<>'.includes(c)) return true;
+    // `return /re/`, `typeof /re/`, `case /re/`… (palabra clave pegada al slash)
+    const palabra = src.slice(Math.max(0, j - 9), j + 1).match(/[A-Za-z_$][\w$]*$/);
+    return palabra ? ['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'do', 'else', 'instanceof']
+        .includes(palabra[0]) : false;
+}
+
+/**
+ * Quita comentarios, literales de cadena y expresiones regulares, para no contar
+ * palabras de prosa como si fueran código.
+ *
+ * ⚠️ Las EXPRESIONES REGULARES hay que saltarlas de verdad, no solo las cadenas:
+ * `render.js` tiene `.replace(/"/g, …)` y `.replace(/'/g, …)` en las líneas 14-15,
+ * y un limpiador que solo entiende cadenas toma esas comillas como apertura y se
+ * come el resto del archivo. Resultado: TODO lo definido en render.js
+ * (`alertaZenit`, `confirmarZenit`, `mostrarNotificacionExito`…) salía como
+ * "llamada sin definición" — 24 falsos positivos que hacían inservible el reporte.
+ *
+ * ⚠️ Y las PLANTILLAS ANIDADAS también: `modulo-turno.js` arma HTML con
+ * `${cond ? `<div>Propinas (no son ventas)</div>` : ''}`. Sin llevar una pila, el
+ * texto de la plantilla interior se cuela como si fuera código y "Propinas ("
+ * parece una llamada a función.
+ */
 function limpiar(src) {
     let out = '';
     let i = 0;
     const n = src.length;
+
+    // Pila para plantillas anidadas. Cada nivel es o bien 'texto' (dentro de las
+    // comillas invertidas, donde nada es código) o un número de llaves abiertas
+    // dentro de un `${...}` (donde SÍ es código y hay que seguir analizándolo).
+    const pila = [];
+    const enTexto = () => pila.length > 0 && pila[pila.length - 1] === 'texto';
+
     while (i < n) {
         const c = src[i], d = src[i + 1];
+
+        // ── Dentro del texto de una plantilla: solo importan ` y ${ ──────────
+        if (enTexto()) {
+            if (c === '\\') { i += 2; continue; }
+            if (c === '`') { pila.pop(); i++; out += ' '; continue; }
+            if (c === '$' && d === '{') { pila.push(0); i += 2; out += ' '; continue; }
+            i++; out += ' ';
+            continue;
+        }
+
+        // ── Modo código ──────────────────────────────────────────────────────
         if (c === '/' && d === '/') { while (i < n && src[i] !== '\n') i++; continue; }
         if (c === '/' && d === '*') { i += 2; while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++; i += 2; continue; }
+        if (c === '/' && empiezaRegex(src, i)) {
+            i++;
+            let enClase = false;
+            while (i < n) {
+                if (src[i] === '\\') { i += 2; continue; }
+                if (src[i] === '[') enClase = true;
+                else if (src[i] === ']') enClase = false;
+                else if (src[i] === '/' && !enClase) { i++; break; }
+                else if (src[i] === '\n') break;   // regex sin cerrar: era división
+                i++;
+            }
+            while (i < n && /[gimsuyd]/.test(src[i])) i++;   // banderas
+            out += ' ';
+            continue;
+        }
         if (c === '"' || c === "'") {
             const q = c; i++;
             while (i < n && src[i] !== q) { if (src[i] === '\\') i++; i++; }
             i++; out += '""'; continue;
         }
-        if (c === '`') {
-            // Las plantillas SÍ importan: `${loQueSea()}` es código real. Se
-            // conserva solo el interior de las interpolaciones.
-            i++;
-            let prof = 0;
-            while (i < n) {
-                if (src[i] === '\\') { i += 2; continue; }
-                if (src[i] === '`' && prof === 0) { i++; break; }
-                if (src[i] === '$' && src[i + 1] === '{') { prof++; i += 2; out += ' '; continue; }
-                if (prof > 0) {
-                    if (src[i] === '{') prof++;
-                    else if (src[i] === '}') { prof--; out += ' '; i++; continue; }
-                    out += src[i];
-                }
-                i++;
+        if (c === '`') { pila.push('texto'); i++; out += ' '; continue; }
+
+        // Llaves: cierran la interpolación y devuelven al texto de la plantilla.
+        if (pila.length > 0 && typeof pila[pila.length - 1] === 'number') {
+            if (c === '{') { pila[pila.length - 1]++; }
+            else if (c === '}') {
+                if (pila[pila.length - 1] === 0) { pila.pop(); i++; out += ' '; continue; }
+                pila[pila.length - 1]--;
             }
-            continue;
         }
+
         out += c; i++;
     }
     return out;
@@ -140,13 +196,12 @@ if (sospechosas.length === 0) {
     process.exit(0);
 }
 
-console.log('\n⚠️  LLAMADAS SIN DEFINICIÓN (revisa a mano: hay falsos positivos de render.js):\n');
+console.log('\n⚠️  LLAMADAS SIN DEFINICIÓN — alguien las usa y nadie las escribió:\n');
 for (const [nombre, veces] of sospechosas) {
     console.log(`   ${nombre.padEnd(34)} ${veces} uso${veces === 1 ? '' : 's'}`);
 }
 console.log('\nComprueba cada una desde zenit-pos-desktop/pos con:');
 console.log("   PowerShell:  Select-String 'function NOMBRE' *.js");
 console.log("   Bash:        grep -rn 'function NOMBRE' *.js");
-// Todavía NO se sale con código 1: el prototipo da falsos positivos y rompería
-// cualquier automatización. Cambiarlo al cerrar la tarea 2 del BLOQUE 16.
-process.exit(0);
+// Código 1 para que sirva como puerta antes de compilar (CLAUDE.md §21).
+process.exit(1);
