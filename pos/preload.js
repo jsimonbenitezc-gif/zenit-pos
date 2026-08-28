@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('api', {
     // DASHBOARD
     obtenerEstadisticas: () => ipcRenderer.invoke('obtener-estadisticas'),
+    obtenerRentabilidad: (opciones) => ipcRenderer.invoke('obtener-rentabilidad', opciones),
 
     // PEDIDOS
     obtenerPedidos: (filtro) => ipcRenderer.invoke('obtener-pedidos', filtro),

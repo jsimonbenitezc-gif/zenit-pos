@@ -148,16 +148,25 @@ async function aplicarPermisos() {
         ver_clientes:    'clientes',
         ver_ofertas:     'ofertas',
         ver_inventario:  'inventario',
+        ver_rentabilidad: 'rentabilidad',
         ver_ajustes:     'ajustes'
     };
 
     // Restaurar todos primero
     document.querySelectorAll('.menu-item').forEach(btn => btn.classList.remove('hidden'));
 
+    // Un puesto guardado ANTES del BLOQUE 12 no tiene la clave de rentabilidad,
+    // y el toggle de abajo solo oculta con `=== false`: sin este default el reporte
+    // quedaría visible para todos los puestos custom. Hereda de "ver_inventario",
+    // que es donde viven las recetas y los costos de los que sale el número.
+    // (Va ANTES del spread para que un valor guardado explícito siempre gane, y
+    // para no mutar el objeto de _permisosRolCache.)
+    const permisosVista = { ver_rentabilidad: permisos.ver_inventario === true, ...permisos };
+
     // Ocultar según permisos
     Object.entries(mapa).forEach(([permiso, vista]) => {
         const btn = document.querySelector(`[data-view="${vista}"]`);
-        if (btn) btn.classList.toggle('hidden', permisos[permiso] === false);
+        if (btn) btn.classList.toggle('hidden', permisosVista[permiso] === false);
     });
 }
 

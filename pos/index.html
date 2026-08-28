@@ -167,6 +167,13 @@
    Inventario
 </button>
 
+<button class="menu-item" data-view="rentabilidad">
+   <span class="menu-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/></svg>
+   </span>
+   Rentabilidad
+</button>
+
             <button class="menu-item" data-view="ajustes">
    <span class="menu-icon">
       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings-icon lucide-settings"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
@@ -852,6 +859,7 @@
                         <th>Unidad</th>
                         <th>Stock Actual</th>
                         <th>Stock Mínimo</th>
+                        <th>Costo por unidad</th>
                         <th>Estado</th>
                         <th>Acciones</th>
                     </tr>
@@ -1000,6 +1008,82 @@
                 </p>
             </div>
         </div>
+    </div>
+
+</section>
+
+<section id="view-rentabilidad" class="view">
+
+    <div id="branch-tabs-rentabilidad" style="display:none;margin-bottom:12px;gap:8px;flex-wrap:wrap;"></div>
+    <div id="branch-aviso-rentabilidad" style="display:none;margin-bottom:16px;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;color:#92400e;font-size:0.88em;"></div>
+
+    <div class="view-header">
+        <div>
+            <h2>Rentabilidad por producto</h2>
+            <p style="margin:4px 0 0;color:#6b7280;font-size:0.88em;">
+                Cuánto te deja cada platillo, cruzando lo que vendiste con el costo de su receta.
+                El ingreso es <strong>neto</strong>: sin impuesto y sin descuentos.
+            </p>
+        </div>
+    </div>
+
+    <!-- Periodo -->
+    <div class="inv-tabs" id="rent-periodos">
+        <button class="inv-tab" onclick="cambiarPeriodoRentabilidad(7, this)">Últimos 7 días</button>
+        <button class="inv-tab active" onclick="cambiarPeriodoRentabilidad(30, this)">Últimos 30 días</button>
+        <button class="inv-tab" onclick="cambiarPeriodoRentabilidad(90, this)">Últimos 90 días</button>
+    </div>
+
+    <!-- Resumen -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:16px 0;">
+        <div class="table-card" style="padding:16px;">
+            <p style="margin:0;color:#6b7280;font-size:0.82em;">Ingreso neto</p>
+            <p id="rent-ingreso" style="margin:6px 0 0;font-size:1.5em;font-weight:700;">$0.00</p>
+        </div>
+        <div class="table-card" style="padding:16px;">
+            <p style="margin:0;color:#6b7280;font-size:0.82em;">Costo de insumos</p>
+            <p id="rent-costo" style="margin:6px 0 0;font-size:1.5em;font-weight:700;">$0.00</p>
+        </div>
+        <div class="table-card" style="padding:16px;">
+            <p style="margin:0;color:#6b7280;font-size:0.82em;">Ganancia bruta</p>
+            <p id="rent-margen" style="margin:6px 0 0;font-size:1.5em;font-weight:700;color:#10b981;">$0.00</p>
+        </div>
+        <div class="table-card" style="padding:16px;">
+            <p style="margin:0;color:#6b7280;font-size:0.82em;">Margen</p>
+            <p id="rent-margen-pct" style="margin:6px 0 0;font-size:1.5em;font-weight:700;color:#10b981;">—</p>
+        </div>
+    </div>
+
+    <!-- Avisos: por qué el número podría no ser confiable -->
+    <div id="rent-avisos" style="display:none;margin-bottom:16px;padding:12px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;color:#92400e;font-size:0.88em;"></div>
+
+    <div class="table-card">
+        <div class="table-header">
+            <div>
+                <h3 style="margin:0;font-size:1.1em;">Platillo por platillo</h3>
+                <p style="margin:4px 0 0;color:#6b7280;font-size:0.85em;">La ganancia bruta no descuenta renta, sueldos ni servicios</p>
+            </div>
+            <select onchange="cambiarOrdenRentabilidad(this.value)" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;">
+                <option value="margen">Ordenar por ganancia</option>
+                <option value="margen_pct">Ordenar por margen %</option>
+                <option value="ingreso">Ordenar por ventas</option>
+                <option value="unidades">Ordenar por unidades</option>
+            </select>
+        </div>
+        <table class="zenit-table">
+            <thead>
+                <tr>
+                    <th>Producto</th>
+                    <th>Unidades</th>
+                    <th>Ingreso neto</th>
+                    <th>Costo</th>
+                    <th>Costo unitario</th>
+                    <th>Ganancia</th>
+                    <th>Margen</th>
+                </tr>
+            </thead>
+            <tbody id="tabla-rentabilidad"></tbody>
+        </table>
     </div>
 
 </section>
@@ -2527,6 +2611,7 @@
 <script src="modulo-clientes.js"></script>
 <script src="modulo-ofertas.js"></script>
 <script src="modulo-inventario.js"></script>
+<script src="modulo-rentabilidad.js"></script>
 <script src="modulo-sync.js"></script>
 <script src="modulo-perfiles.js"></script>
 <script src="modulo-turno.js"></script>
@@ -2575,6 +2660,16 @@
                     <label>Alerta cuando baje de</label>
                     <input type="number" id="ins-minimo" placeholder="0" min="0" step="0.1">
                 </div>
+            </div>
+            <!-- BLOQUE 12: sin este dato no hay rentabilidad. El costo de un
+                 platillo se DERIVA de su receta y de este número. -->
+            <div class="input-group">
+                <label>Costo por unidad <span style="color:#9ca3af;font-weight:400;">(opcional)</span></label>
+                <input type="number" id="ins-costo" placeholder="0.00" min="0" step="0.01">
+                <p style="margin:4px 0 0; font-size:0.78em; color:#6b7280;">
+                    Lo que te cuesta <strong>una <span id="ins-costo-unidad">kg</span></strong> de este insumo.
+                    Es lo que permite calcular la ganancia de cada platillo en <strong>Rentabilidad</strong>.
+                </p>
             </div>
         </div>
         <div id="bloque-conversion" style="display:none; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:12px;">

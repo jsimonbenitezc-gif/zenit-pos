@@ -34,6 +34,15 @@ function runAsync(sql, params = []) {
     });
 }
 
+function getAsync(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.get(sql, params, (err, row) => {
+            if (err) return reject(err);
+            resolve(row);
+        });
+    });
+}
+
 function allAsync(sql, params = []) {
     return new Promise((resolve, reject) => {
         db.all(sql, params, (err, rows) => {
@@ -318,6 +327,16 @@ function inicializarTablas() {
     // así que todo lo que ya leía ese campo sigue igual.
     db.run("ALTER TABLE pedido_items ADD COLUMN modificadores TEXT", () => {});
     db.run("ALTER TABLE pedido_items ADD COLUMN precio_base REAL", () => {});
+
+    // BLOQUE 12 — Costo por unidad del insumo. Sin este dato la rentabilidad
+    // no existe: el costo de un platillo se DERIVA de su receta y de este
+    // número. Hasta ahora solo se podía capturar desde el mobile.
+    db.run("ALTER TABLE insumos ADD COLUMN costo_unitario REAL DEFAULT 0", () => {});
+
+    // Rinde de la preparación: cuántas unidades produce UNA tanda de la receta.
+    // Sin este dato el desktop descontaba la tanda completa por cada unidad
+    // pedida (ver _fraccionDeTanda). Default 1 = el comportamiento de siempre.
+    db.run("ALTER TABLE preparaciones ADD COLUMN rinde REAL DEFAULT 1", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN puntos INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN en_fidelidad INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE promociones ADD COLUMN requires_pin INTEGER DEFAULT 0", () => {});
@@ -561,7 +580,8 @@ async function aplicarRecetaDeVentaLocal(productoId, cantidadVendida, signo = -1
                 [delta, ri.referencia_id]
             );
         } else if (ri.tipo === 'preparacion') {
-            const cantPrep = ri.cantidad * cantidadVendida * signo;
+            const prep = await getAsync("SELECT rinde FROM preparaciones WHERE id = ?", [ri.referencia_id]);
+            const cantPrep = _fraccionDeTanda(ri.cantidad, prep && prep.rinde) * cantidadVendida * signo;
             const prepItems = await allAsync(
                 "SELECT pi.*, i.unidad, i.contenido_cantidad, i.contenido_unidad FROM preparacion_items pi JOIN insumos i ON pi.insumo_id=i.id WHERE pi.preparacion_id = ?",
                 [ri.referencia_id]
@@ -576,6 +596,26 @@ async function aplicarRecetaDeVentaLocal(productoId, cantidadVendida, signo = -1
             }
         }
     }
+}
+
+/**
+ * ¿Qué fracción de la TANDA de una preparación consume una receta?
+ *
+ * Una preparación RINDE una cantidad: "Salsa, rinde 4" produce 4 porciones por
+ * tanda. Una receta que pide 0.5 usa **0.5/4 = 1/8 de la tanda**, no media tanda.
+ * Ignorar el rinde descontaba 8 veces el insumo que debía.
+ *
+ * ⚠️ Espejo de `fraccionDeTanda()` en `utils/preparaciones.js` del backend. Si
+ * cambias una, cambia la otra o el stock local y el de la nube se separarán.
+ * Un rinde ausente, cero o negativo cae a 1 (el comportamiento anterior): nunca
+ * se divide entre cero ni se tumba una venta por un dato mal capturado.
+ */
+function _fraccionDeTanda(cantidadEnReceta, rinde) {
+    const cantidad = parseFloat(cantidadEnReceta);
+    if (!isFinite(cantidad)) return 0;
+    const r = parseFloat(rinde);
+    if (!isFinite(r) || r <= 0) return cantidad;
+    return cantidad / r;
 }
 
 /** Vender: descuenta los insumos de la receta. */
@@ -631,7 +671,8 @@ async function aplicarRecetaModificadoresLocal(modificadores, cantidadVendida, s
                     [delta, a.referencia_id]
                 );
             } else if (a.tipo === 'preparacion') {
-                const cantPrep = a.cantidad * cantidadVendida * signo;
+                const prep = await getAsync("SELECT rinde FROM preparaciones WHERE id = ?", [a.referencia_id]);
+                const cantPrep = _fraccionDeTanda(a.cantidad, prep && prep.rinde) * cantidadVendida * signo;
                 const prepItems = await allAsync(
                     `SELECT pi.*, i.unidad, i.contenido_cantidad, i.contenido_unidad
                      FROM preparacion_items pi JOIN insumos i ON pi.insumo_id = i.id
@@ -1279,12 +1320,12 @@ function obtenerInsumos(callback) {
     db.all("SELECT * FROM insumos WHERE activo = 1 ORDER BY nombre ASC", [], callback);
 }
 function agregarInsumo(d, cb) {
-    db.run("INSERT INTO insumos (nombre, unidad, stock_actual, stock_minimo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, ?)",
-        [d.nombre, d.unidad, d.stock_actual || 0, d.stock_minimo || 0, d.contenido_cantidad || null, d.contenido_unidad || null], cb);
+    db.run("INSERT INTO insumos (nombre, unidad, stock_actual, stock_minimo, contenido_cantidad, contenido_unidad, costo_unitario) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [d.nombre, d.unidad, d.stock_actual || 0, d.stock_minimo || 0, d.contenido_cantidad || null, d.contenido_unidad || null, d.costo_unitario || 0], cb);
 }
 function actualizarInsumo(id, d, cb) {
-    db.run("UPDATE insumos SET nombre=?, unidad=?, stock_actual=?, stock_minimo=?, contenido_cantidad=?, contenido_unidad=? WHERE id=?",
-        [d.nombre, d.unidad, d.stock_actual, d.stock_minimo, d.contenido_cantidad || null, d.contenido_unidad || null, id], cb);
+    db.run("UPDATE insumos SET nombre=?, unidad=?, stock_actual=?, stock_minimo=?, contenido_cantidad=?, contenido_unidad=?, costo_unitario=? WHERE id=?",
+        [d.nombre, d.unidad, d.stock_actual, d.stock_minimo, d.contenido_cantidad || null, d.contenido_unidad || null, d.costo_unitario || 0, id], cb);
 }
 function eliminarInsumo(id, cb) {
     db.run("UPDATE insumos SET activo = 0 WHERE id = ?", [id], cb);
@@ -1378,13 +1419,18 @@ function calcularStockPreparacion(preparacionId, callback) {
             const posible = item.stock_actual / req;
             if (posible < min) min = posible;
         });
-        callback(null, min === Infinity ? 0 : Math.floor(min * 100) / 100);
+        // `min` son TANDAS posibles; cada tanda produce `rinde` porciones.
+        db.get("SELECT COALESCE(rinde, 1) AS rinde FROM preparaciones WHERE id = ?", [preparacionId], (e2, pr) => {
+            const rinde = (!e2 && pr && parseFloat(pr.rinde) > 0) ? parseFloat(pr.rinde) : 1;
+            const porciones = min === Infinity ? 0 : min * rinde;
+            callback(null, Math.floor(porciones * 100) / 100);
+        });
     });
 }
 
 // Calcula cuántas unidades de un producto se pueden preparar según sus insumos
 function calcularStockProducto(productoId, callback) {
-    db.all("SELECT ri.*, i.unidad, i.stock_actual as ins_stock, i.contenido_cantidad, i.contenido_unidad FROM receta_items ri LEFT JOIN insumos i ON ri.tipo='insumo' AND ri.referencia_id=i.id WHERE ri.producto_id = ?", [productoId], (err, recetaItems) => {
+    db.all("SELECT ri.*, i.unidad, i.stock_actual as ins_stock, i.contenido_cantidad, i.contenido_unidad, pr.rinde as _rinde FROM receta_items ri LEFT JOIN insumos i ON ri.tipo='insumo' AND ri.referencia_id=i.id LEFT JOIN preparaciones pr ON ri.tipo='preparacion' AND ri.referencia_id=pr.id WHERE ri.producto_id = ?", [productoId], (err, recetaItems) => {
         if (err || !recetaItems || recetaItems.length === 0) return callback(null, null);
         let min = Infinity;
         let pendientes = recetaItems.length;
@@ -1411,7 +1457,10 @@ function calcularStockProducto(productoId, callback) {
                             const dp = pi.stock_actual / req;
                             if (dp < minPrep) minPrep = dp;
                         });
-                        const posible = Math.floor(minPrep / ri.cantidad);
+                        // minPrep = tandas posibles; cada tanda rinde `rinde`
+                        // unidades, y la receta pide `ri.cantidad` de ellas.
+                        const fraccion = _fraccionDeTanda(ri.cantidad, ri._rinde);
+                        const posible = fraccion > 0 ? Math.floor(minPrep / fraccion) : Infinity;
                         if (posible < min) min = posible;
                     }
                     pendientes--;
@@ -1672,6 +1721,295 @@ function calcularTotalesTurno(fechaApertura, cb) {
     `, [fechaApertura], cb);
 }
 
+// ── RENTABILIDAD POR PRODUCTO (BLOQUE 12) ───────────────────────────────────
+//
+// Espejo local del endpoint `GET /api/stats/profitability`. Existe porque el
+// desktop tiene que funcionar SIN internet y porque en modo local puro no hay
+// backend al que preguntarle: si el reporte solo viviera en la nube, la caja se
+// quedaría sin él justo el día que se cae la conexión.
+//
+// ⚠️ LA FÓRMULA ESTÁ DUPLICADA con `utils/costos.js` + `routes/stats.js` del
+// backend. Si cambias una, cambia la otra: el dueño compararía el mismo periodo
+// desde dos pantallas y vería dos márgenes distintos. (Mismo criterio que el
+// impuesto §29, las propinas §30, los pagos §31 y los modificadores §32.)
+//
+// Las tres reglas son las mismas que en el backend:
+//   1. Sin receta el costo es NULL, no cero (un margen del 100% inventado es
+//      peor que un hueco visible).
+//   2. Un insumo sin precio marca el costo como NO confiable y se denuncia.
+//   3. El ingreso es NETO: se le quitan impuesto y descuentos con el factor
+//      `subtotal del pedido / suma de los renglones`.
+
+// Convierte la cantidad de una receta a la unidad en la que se guarda el insumo.
+// Espeja a utils/unidades.js del backend.
+const FACTORES_CONVERSION_LOCAL = {
+    'kg_g': 1000, 'g_kg': 0.001,
+    'l_ml': 1000, 'ml_l': 0.001,
+    'ml_gal': 0.000264, 'gal_ml': 3785.41,
+    'l_gal': 0.26417, 'gal_l': 3.78541,
+};
+function _convertirCantidadLocal(cantidad, unidadOrigen, unidadDestino) {
+    if (!unidadOrigen || !unidadDestino || unidadOrigen === unidadDestino) return cantidad;
+    const f = FACTORES_CONVERSION_LOCAL[`${unidadOrigen}_${unidadDestino}`];
+    return f ? cantidad * f : cantidad;
+}
+
+const _centavos = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * Costo de todos los productos y de todas las opciones de modificador, a partir
+ * de las recetas locales.
+ * @returns {Promise<{productos: Map, opciones: Map}>}
+ */
+function _mapaDeCostosLocal() {
+    return new Promise((resolve, reject) => {
+        const q = (sql, params = []) => new Promise((ok, ko) =>
+            db.all(sql, params, (e, r) => e ? ko(e) : ok(r || [])));
+
+        Promise.all([
+            q('SELECT id, nombre, unidad, COALESCE(costo_unitario, 0) AS costo FROM insumos'),
+            q('SELECT preparacion_id, insumo_id, cantidad, unidad_receta FROM preparacion_items'),
+            q('SELECT id, COALESCE(rinde, 1) AS rinde FROM preparaciones'),
+            q('SELECT producto_id, tipo, referencia_id, cantidad FROM receta_items'),
+            q('SELECT opcion_id, tipo, referencia_id, cantidad, unidad_receta FROM modificador_receta'),
+            q('SELECT id FROM productos'),
+        ]).then(([insumos, prepItems, rindes, recetas, modRecetas, productos]) => {
+            const rindePorPrep = new Map();
+            rindes.forEach(r => rindePorPrep.set(Number(r.id), r.rinde));
+            const insumoPorId = new Map();
+            insumos.forEach(i => insumoPorId.set(Number(i.id), i));
+
+            // Costo de una línea de receta, con los insumos que no tienen precio.
+            const costoDeLinea = (tipo, referenciaId, cantidad, unidadReceta, prepCosto) => {
+                const cant = parseFloat(cantidad);
+                if (!isFinite(cant)) return { costo: 0, faltantes: [] };
+                const esInsumo = tipo === 'insumo' || tipo === 'ingrediente' || tipo === 'ingredient';
+                if (esInsumo) {
+                    const ing = insumoPorId.get(Number(referenciaId));
+                    if (!ing) return { costo: 0, faltantes: ['(insumo eliminado)'] };
+                    const precio = parseFloat(ing.costo) || 0;
+                    const q2 = _convertirCantidadLocal(cant, unidadReceta, ing.unidad);
+                    return { costo: q2 * precio, faltantes: precio > 0 ? [] : [ing.nombre] };
+                }
+                const prep = prepCosto.get(Number(referenciaId));
+                if (!prep) return { costo: 0, faltantes: ['(preparación eliminada)'] };
+                // `prep.costo` es el de la TANDA COMPLETA; el rinde dice qué
+                // fracción de esa tanda pide la receta (mismo criterio que el
+                // descuento de inventario).
+                const fraccion = _fraccionDeTanda(cant, rindePorPrep.get(Number(referenciaId)));
+                return { costo: prep.costo * fraccion, faltantes: prep.faltantes };
+            };
+
+            // Preparaciones: se expanden a insumos, igual que el descuento de stock.
+            const prepCosto = new Map();
+            const porPrep = new Map();
+            prepItems.forEach(it => {
+                const arr = porPrep.get(Number(it.preparacion_id)) || [];
+                arr.push(it);
+                porPrep.set(Number(it.preparacion_id), arr);
+            });
+            for (const [prepId, items] of porPrep) {
+                let costo = 0; const faltantes = new Set();
+                items.forEach(it => {
+                    const r = costoDeLinea('insumo', it.insumo_id, it.cantidad, it.unidad_receta, prepCosto);
+                    costo += r.costo; r.faltantes.forEach(f => faltantes.add(f));
+                });
+                prepCosto.set(prepId, { costo, faltantes: [...faltantes] });
+            }
+
+            // Productos.
+            const porProducto = new Map();
+            recetas.forEach(r => {
+                const arr = porProducto.get(Number(r.producto_id)) || [];
+                arr.push(r);
+                porProducto.set(Number(r.producto_id), arr);
+            });
+            const mapaProductos = new Map();
+            productos.forEach(p => {
+                const lineas = porProducto.get(Number(p.id));
+                if (!lineas || !lineas.length) {
+                    mapaProductos.set(Number(p.id), { costo: null, completo: false, faltantes: [], sin_receta: true });
+                    return;
+                }
+                let costo = 0; const faltantes = new Set();
+                lineas.forEach(l => {
+                    const r = costoDeLinea(l.tipo, l.referencia_id, l.cantidad, l.unidad_receta, prepCosto);
+                    costo += r.costo; r.faltantes.forEach(f => faltantes.add(f));
+                });
+                mapaProductos.set(Number(p.id), {
+                    costo, completo: faltantes.size === 0, faltantes: [...faltantes], sin_receta: false,
+                });
+            });
+
+            // Opciones de modificador (BLOQUE 11). Su cantidad puede ser NEGATIVA
+            // ("sin cebolla" devuelve insumo), así que su costo también.
+            const porOpcion = new Map();
+            modRecetas.forEach(m => {
+                const arr = porOpcion.get(Number(m.opcion_id)) || [];
+                arr.push(m);
+                porOpcion.set(Number(m.opcion_id), arr);
+            });
+            const mapaOpciones = new Map();
+            for (const [opcionId, lineas] of porOpcion) {
+                let costo = 0; const faltantes = new Set();
+                lineas.forEach(l => {
+                    const r = costoDeLinea(l.tipo, l.referencia_id, l.cantidad, l.unidad_receta, prepCosto);
+                    costo += r.costo; r.faltantes.forEach(f => faltantes.add(f));
+                });
+                mapaOpciones.set(opcionId, { costo, faltantes: [...faltantes] });
+            }
+
+            resolve({ productos: mapaProductos, opciones: mapaOpciones });
+        }).catch(reject);
+    });
+}
+
+/**
+ * Reporte de rentabilidad del periodo, calculado en la base local.
+ * @param {{desde?: string, hasta?: string, orden?: string}} opciones fechas 'YYYY-MM-DD'
+ */
+function obtenerRentabilidad(opciones, callback) {
+    const o = opciones || {};
+    // Por defecto los últimos 30 días, igual que el backend.
+    const desde = o.desde || null;
+    const hasta = o.hasta || null;
+    const cond = [
+        // Mismo criterio de "venta contable" que el backend: fuera canceladas,
+        // devueltas y mesas todavía abiertas.
+        "p.estado NOT IN ('cancelado', 'devuelto', 'abierto')",
+    ];
+    const params = [];
+    if (desde) { cond.push("DATE(p.fecha_pedido) >= DATE(?)"); params.push(desde); }
+    else { cond.push("DATE(p.fecha_pedido) >= DATE('now', '-29 days', 'localtime')"); }
+    if (hasta) { cond.push("DATE(p.fecha_pedido) <= DATE(?)"); params.push(hasta); }
+
+    const sql = `
+        SELECT pi.pedido_id, pi.producto_id, pi.cantidad, pi.subtotal, pi.modificadores,
+               p.subtotal AS pedido_subtotal, p.total AS pedido_total,
+               pr.nombre AS producto_nombre, pr.emoji AS producto_icono
+        FROM pedido_items pi
+        JOIN pedidos p ON p.id = pi.pedido_id
+        LEFT JOIN productos pr ON pr.id = pi.producto_id
+        WHERE ${cond.join(' AND ')}
+    `;
+
+    db.all(sql, params, (err, renglones) => {
+        if (err) return callback(err);
+        _mapaDeCostosLocal().then(costos => {
+            // Factor neto por pedido: le quita impuesto y descuentos al ingreso.
+            const bruto = new Map();
+            (renglones || []).forEach(r => {
+                const id = Number(r.pedido_id);
+                bruto.set(id, (bruto.get(id) || 0) + (parseFloat(r.subtotal) || 0));
+            });
+            const factor = new Map();
+            (renglones || []).forEach(r => {
+                const id = Number(r.pedido_id);
+                if (factor.has(id)) return;
+                const b = bruto.get(id) || 0;
+                const neto = (r.pedido_subtotal !== null && r.pedido_subtotal !== undefined)
+                    ? parseFloat(r.pedido_subtotal)
+                    : parseFloat(r.pedido_total);
+                factor.set(id, (b > 0 && isFinite(neto)) ? neto / b : 1);
+            });
+
+            const acumulado = new Map();
+            (renglones || []).forEach(r => {
+                const pid = Number(r.producto_id);
+                const qty = parseInt(r.cantidad) || 0;
+                let fila = acumulado.get(pid);
+                if (!fila) {
+                    const info = costos.productos.get(pid) ||
+                        { costo: null, completo: false, faltantes: [], sin_receta: true };
+                    fila = {
+                        product_id: pid,
+                        nombre: r.producto_nombre || 'Producto eliminado',
+                        emoji: r.producto_icono || '',
+                        unidades: 0, ingreso: 0, costo: 0,
+                        sin_receta: info.sin_receta,
+                        costo_confiable: info.sin_receta ? false : info.completo,
+                        insumos_sin_costo: new Set(info.faltantes),
+                        _costoUnitario: info.costo,
+                    };
+                    acumulado.set(pid, fila);
+                }
+                fila.unidades += qty;
+                fila.ingreso += (parseFloat(r.subtotal) || 0) * (factor.get(Number(r.pedido_id)) || 1);
+                if (!fila.sin_receta) {
+                    fila.costo += (fila._costoUnitario || 0) * qty;
+                    // Extras del renglón: cobran y consumen (BLOQUE 11).
+                    let elegidas = [];
+                    try { elegidas = JSON.parse(r.modificadores || '[]') || []; } catch (e) { elegidas = []; }
+                    if (Array.isArray(elegidas)) {
+                        elegidas.forEach(m => {
+                            const info = costos.opciones.get(Number(m && m.option_id));
+                            if (!info) return;
+                            fila.costo += info.costo * qty;
+                            if (info.faltantes.length) {
+                                info.faltantes.forEach(f => fila.insumos_sin_costo.add(f));
+                                fila.costo_confiable = false;
+                            }
+                        });
+                    }
+                }
+            });
+
+            const productos = [...acumulado.values()].map(f => {
+                const ingreso = _centavos(f.ingreso);
+                if (f.sin_receta) {
+                    return {
+                        product_id: f.product_id, nombre: f.nombre, emoji: f.emoji,
+                        unidades: f.unidades, ingreso,
+                        costo: null, costo_unitario: null, margen: null, margen_pct: null,
+                        sin_receta: true, costo_confiable: false, insumos_sin_costo: [],
+                    };
+                }
+                const costo = _centavos(f.costo);
+                const margen = _centavos(ingreso - costo);
+                return {
+                    product_id: f.product_id, nombre: f.nombre, emoji: f.emoji,
+                    unidades: f.unidades, ingreso, costo,
+                    costo_unitario: _centavos(f._costoUnitario || 0),
+                    margen,
+                    margen_pct: ingreso > 0 ? Math.round((margen / ingreso) * 1000) / 10 : null,
+                    sin_receta: false,
+                    costo_confiable: f.costo_confiable,
+                    insumos_sin_costo: [...f.insumos_sin_costo],
+                };
+            });
+
+            const criterios = {
+                margen: (a, b) => (b.margen === null ? -Infinity : b.margen) - (a.margen === null ? -Infinity : a.margen),
+                margen_pct: (a, b) => (b.margen_pct === null ? -Infinity : b.margen_pct) - (a.margen_pct === null ? -Infinity : a.margen_pct),
+                ingreso: (a, b) => b.ingreso - a.ingreso,
+                unidades: (a, b) => b.unidades - a.unidades,
+            };
+            productos.sort(criterios[o.orden] || criterios.margen);
+
+            const conCosto = productos.filter(p => !p.sin_receta);
+            const insumosSinCosto = new Set();
+            conCosto.forEach(p => p.insumos_sin_costo.forEach(i => insumosSinCosto.add(i)));
+            const ingresoTotal = _centavos(conCosto.reduce((s, p) => s + p.ingreso, 0));
+            const costoTotal = _centavos(conCosto.reduce((s, p) => s + p.costo, 0));
+            const margenTotal = _centavos(ingresoTotal - costoTotal);
+
+            callback(null, {
+                periodo: { desde, hasta },
+                resumen: {
+                    ingreso: ingresoTotal,
+                    costo: costoTotal,
+                    margen: margenTotal,
+                    margen_pct: ingresoTotal > 0 ? Math.round((margenTotal / ingresoTotal) * 1000) / 10 : null,
+                    productos_con_receta: conCosto.length,
+                    productos_sin_receta: productos.length - conCosto.length,
+                    insumos_sin_costo: [...insumosSinCosto],
+                },
+                productos,
+            });
+        }).catch(callback);
+    });
+}
+
 // ── Movimientos de caja (BLOQUE 7) ──────────────────────────────────────────
 // Espejo local de `cash_movements` del backend. No se sincronizan: igual que los
 // turnos, en modo conectado viven en el backend y en modo local en esta base.
@@ -1857,10 +2195,11 @@ function syncInsumos(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     syncConTransaccion((done) => {
         db.serialize(() => {
-            const stmt = db.prepare('INSERT OR REPLACE INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            const stmt = db.prepare('INSERT OR REPLACE INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad, costo_unitario) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             datos.forEach(d => stmt.run(
                 d.id, d.name, d.unit, d.stock || 0, d.min_stock || 0,
-                d.active ? 1 : 0, d.type || 'ingrediente', d.content_amount || null, d.content_unit || null
+                d.active ? 1 : 0, d.type || 'ingrediente', d.content_amount || null, d.content_unit || null,
+                d.cost_per_unit || 0
             ));
             const placeholders = datos.map(() => '?').join(',');
             const ids = datos.map(d => d.id);
@@ -1873,8 +2212,10 @@ function syncPreparaciones(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     syncConTransaccion((done) => {
         db.serialize(() => {
-            const stmtPrep = db.prepare('INSERT OR REPLACE INTO preparaciones (id, nombre, activo) VALUES (?, ?, ?)');
-            datos.forEach(d => stmtPrep.run(d.id, d.name, d.active ? 1 : 0));
+            // El rinde viene del backend (el mobile sí lo deja editar): sin él, el
+            // desktop descontaría una cantidad y la nube otra.
+            const stmtPrep = db.prepare('INSERT OR REPLACE INTO preparaciones (id, nombre, activo, rinde) VALUES (?, ?, ?, ?)');
+            datos.forEach(d => stmtPrep.run(d.id, d.name, d.active ? 1 : 0, parseFloat(d.yield_quantity) > 0 ? parseFloat(d.yield_quantity) : 1));
             const placeholders = datos.map(() => '?').join(',');
             const ids = datos.map(d => d.id);
             stmtPrep.finalize(() => {
@@ -1980,9 +2321,10 @@ function syncCombos(datos, cb) {
 
 function agregarInsumoConId(id, datos, cb) {
     db.run(
-        `INSERT OR REPLACE INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO insumos (id, nombre, unidad, stock_actual, stock_minimo, activo, tipo, contenido_cantidad, contenido_unidad, costo_unitario) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
         [id, datos.nombre, datos.unidad, datos.stock_actual || 0, datos.stock_minimo || 0,
-         datos.tipo || 'ingrediente', datos.contenido_cantidad || null, datos.contenido_unidad || null],
+         datos.tipo || 'ingrediente', datos.contenido_cantidad || null, datos.contenido_unidad || null,
+         datos.costo_unitario || 0],
         cb
     );
 }
@@ -2338,6 +2680,7 @@ module.exports = {
     // Inventario: la pareja descontar/restaurar de una receta (mismo signo que §32.6)
     restaurarInsumosDeVenta,
     marcarPedidoSincronizado,
+    obtenerRentabilidad,
     calcularAlertas,
     syncPedidos,
     obtenerMesas,

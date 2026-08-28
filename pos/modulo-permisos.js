@@ -118,6 +118,7 @@ async function cargarPermisosAjustes(preloadedSettings = null) {
         { clave: 'ver_clientes',    label: 'Clientes' },
         { clave: 'ver_ofertas',     label: 'Ofertas' },
         { clave: 'ver_inventario',  label: 'Inventario' },
+        { clave: 'ver_rentabilidad', label: 'Rentabilidad' },
         { clave: 'ver_ajustes',     label: 'Ajustes' },
     ];
 
@@ -535,6 +536,7 @@ async function crearNuevoPuesto() {
         ver_clientes:    false,
         ver_ofertas:     false,
         ver_inventario:  false,
+        ver_rentabilidad: false,
         ver_ajustes:     false,
     };
 

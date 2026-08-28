@@ -525,6 +525,7 @@ const VISTAS_CON_SUCURSAL = {
     pedidos:    { tabs: 'branch-tabs-pedidos',     aviso: 'branch-aviso-pedidos',    recargar: () => cargarPedidos() },
     inventario: { tabs: 'branch-tabs-inventario',  aviso: 'branch-aviso-inventario', recargar: () => cargarInventario() },
     mesas:      { tabs: 'branch-tabs-mesas',       aviso: 'branch-aviso-mesas',      recargar: () => cargarVistaMesas() },
+    rentabilidad: { tabs: 'branch-tabs-rentabilidad', aviso: 'branch-aviso-rentabilidad', recargar: () => cargarRentabilidad() },
 };
 
 // La sucursal que deben usar las CONSULTAS de la vista actual: la que se está

@@ -87,9 +87,9 @@ let rolActivo = 'dueno'; // 'cajero' | 'encargado' | 'dueno'
 let ventaSinTurno = true; // si true, permite vender sin haber abierto turno (default: activo)
 
 const PERMISOS_DEFAULT = {
-    cajero:    { enabled: false, ver_dashboard: false, ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_mesas: true,  ver_productos: false, ver_clientes: true,  ver_ofertas: false, ver_inventario: false, ver_ajustes: false },
-    encargado: { enabled: false, ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_mesas: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_ajustes: false },
-    dueno:     { enabled: true,  ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_mesas: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_ajustes: true  }
+    cajero:    { enabled: false, ver_dashboard: false, ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_mesas: true,  ver_productos: false, ver_clientes: true,  ver_ofertas: false, ver_inventario: false, ver_rentabilidad: false, ver_ajustes: false },
+    encargado: { enabled: false, ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_mesas: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_rentabilidad: false, ver_ajustes: false },
+    dueno:     { enabled: true,  ver_dashboard: true,  ver_nueva_venta: true,  ver_pedidos: true,  ver_turno: true,  ver_mesas: true,  ver_productos: true,  ver_clientes: true,  ver_ofertas: true,  ver_inventario: true,  ver_rentabilidad: true,  ver_ajustes: true  }
 };
 
 let nombreActivo = '';
@@ -1184,6 +1184,15 @@ setTimeout(() => {
             document.querySelector('#view-inventario .premium-lock-overlay')?.remove();
             cargarInventario();
         }
+    } else if (vista === 'rentabilidad') {
+        // Depende de las recetas y de los costos del inventario, que ya son
+        // premium: sin ese candado el reporte saldría siempre vacío.
+        if (!puedeAccederPremium()) {
+            mostrarBloquePremium('view-rentabilidad');
+        } else {
+            document.querySelector('#view-rentabilidad .premium-lock-overlay')?.remove();
+            cargarRentabilidad();
+        }
     } else if (vista === 'ajustes') {
         cargarAjustesInstalados();
     } else if (vista === 'turno') {
@@ -1210,6 +1219,7 @@ setTimeout(() => {
     clientes: 'Clientes',
     ofertas: 'Ofertas',
     inventario: 'Inventario',
+    rentabilidad: 'Rentabilidad',
     ajustes: 'Configuración',
     turno: 'Turno / Corte de Caja'
 };

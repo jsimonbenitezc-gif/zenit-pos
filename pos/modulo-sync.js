@@ -511,6 +511,9 @@ async function subirInventarioLocalAlBackend() {
             try {
                 const creado = await apiClient.request('/inventory/ingredients', { method: 'POST', body: {
                     name: insumo.nombre, unit: insumo.unidad,
+                    // El costo viaja con el insumo: sin él, la rentabilidad de
+                    // este negocio nacería vacía en la nube (BLOQUE 12).
+                    cost_per_unit: insumo.costo_unitario || 0,
                     stock: insumo.stock_actual || 0, min_stock: insumo.stock_minimo || 0
                 } });
                 mapaInsumos[insumo.id] = creado.id;

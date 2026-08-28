@@ -259,6 +259,13 @@ ipcMain.handle('crear-pedido-directo', async (_, datosPedido, items, opciones) =
     });
 });
 
+// BLOQUE 12 — Rentabilidad calculada en la base LOCAL. La usa el desktop en
+// modo local y cuando no hay internet: si el reporte solo viviera en la nube,
+// la caja se quedaría sin él justo el día que se cae la conexión.
+ipcMain.handle('obtener-rentabilidad', async (_e, opciones) => {
+    return new Promise((res, rej) => db.obtenerRentabilidad(opciones || {}, (err, r) => err ? rej(err) : res(r)));
+});
+
 ipcMain.handle('obtener-estadisticas', async () => {
     return new Promise((res, rej) => db.obtenerEstadisticas((err, stats) => err ? rej(err) : res(stats)));
 });

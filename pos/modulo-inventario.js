@@ -38,6 +38,7 @@ function fmtStock(val) {
                   stock_actual: d.stock || 0, stock_minimo: d.min_stock || 0,
                   activo: d.active ? 1 : 0, tipo: d.type || 'ingrediente',
                   contenido_cantidad: d.content_amount || null, contenido_unidad: d.content_unit || null,
+                  costo_unitario: d.cost_per_unit || 0,
               }));
               preparacionesCache = await window.api.obtenerPreparaciones();
               const agrupadosVista = await obtenerProductosAgrupadosWrapper();
@@ -92,7 +93,7 @@ function cambiarTabInventario(tab, btn) {
 function renderizarTablaInsumos() {
     const tbody = document.getElementById('tabla-insumos');
     if (!insumosCache.length) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:#9ca3af;">
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:30px; color:#9ca3af;">
             Aún no has registrado insumos. Haz clic en "+ Agregar Insumo" para comenzar.
         </td></tr>`;
         return;
@@ -113,6 +114,9 @@ function renderizarTablaInsumos() {
                 ${fmtStock(ins.stock_actual)} ${esc(ins.unidad)}
             </td>
             <td style="color:#6b7280;">${ins.stock_minimo > 0 ? fmtStock(ins.stock_minimo) + ' ' + esc(ins.unidad) : '—'}</td>
+            <td>${ins.costo_unitario > 0
+                ? '$' + parseFloat(ins.costo_unitario).toFixed(2) + ' <span style="color:#9ca3af;font-size:0.85em;">/ ' + esc(ins.unidad) + '</span>'
+                : '<span style="color:#f59e0b;" title="Sin costo no se puede calcular la rentabilidad de los platillos que lo usan">Sin costo</span>'}</td>
             <td><span class="${estadoClase}">${estadoBadge}</span></td>
             <td>
                 <div style="display:flex; gap:6px;">
@@ -131,6 +135,14 @@ function renderizarTablaInsumos() {
 
 // Unidades que necesitan conversión (no son nativas de peso/volumen)
 const UNIDADES_CON_CONVERSION = ['pzas', 'latas', 'bolsas', 'porciones'];
+
+// "Lo que te cuesta una kg / una pza": la unidad del costo tiene que ser la
+// MISMA en la que se guarda el stock, o la receta multiplicaría por un precio
+// que no corresponde.
+function _actualizarEtiquetaCostoInsumo(unidad) {
+    const el = document.getElementById('ins-costo-unidad');
+    if (el) el.innerText = unidad || 'unidad';
+}
 
 function abrirModalInsumo(ins = null) {
     insumoEditandoId = ins ? ins.id : null;
@@ -153,6 +165,9 @@ function abrirModalInsumo(ins = null) {
         stockNota.remove();
     }
     document.getElementById('ins-minimo').value = ins ? ins.stock_minimo : '';
+    // BLOQUE 12 — el costo por unidad alimenta el reporte de rentabilidad.
+    document.getElementById('ins-costo').value = (ins && ins.costo_unitario > 0) ? ins.costo_unitario : '';
+    _actualizarEtiquetaCostoInsumo(ins ? ins.unidad : 'kg');
 
     // Mostrar/ocultar bloque de conversión según unidad
     const unidad = ins ? ins.unidad : 'kg';
@@ -172,6 +187,7 @@ function abrirModalInsumo(ins = null) {
         document.getElementById('conv-unidad-label').innerText = u;
         document.getElementById('bloque-conversion').style.display =
             UNIDADES_CON_CONVERSION.includes(u) ? 'block' : 'none';
+        _actualizarEtiquetaCostoInsumo(u);
     };
 
     document.getElementById('modal-insumo').classList.remove('hidden');
@@ -187,7 +203,9 @@ async function guardarInsumo() {
     const unidad = document.getElementById('ins-unidad').value;
     const stock_actual = parseFloat(document.getElementById('ins-stock').value) || 0;
     const stock_minimo = parseFloat(document.getElementById('ins-minimo').value) || 0;
+    const costo_unitario = parseFloat(document.getElementById('ins-costo').value) || 0;
     if (!nombre) { alertaZenit('El nombre es obligatorio'); return; }
+    if (costo_unitario < 0) { alertaZenit('El costo no puede ser negativo'); return; }
     try {
         const contenido_cantidad = parseFloat(document.getElementById('ins-contenido-cantidad').value) || null;
         const contenido_unidad = document.getElementById('ins-contenido-unidad').value || null;
@@ -195,10 +213,10 @@ async function guardarInsumo() {
         const stockActualReal = insumoEditandoId
             ? (insumosCache.find(i => i.id === insumoEditandoId)?.stock_actual ?? 0)
             : stock_actual;
-        const datos    = { nombre, unidad, stock_actual: stockActualReal, stock_minimo, contenido_cantidad, contenido_unidad };
+        const datos    = { nombre, unidad, stock_actual: stockActualReal, stock_minimo, contenido_cantidad, contenido_unidad, costo_unitario };
         const datosAPI = insumoEditandoId
-            ? { name: nombre, unit: unidad, min_stock: stock_minimo, content_amount: contenido_cantidad, content_unit: contenido_unidad }
-            : { name: nombre, unit: unidad, stock: stock_actual, min_stock: stock_minimo, content_amount: contenido_cantidad, content_unit: contenido_unidad };
+            ? { name: nombre, unit: unidad, min_stock: stock_minimo, content_amount: contenido_cantidad, content_unit: contenido_unidad, cost_per_unit: costo_unitario }
+            : { name: nombre, unit: unidad, stock: stock_actual, min_stock: stock_minimo, content_amount: contenido_cantidad, content_unit: contenido_unidad, cost_per_unit: costo_unitario };
         if (modoConectado && apiClient && tokenActual) {
             if (insumoEditandoId) {
                 await apiClient.request(`/inventory/ingredients/${insumoEditandoId}`, { method: 'PUT', body: datosAPI });
