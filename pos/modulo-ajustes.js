@@ -1832,14 +1832,23 @@ async function imprimirTicket(pedidoId) {
                     </div>
 
                     <div class="items">
-                        ${detalles.map(item => `
+                        ${detalles.map(item => {
+                            // Modificadores (BLOQUE 11). Van bajo el renglón, no
+                            // como línea aparte: el precio del renglón YA los
+                            // incluye, así que un renglón propio haría que el
+                            // ticket pareciera cobrar dos veces.
+                            const extras = typeof resumenModificadores === 'function'
+                                ? resumenModificadores(leerModificadores(item.modificadores))
+                                : '';
+                            return `
                             <div class="item">
                                 <span class="item-name">${esc(item.nombre)}</span>
                                 <span class="item-qty">x${item.cantidad}</span>
                                 <span class="item-price">${moneda}${item.precio.toFixed(2)}</span>
                             </div>
+                            ${extras ? `<div class="nota">${esc(extras)}</div>` : ''}
                             ${item.nota ? `<div class="nota">* ${esc(item.nota)}</div>` : ''}
-                        `).join('')}
+                        `; }).join('')}
                     </div>
 
                     <div class="separator"></div>

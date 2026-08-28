@@ -271,6 +271,53 @@ function inicializarTablas() {
         FOREIGN KEY (pedido_id) REFERENCES pedidos(id)
     )`);
     db.run('CREATE INDEX IF NOT EXISTS idx_pagos_pedido ON pagos_pedido(pedido_id)', () => {});
+
+    // Modificadores de producto (BLOQUE 11). Espejo local de la biblioteca del
+    // negocio, para poder armar un carrito con extras SIN internet — igual que
+    // el impuesto (§29) y las propinas (§30).
+    //
+    // ⚠️ Los ids son los del BACKEND, no autoincrementales: el catálogo se
+    // reemplaza entero al sincronizar y los renglones de una venta encolada
+    // guardan el `option_id` real, que es lo que el backend necesita para
+    // resolverla al subir.
+    db.run(`CREATE TABLE IF NOT EXISTS modificador_grupos (
+        id INTEGER PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        min_select INTEGER DEFAULT 0,
+        max_select INTEGER,
+        orden INTEGER DEFAULT 0
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS modificador_opciones (
+        id INTEGER PRIMARY KEY,
+        grupo_id INTEGER NOT NULL,
+        nombre TEXT NOT NULL,
+        price_delta REAL DEFAULT 0,
+        orden INTEGER DEFAULT 0
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS producto_modificadores (
+        producto_id INTEGER NOT NULL,
+        grupo_id INTEGER NOT NULL,
+        orden INTEGER DEFAULT 0,
+        PRIMARY KEY (producto_id, grupo_id)
+    )`);
+    // Ajuste de receta de una opción. `cantidad` NEGATIVA devuelve al inventario
+    // lo que la receta base descontó ("sin cebolla").
+    db.run(`CREATE TABLE IF NOT EXISTS modificador_receta (
+        id INTEGER PRIMARY KEY,
+        opcion_id INTEGER NOT NULL,
+        tipo TEXT NOT NULL,
+        referencia_id INTEGER NOT NULL,
+        cantidad REAL NOT NULL,
+        unidad_receta TEXT
+    )`);
+    db.run('CREATE INDEX IF NOT EXISTS idx_mod_opciones ON modificador_opciones(grupo_id)', () => {});
+    db.run('CREATE INDEX IF NOT EXISTS idx_mod_receta ON modificador_receta(opcion_id)', () => {});
+
+    // Lo elegido en cada renglón, CONGELADO (JSON) + el precio del catálogo antes
+    // de los extras. `precio_unitario` sigue siendo lo que se cobró por unidad,
+    // así que todo lo que ya leía ese campo sigue igual.
+    db.run("ALTER TABLE pedido_items ADD COLUMN modificadores TEXT", () => {});
+    db.run("ALTER TABLE pedido_items ADD COLUMN precio_base REAL", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN puntos INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE clientes ADD COLUMN en_fidelidad INTEGER DEFAULT 0", () => {});
     db.run("ALTER TABLE promociones ADD COLUMN requires_pin INTEGER DEFAULT 0", () => {});
@@ -489,7 +536,18 @@ function convertirUnidad(cantidad, unidadReceta, insumo) {
     return cantidad;
 }
 
-async function descontarInsumosDeVenta(productoId, cantidadVendida) {
+/**
+ * Aplica la receta de un producto al inventario local.
+ *
+ * `signo`: -1 al VENDER (descuenta), +1 al DESHACER (devuelve). Misma convención
+ * y misma aritmética que el backend (`stock + signo * delta`), a propósito: son
+ * la pareja `descontarIngredientesDeReceta` / `restaurarIngredientesDeReceta`, y
+ * el mismo patrón con signo que usan los modificadores (§32.6).
+ *
+ * ⚠️ El SQL suma (`stock_actual + ?`), no resta. El signo ya viene aplicado en el
+ * delta: si además se restara, vender un insumo lo AUMENTARÍA (dos negaciones).
+ */
+async function aplicarRecetaDeVentaLocal(productoId, cantidadVendida, signo = -1) {
     const recetaItems = await allAsync(
         "SELECT ri.*, i.unidad, i.contenido_cantidad, i.contenido_unidad FROM receta_items ri LEFT JOIN insumos i ON ri.tipo='insumo' AND ri.referencia_id=i.id WHERE ri.producto_id = ?",
         [productoId]
@@ -497,26 +555,168 @@ async function descontarInsumosDeVenta(productoId, cantidadVendida) {
     if (!recetaItems || recetaItems.length === 0) return;
     for (const ri of recetaItems) {
         if (ri.tipo === 'insumo') {
-            const cantConvertida = convertirUnidad(ri.cantidad, ri.unidad_receta, ri) * cantidadVendida;
+            const delta = convertirUnidad(ri.cantidad, ri.unidad_receta, ri) * cantidadVendida * signo;
             await runAsync(
-                "UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
-                [cantConvertida, ri.referencia_id]
+                "UPDATE insumos SET stock_actual = MAX(0, stock_actual + ?) WHERE id = ?",
+                [delta, ri.referencia_id]
             );
         } else if (ri.tipo === 'preparacion') {
-            const cantPrep = ri.cantidad * cantidadVendida;
+            const cantPrep = ri.cantidad * cantidadVendida * signo;
             const prepItems = await allAsync(
                 "SELECT pi.*, i.unidad, i.contenido_cantidad, i.contenido_unidad FROM preparacion_items pi JOIN insumos i ON pi.insumo_id=i.id WHERE pi.preparacion_id = ?",
                 [ri.referencia_id]
             );
             if (!prepItems) continue;
             for (const pi of prepItems) {
-                const cantConvertida = convertirUnidad(pi.cantidad, pi.unidad_receta, pi) * cantPrep;
+                const delta = convertirUnidad(pi.cantidad, pi.unidad_receta, pi) * cantPrep;
                 await runAsync(
-                    "UPDATE insumos SET stock_actual = MAX(0, stock_actual - ?) WHERE id = ?",
-                    [cantConvertida, pi.insumo_id]
+                    "UPDATE insumos SET stock_actual = MAX(0, stock_actual + ?) WHERE id = ?",
+                    [delta, pi.insumo_id]
                 );
             }
         }
+    }
+}
+
+/** Vender: descuenta los insumos de la receta. */
+async function descontarInsumosDeVenta(productoId, cantidadVendida) {
+    return aplicarRecetaDeVentaLocal(productoId, cantidadVendida, -1);
+}
+
+/** Deshacer: devuelve al inventario los insumos que la venta descontó. */
+async function restaurarInsumosDeVenta(productoId, cantidadVendida) {
+    return aplicarRecetaDeVentaLocal(productoId, cantidadVendida, +1);
+}
+
+/**
+ * MODIFICADORES (BLOQUE 11) — ajuste de inventario de un renglón.
+ *
+ * Todo se expresa como un DELTA con signo, así que una sola fórmula sirve para
+ * los dos casos ("extra queso" suma consumo, "sin cebolla" lo devuelve) y para
+ * los dos sentidos:
+ *     vender   → stock − delta   (signo = -1)
+ *     cancelar → stock + delta   (signo = +1)
+ * Es exactamente lo que hace `aplicarRecetaDeModificadores` en el backend.
+ *
+ * ⚠️ El SQL SUMA (`stock_actual + ?`), no resta: el signo ya viene aplicado en el
+ * delta. Restarlo ADEMÁS invertiría todo — vender "extra queso" aumentaría el
+ * queso en vez de gastarlo. Es la aritmética del backend (`stock + signo * delta`)
+ * escrita en SQL, y el smoke test de modo local existe justamente para fijarla.
+ */
+async function aplicarRecetaModificadoresLocal(modificadores, cantidadVendida, signo) {
+    let lista = modificadores;
+    if (typeof lista === 'string') {
+        try { lista = JSON.parse(lista); } catch { return; }
+    }
+    if (!Array.isArray(lista) || lista.length === 0) return;
+
+    for (const m of lista) {
+        const opcionId = parseInt(m && m.option_id);
+        if (!Number.isInteger(opcionId)) continue;
+
+        const ajustes = await allAsync(
+            `SELECT mr.*, i.unidad, i.contenido_cantidad, i.contenido_unidad
+             FROM modificador_receta mr
+             LEFT JOIN insumos i ON mr.tipo='insumo' AND mr.referencia_id = i.id
+             WHERE mr.opcion_id = ?`,
+            [opcionId]
+        );
+        if (!ajustes || ajustes.length === 0) continue;
+
+        for (const a of ajustes) {
+            if (a.tipo === 'insumo') {
+                const delta = convertirUnidad(a.cantidad, a.unidad_receta, a) * cantidadVendida * signo;
+                await runAsync(
+                    'UPDATE insumos SET stock_actual = MAX(0, stock_actual + ?) WHERE id = ?',
+                    [delta, a.referencia_id]
+                );
+            } else if (a.tipo === 'preparacion') {
+                const cantPrep = a.cantidad * cantidadVendida * signo;
+                const prepItems = await allAsync(
+                    `SELECT pi.*, i.unidad, i.contenido_cantidad, i.contenido_unidad
+                     FROM preparacion_items pi JOIN insumos i ON pi.insumo_id = i.id
+                     WHERE pi.preparacion_id = ?`,
+                    [a.referencia_id]
+                );
+                for (const pi of prepItems || []) {
+                    const delta = convertirUnidad(pi.cantidad, pi.unidad_receta, pi) * cantPrep;
+                    await runAsync(
+                        'UPDATE insumos SET stock_actual = MAX(0, stock_actual + ?) WHERE id = ?',
+                        [delta, pi.insumo_id]
+                    );
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Reemplaza el catálogo local con el que bajó de la nube. Se hace ENTERO y en
+ * una transacción: un catálogo a medias haría que el cajero viera extras que el
+ * backend ya no reconoce y su venta rebotara con 400.
+ */
+function guardarCatalogoModificadores(data, callback) {
+    const grupos = (data && data.groups) || [];
+    const enlaces = (data && data.product_groups) || [];
+
+    db.serialize(() => {
+        db.run('BEGIN');
+        db.run('DELETE FROM modificador_grupos');
+        db.run('DELETE FROM modificador_opciones');
+        db.run('DELETE FROM producto_modificadores');
+
+        for (const g of grupos) {
+            db.run(
+                'INSERT OR REPLACE INTO modificador_grupos (id, nombre, min_select, max_select, orden) VALUES (?,?,?,?,?)',
+                [g.id, g.name, g.min_select || 0, g.max_select === null ? null : g.max_select, g.sort_order || 0]
+            );
+            for (const o of g.options || []) {
+                db.run(
+                    'INSERT OR REPLACE INTO modificador_opciones (id, grupo_id, nombre, price_delta, orden) VALUES (?,?,?,?,?)',
+                    [o.id, g.id, o.name, parseFloat(o.price_delta) || 0, o.sort_order || 0]
+                );
+            }
+        }
+        for (const e of enlaces) {
+            db.run(
+                'INSERT OR REPLACE INTO producto_modificadores (producto_id, grupo_id, orden) VALUES (?,?,?)',
+                [e.product_id, e.group_id, e.sort_order || 0]
+            );
+        }
+        db.run('COMMIT', (err) => callback && callback(err));
+    });
+}
+
+/** El catálogo local, en el MISMO shape que devuelve `GET /api/modifiers`. */
+async function obtenerCatalogoModificadores(callback) {
+    try {
+        const grupos = await allAsync('SELECT * FROM modificador_grupos ORDER BY orden, id');
+        const opciones = await allAsync('SELECT * FROM modificador_opciones ORDER BY orden, id');
+        const enlaces = await allAsync('SELECT * FROM producto_modificadores ORDER BY orden');
+
+        const porGrupo = new Map();
+        for (const o of opciones) {
+            if (!porGrupo.has(o.grupo_id)) porGrupo.set(o.grupo_id, []);
+            porGrupo.get(o.grupo_id).push({
+                id: o.id, group_id: o.grupo_id, name: o.nombre,
+                price_delta: parseFloat(o.price_delta) || 0, sort_order: o.orden,
+            });
+        }
+
+        callback(null, {
+            groups: grupos.map(g => ({
+                id: g.id, name: g.nombre,
+                min_select: g.min_select || 0,
+                max_select: g.max_select === null ? null : g.max_select,
+                sort_order: g.orden,
+                options: porGrupo.get(g.id) || [],
+            })),
+            product_groups: enlaces.map(e => ({
+                product_id: e.producto_id, group_id: e.grupo_id, sort_order: e.orden,
+            })),
+        });
+    } catch (err) {
+        callback(err);
     }
 }
 
@@ -610,13 +810,28 @@ async function crearPedido(datos, items, callback, opciones) {
         }
 
         for (const item of items) {
+            // MODIFICADORES (BLOQUE 11): `precio` ya viene con los extras sumados
+            // (es lo que el cliente paga por unidad) y `precio_base` guarda de
+            // dónde partió, para poder desglosarlo en el ticket.
+            const modsJson = Array.isArray(item.modificadores) && item.modificadores.length
+                ? JSON.stringify(item.modificadores)
+                : null;
             await runAsync(
-                'INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item) VALUES (?, ?, ?, ?, ?, ?)',
-                [pedidoId, item.id, item.cantidad, item.precio, item.subtotal, item.nota || '']
+                `INSERT INTO pedido_items
+                    (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item, modificadores, precio_base)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    pedidoId, item.id, item.cantidad, item.precio, item.subtotal, item.nota || '',
+                    modsJson,
+                    item.precio_base !== undefined && item.precio_base !== null ? item.precio_base : item.precio,
+                ]
             );
             if (!skipStock) {
                 // Descontar insumos según la receta del producto (si tiene receta)
                 await descontarInsumosDeVenta(item.id, item.cantidad);
+                // …y el ajuste de los extras: el queso adicional sale del
+                // inventario, y la cebolla que no se puso vuelve a él.
+                await aplicarRecetaModificadoresLocal(item.modificadores, item.cantidad, -1);
             }
         }
 
@@ -746,10 +961,13 @@ function obtenerPedidos(filtro, callback) {
 function obtenerDetallesPedido(pedidoId, callback) {
     const sql = `
         SELECT 
-            pi.cantidad, 
-            pi.subtotal AS precio, 
-            pi.nota_item AS nota, 
-            p.nombre, 
+            pi.cantidad,
+            pi.subtotal AS precio,
+            pi.nota_item AS nota,
+            -- Modificadores congelados del renglón (BLOQUE 11), para el ticket.
+            pi.modificadores,
+            pi.precio_base,
+            p.nombre,
             p.emoji
         FROM pedido_items pi
         JOIN productos p ON pi.producto_id = p.id
@@ -1825,7 +2043,22 @@ function obtenerPedidoAbiertoPorMesa(mesa_id, cb) {
             GROUP_CONCAT(
                 pi.id || '|' || pi.producto_id || '|' || pi.cantidad || '|' ||
                 pi.precio_unitario || '|' || pi.subtotal || '|' || COALESCE(pi.nota_item, '') ||
-                '|' || COALESCE(pr.nombre, 'Producto')
+                '|' || COALESCE(pr.nombre, 'Producto') ||
+                -- Modificadores (BLOQUE 11). El JSON viaja con los DOS separadores
+                -- de este formato escapados: una opción llamada "Mitad | mitad"
+                -- partiría el renglón en dos y la mesa mostraría basura.
+                --
+                -- ⚠️ Los marcadores NO pueden contener '|' ni ';', o el escapado se
+                -- come a sí mismo. Y el propio '~' se escapa PRIMERO para que el
+                -- desescapado sea reversible; el renderer lo deshace en orden
+                -- inverso (_parsearItemsMesa).
+                '|' || REPLACE(REPLACE(REPLACE(COALESCE(pi.modificadores, ''),
+                        '~', '~T~'), '|', '~P~'), ';', '~S~') ||
+                -- Precio del catálogo antes de los extras. Es el que sube al
+                -- backend: mandarle el precio ya con extras le haría sumar los
+                -- deltas DOS veces. Un renglón anterior al bloque no lo tiene y
+                -- cae al precio_unitario, que ahí es el precio base.
+                '|' || COALESCE(pi.precio_base, pi.precio_unitario)
             , ';;') as items_raw
          FROM pedidos p
          LEFT JOIN pedido_items pi ON pi.pedido_id = p.id
@@ -1896,25 +2129,60 @@ function _recalcularTotalesMesa(pedido_id, cb) {
     );
 }
 
-function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb) {
+// `precio` llega YA con los extras sumados (BLOQUE 11), así que el recálculo de
+// la mesa —que suma los `subtotal` de los renglones— cuadra sin tocarlo.
+function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb, modificadores, precioBase) {
+    const modsJson = Array.isArray(modificadores) && modificadores.length
+        ? JSON.stringify(modificadores)
+        : null;
     db.run(
-        `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [pedido_id, producto_id, cantidad, precio, precio * cantidad, nota || null],
+        `INSERT INTO pedido_items
+            (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item, modificadores, precio_base)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            pedido_id, producto_id, cantidad, precio, precio * cantidad, nota || null,
+            modsJson,
+            precioBase !== undefined && precioBase !== null ? precioBase : precio,
+        ],
         function(err) {
             if (err) return cb(err);
             // Descontar insumos según la receta del producto (igual que en Nueva Venta)
             descontarInsumosDeVenta(producto_id, cantidad).catch(() => { /* ignorar: mantiene comportamiento fire-and-forget */ });
+            aplicarRecetaModificadoresLocal(modificadores, cantidad, -1).catch(() => { /* ignorar, igual que arriba */ });
             _recalcularTotalesMesa(pedido_id, cb);
         }
     );
 }
 
 function eliminarItemMesa(item_id, pedido_id, cb) {
-    db.run("DELETE FROM pedido_items WHERE id=?", [item_id], (err) => {
-        if (err) return cb(err);
-        _recalcularTotalesMesa(pedido_id, cb);
-    });
+    // DEVOLVER LOS INSUMOS AL INVENTARIO.
+    //
+    // `agregarItemMesa` los descontó, así que quitar el renglón tiene que
+    // devolverlos. Sin esto, un mesero que se equivoca de plato y lo quita deja
+    // esos insumos descontados PARA SIEMPRE: el stock se va desviando en
+    // silencio, un plato a la vez.
+    //
+    // El renglón se lee ANTES de borrarlo — después ya no habría de dónde sacar
+    // el producto, la cantidad ni los modificadores.
+    db.get(
+        "SELECT producto_id, cantidad, modificadores FROM pedido_items WHERE id=?",
+        [item_id],
+        (errLectura, item) => {
+            db.run("DELETE FROM pedido_items WHERE id=?", [item_id], (err) => {
+                if (err) return cb(err);
+
+                if (!errLectura && item) {
+                    // Fire-and-forget, igual que al agregar: el inventario no debe
+                    // impedir que la mesa se corrija.
+                    restaurarInsumosDeVenta(item.producto_id, item.cantidad).catch(() => {});
+                    // Y el ajuste de los extras (§32.6) con el signo invertido.
+                    aplicarRecetaModificadoresLocal(item.modificadores, item.cantidad, +1).catch(() => {});
+                }
+
+                _recalcularTotalesMesa(pedido_id, cb);
+            });
+        }
+    );
 }
 
 function cerrarPedidoMesa(pedido_id, metodo_pago, propina, propina_metodo, cb) {
@@ -2063,6 +2331,12 @@ module.exports = {
     obtenerPedidosPendientes,
     obtenerItemsPedido,
     obtenerPagosPedido,
+    // Modificadores de producto (BLOQUE 11)
+    guardarCatalogoModificadores,
+    obtenerCatalogoModificadores,
+    aplicarRecetaModificadoresLocal,
+    // Inventario: la pareja descontar/restaurar de una receta (mismo signo que §32.6)
+    restaurarInsumosDeVenta,
     marcarPedidoSincronizado,
     calcularAlertas,
     syncPedidos,

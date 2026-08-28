@@ -124,6 +124,9 @@ contextBridge.exposeInMainWorld('api', {
     obtenerPedidosPendientes: () => ipcRenderer.invoke('obtener-pedidos-pendientes'),
     obtenerItemsPedido: (id) => ipcRenderer.invoke('obtener-items-pedido', id),
     obtenerPagosPedido: (id) => ipcRenderer.invoke('obtener-pagos-pedido', id),
+    // Modificadores de producto (BLOQUE 11)
+    guardarCatalogoModificadores: (data) => ipcRenderer.invoke('guardar-catalogo-modificadores', data),
+    obtenerCatalogoModificadores: () => ipcRenderer.invoke('obtener-catalogo-modificadores'),
     marcarPedidoSincronizado: (id) => ipcRenderer.invoke('marcar-pedido-sincronizado', id),
 
     // LOGIN
@@ -170,7 +173,7 @@ contextBridge.exposeInMainWorld('api', {
     eliminarMesa:        (id)                    => ipcRenderer.invoke('eliminar-mesa', id),
     obtenerPedidoMesa:   (mesa_id)               => ipcRenderer.invoke('obtener-pedido-mesa', mesa_id),
     abrirPedidoMesa:     (m, nom, caj, com, not, imp) => ipcRenderer.invoke('abrir-pedido-mesa', m, nom, caj, com, not, imp),
-    agregarItemMesa:     (ped, prod, cant, px, n) => ipcRenderer.invoke('agregar-item-mesa', ped, prod, cant, px, n),
+    agregarItemMesa:     (ped, prod, cant, px, n, mods, pxBase) => ipcRenderer.invoke('agregar-item-mesa', ped, prod, cant, px, n, mods, pxBase),
     eliminarItemMesa:    (item, ped)              => ipcRenderer.invoke('eliminar-item-mesa', item, ped),
     cerrarPedidoMesa:    (ped, metodo, propina, propinaMetodo) => ipcRenderer.invoke('cerrar-pedido-mesa', ped, metodo, propina, propinaMetodo),
     transferirMesa:      (ped, nueva)             => ipcRenderer.invoke('transferir-mesa', ped, nueva),

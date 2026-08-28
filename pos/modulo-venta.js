@@ -291,15 +291,41 @@ function agregarAlCarrito(productoId) {
     const producto = productosGlobales.find(p => p.id === productoId);
     if (!producto) return;
 
-    // Se agrega como item único (desagrupado)
-    carrito.push({
-        id: producto.id,
-        nombre: producto.nombre,
-        precio: producto.precio,
-        cantidad: 1,
-        nota: ''
+    // MODIFICADORES (BLOQUE 11). Si el producto ofrece extras se pregunta antes
+    // de meterlo al carrito; si no, `abrirModalModificadores` llama al callback
+    // de inmediato y el flujo queda EXACTAMENTE como antes del bloque — un
+    // negocio sin extras no ve un paso de más.
+    abrirModalModificadores(producto, (modificadores) => {
+        // Se agrega como item único (desagrupado)
+        carrito.push({
+            id: producto.id,
+            nombre: producto.nombre,
+            // `precio` es lo que se cobra por este renglón (base + extras): todo
+            // lo que ya leía este campo —impuesto, descuentos, pagos, total—
+            // sigue funcionando sin enterarse de que hay modificadores.
+            precio: precioConModificadores(producto.precio, modificadores),
+            precio_base: producto.precio,
+            modificadores,
+            cantidad: 1,
+            nota: ''
+        });
+        renderizarCarrito();
     });
-    renderizarCarrito();
+}
+
+/** Reabre el selector para cambiar los extras de un renglón ya en el carrito. */
+function editarModificadoresCarrito(index) {
+    const item = carrito[index];
+    if (!item) return;
+    const producto = productosGlobales.find(p => p.id === item.id);
+    if (!producto) return;
+
+    abrirModalModificadores(producto, (modificadores) => {
+        item.modificadores = modificadores;
+        item.precio_base = producto.precio;
+        item.precio = precioConModificadores(producto.precio, modificadores);
+        renderizarCarrito();
+    }, item.modificadores || []);
 }
 
 // Base gravable de la venta en curso: lo que suman los productos menos los
@@ -461,11 +487,19 @@ function renderizarCarrito() {
     let subtotal = 0;
     contenedor.innerHTML = carrito.map((item, index) => {
         subtotal += item.precio;
+        // Los extras se listan bajo el nombre y el renglón es clicable para
+        // cambiarlos: corregir un "extra queso" mal marcado no debería obligar a
+        // borrar el producto y volver a agregarlo.
+        const textoMods = resumenModificadores(item.modificadores);
+        const lineaMods = textoMods
+            ? `<span class="cart-mods" onclick="editarModificadoresCarrito(${index})" title="Cambiar los extras">${esc(textoMods)}</span>`
+            : '';
         return `
         <div class="cart-item">
             <div class="cart-qty">1</div>
             <div class="cart-info">
                 <h5>${esc(item.nombre)}</h5>
+                ${lineaMods}
                 <div class="cart-price">$${item.precio.toFixed(2)}</div>
                 ${item.nota ? `<span class="cart-note">📝 ${esc(item.nota)}</span>` : ''}
             </div>
@@ -926,7 +960,11 @@ async function ejecutarVenta() {
         const itemsParaDB = carrito.map(i => ({
             id: i.id,
             cantidad: 1,
+            // `precio` ya trae los extras sumados; `precio_base` es el del
+            // catálogo, y el par permite desglosarlo en el ticket (BLOQUE 11).
             precio: i.precio,
+            precio_base: i.precio_base != null ? i.precio_base : i.precio,
+            modificadores: i.modificadores || [],
             subtotal: i.precio,
             nota: i.nota || ''
         }));
@@ -947,7 +985,14 @@ async function ejecutarVenta() {
             tipo: datosPedido.tipo_pedido === 'domicilio' ? 'delivery' : 'mostrador',
             mesa: null,
             notas: datosPedido.notas_generales || null,
-            items: carrito.map(i => ({ nombre: i.nombre, cantidad: 1, notas: i.nota || '' }))
+            // La cocina necesita ver los extras MÁS que nadie: un "sin cebolla"
+            // que no llega al pasador se convierte en un plato devuelto.
+            items: carrito.map(i => ({
+                nombre: i.nombre,
+                cantidad: 1,
+                modificadores: resumenModificadores(i.modificadores),
+                notas: i.nota || '',
+            }))
         }).catch(() => {});
 
         // Guardar ID del pedido para impresión

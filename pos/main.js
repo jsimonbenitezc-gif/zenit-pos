@@ -705,6 +705,15 @@ ipcMain.handle('obtener-items-pedido', (_, id) => {
 ipcMain.handle('obtener-pagos-pedido', (_, id) => {
     return new Promise((res, rej) => db.obtenerPagosPedido(id, (err, rows) => err ? rej(err) : res(rows)));
 });
+// MODIFICADORES (BLOQUE 11) — espejo local de la biblioteca del negocio.
+// Guardar el catálogo NO es una operación de dueño: lo escribe el sync con lo
+// que ya bajó del backend, igual que el catálogo de productos.
+ipcMain.handle('guardar-catalogo-modificadores', (_, data) => {
+    return new Promise((res, rej) => db.guardarCatalogoModificadores(data, (err) => err ? rej(err) : res(true)));
+});
+ipcMain.handle('obtener-catalogo-modificadores', () => {
+    return new Promise((res, rej) => db.obtenerCatalogoModificadores((err, data) => err ? rej(err) : res(data)));
+});
 ipcMain.handle('marcar-pedido-sincronizado', (_, id) => {
     return new Promise((res, rej) => db.marcarPedidoSincronizado(id, (err) => err ? rej(err) : res(true)));
 });
@@ -972,8 +981,10 @@ ipcMain.handle('obtener-pedido-mesa', (_, mesa_id) =>
     new Promise((res, rej) => db.obtenerPedidoAbiertoPorMesa(mesa_id, (e, r) => e ? rej(e) : res(r))));
 ipcMain.handle('abrir-pedido-mesa', (_, mesa_id, mesa_nombre, cajero, comensales, notas, impuesto) =>
     new Promise((res, rej) => db.abrirPedidoMesa(mesa_id, mesa_nombre, cajero, comensales, notas, impuesto, (e, id) => e ? rej(e) : res(id))));
-ipcMain.handle('agregar-item-mesa', (_, pedido_id, producto_id, cantidad, precio, nota) =>
-    new Promise((res, rej) => db.agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, (e) => e ? rej(e) : res(true))));
+// `precio` llega YA con los modificadores sumados (BLOQUE 11); `modificadores`
+// es la selección congelada y `precioBase` el precio del catálogo.
+ipcMain.handle('agregar-item-mesa', (_, pedido_id, producto_id, cantidad, precio, nota, modificadores, precioBase) =>
+    new Promise((res, rej) => db.agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, (e) => e ? rej(e) : res(true), modificadores, precioBase)));
 ipcMain.handle('eliminar-item-mesa', (_, item_id, pedido_id) =>
     new Promise((res, rej) => db.eliminarItemMesa(item_id, pedido_id, (e) => e ? rej(e) : res(true))));
 ipcMain.handle('cerrar-pedido-mesa', (_, pedido_id, metodo, propina, propinaMetodo) =>

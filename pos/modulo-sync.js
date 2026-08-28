@@ -218,6 +218,14 @@ async function sincronizarDesdeBackend() {
             combos = await apiClient.request('/offers/combos');
         }
 
+        // Biblioteca de modificadores (BLOQUE 11) — no crítica, falla en silencio.
+        // NO va detrás de `puedeAccederPremium()`: personalizar un producto es
+        // operación básica de un restaurante, no una función de plan.
+        let modificadoresBackend = null;
+        try { modificadoresBackend = await apiClient.getModifiers(); } catch (e) {
+            console.warn('No se pudo descargar la biblioteca de modificadores:', e.message);
+        }
+
         // Ajustes — no crítico, falla silenciosamente
         let ajustesNegocio = null;
         try { ajustesNegocio = await apiClient.request('/settings'); } catch (e) {
@@ -247,6 +255,17 @@ async function sincronizarDesdeBackend() {
             if (descuentos) await window.api.syncDescuentos(descuentos);
             await _reconciliarDescuentosLocales(descuentos);
             if (combos) await window.api.syncCombos(combos);
+        }
+
+        // El catálogo de modificadores se guarda ENTERO en la SQLite: sin él, la
+        // caja sin internet no podría ni ofrecer los extras ni cobrarlos. Se
+        // reemplaza completo (no se fusiona) para que un extra borrado por el
+        // dueño desaparezca de verdad de la pantalla del cajero.
+        if (modificadoresBackend) {
+            await window.api.guardarCatalogoModificadores(modificadoresBackend).catch(() => {});
+            if (typeof cargarCatalogoModificadores === 'function') {
+                await cargarCatalogoModificadores().catch(() => {});
+            }
         }
 
         if (ajustesNegocio && ajustesNegocio.permisos_roles) {
@@ -435,8 +454,23 @@ async function subirPedidosPendientes() {
                 const itemsAPI = items.map(i => ({
                     product_id: i.producto_id,
                     quantity: i.cantidad,
-                    unit_price: i.precio_unitario,
+                    // ⚠️ `unit_price` es el precio BASE, sin los extras (BLOQUE 11):
+                    // el backend compara ESE contra el catálogo para auditar precios
+                    // raros, y suma los modificadores por su cuenta. Mandar el precio
+                    // ya con extras haría que cada "extra queso" quedara registrado
+                    // como si el equipo hubiera cobrado un precio inventado.
+                    // Un renglón anterior al bloque no tiene `precio_base`: ahí el
+                    // unitario ES el precio base y todo queda como antes.
+                    unit_price: i.precio_base != null ? i.precio_base : i.precio_unitario,
+                    base_unit_price: i.precio_base != null ? i.precio_base : i.precio_unitario,
                     subtotal: i.subtotal,
+                    // Selección CONGELADA. Como la venta es diferida, el backend
+                    // respeta estos deltas: son los que el ticket ya cobró, aunque
+                    // el dueño haya cambiado el precio del extra mientras tanto.
+                    modifiers: (() => {
+                        try { return i.modificadores ? JSON.parse(i.modificadores) : undefined; }
+                        catch { return undefined; }
+                    })(),
                     notes: i.nota_item || ''
                 }));
                 const creado = await apiClient.createOrder(datosAPI, itemsAPI);

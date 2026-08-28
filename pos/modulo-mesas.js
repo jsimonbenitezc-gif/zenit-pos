@@ -22,6 +22,30 @@ let _enviandoItemsMesa = false;
 
 const _fmtMesa = (v) => '$' + parseFloat(v || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// ── Escapado de los modificadores dentro de items_raw (BLOQUE 11) ───────────
+// `items_raw` separa campos con '|' y renglones con ';;', así que el JSON de los
+// modificadores no puede llevar ninguno de los dos crudos: una opción llamada
+// "Mitad | mitad" partiría el renglón y la mesa mostraría basura.
+//
+// Los marcadores no contienen '|' ni ';' a propósito (un '&#124;' se habría
+// comido a sí mismo al escapar el ';' que lleva dentro), y el propio '~' se
+// escapa primero para que la vuelta sea exacta. El desescapado va en ORDEN
+// INVERSO. La ida la hace SQL (obtenerPedidoAbiertoPorMesa) y también
+// `_normalizarPedidoApi`, para que el parser sea uno solo.
+function _escaparMods(texto) {
+    return String(texto || '')
+        .replace(/~/g, '~T~')
+        .replace(/\|/g, '~P~')
+        .replace(/;/g, '~S~');
+}
+
+function _desescaparMods(texto) {
+    return String(texto || '')
+        .replace(/~P~/g, '|')
+        .replace(/~S~/g, ';')
+        .replace(/~T~/g, '~');
+}
+
 // Parsea el campo items_raw del GROUP_CONCAT
 function _parsearItemsMesa(items_raw) {
     if (!items_raw) return [];
@@ -34,7 +58,13 @@ function _parsearItemsMesa(items_raw) {
             precio_unitario:parseFloat(p[3]),
             subtotal:       parseFloat(p[4]),
             nota_item:      p[5] || '',
-            nombre:         p[6] || 'Producto'
+            nombre:         p[6] || 'Producto',
+            // Modificadores (BLOQUE 11). Llegan con los separadores escapados
+            // desde SQL (ver obtenerPedidoAbiertoPorMesa); un JSON roto no debe
+            // dejar la mesa en blanco, así que `leerModificadores` cae a [].
+            modificadores:  leerModificadores(_desescaparMods(p[7])),
+            // Precio del catálogo antes de los extras. Es el que sube al backend.
+            precio_base:    p[8] !== undefined && p[8] !== '' ? parseFloat(p[8]) : parseFloat(p[3]),
         };
     });
 }
@@ -117,10 +147,19 @@ function _normalizarPedidoApi(order) {
     if (!order) return null;
     const items_raw = (order.items || []).map(item =>
         [item.id, item.product?.id || 0, item.quantity,
-         parseFloat(item.product?.price || 0),
+         // ⚠️ El precio del RENGLÓN, no el del catálogo. Antes se leía
+         // `product.price`, así que la cuenta mostraba el precio de hoy en vez
+         // del que se cobró — y con modificadores (BLOQUE 11) el renglón
+         // mostraría $100 mientras el total cobra $110.
+         parseFloat(item.unit_price != null ? item.unit_price : (item.product?.price || 0)),
          parseFloat(item.subtotal || 0),
          item.notes || '',
-         item.product?.name || 'Producto'].join('|')
+         item.product?.name || 'Producto',
+         // Mismo escapado que hace SQL, para que el parser sea uno solo.
+         _escaparMods(item.modifiers),
+         parseFloat(item.base_unit_price != null ? item.base_unit_price
+                                                 : (item.unit_price != null ? item.unit_price : 0)),
+        ].join('|')
     ).join(';;');
     return {
         id: order.id,
@@ -339,6 +378,8 @@ function _renderizarPanelMesa() {
         <div style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid #f3f4f6;">
             <div style="flex:1;min-width:0;">
                 <div style="font-size:0.9em;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(it.nombre)}</div>
+                ${resumenModificadores(it.modificadores)
+                    ? `<div style="font-size:0.78em;color:#b45309;font-weight:600;">${esc(resumenModificadores(it.modificadores))}</div>` : ''}
                 ${it.nota_item ? `<div style="font-size:0.75em;color:#6b7280;">${esc(it.nota_item)}</div>` : ''}
                 <div style="font-size:0.8em;color:#6b7280;">${it.cantidad} × ${_fmtMesa(it.precio_unitario)}</div>
             </div>
@@ -374,7 +415,14 @@ async function enviarMesaACocina() {
         tipo: 'mesa',
         mesa: mesa?.nombre || `Mesa ${_mesaActivaId}`,
         notas: _pedidoMesaActivo.notas_generales || null,
-        items: items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad, notas: i.nota_item || '' }))
+        // La cocina necesita los extras (BLOQUE 11): un 'sin cebolla' que no
+        // llega al pasador se convierte en un plato devuelto.
+        items: items.map(i => ({
+            nombre: i.nombre,
+            cantidad: i.cantidad,
+            modificadores: resumenModificadores(i.modificadores),
+            notas: i.nota_item || '',
+        }))
     }).catch(() => {});
     mostrarNotificacionExito('Comanda enviada a cocina', '');
 }
@@ -476,7 +524,7 @@ function _renderizarProductoresMesa(lista) {
     }
     const mostrarStock = document.getElementById('adj-mostrar-stock')?.checked;
     el.innerHTML = lista.map(p => {
-        const en_carrito = _carritoMesa[p.id]?.cantidad || 0;
+        const en_carrito = _cantidadEnCarritoMesa(p.id);
         return `<div id="mesa-pcard-${p.id}" style="border:2px solid ${en_carrito > 0 ? '#4f46e5' : '#e5e7eb'};border-radius:8px;padding:10px;cursor:pointer;text-align:center;background:${en_carrito > 0 ? '#f0f0ff' : '#fff'};"
             onclick="_toggleProductoMesa(${p.id}, '${esc(p.nombre || '')}', ${p.precio})">
             <div style="font-size:1.3em;">${renderIcono(p.emoji || 'svg:utensils', 20)}</div>
@@ -507,18 +555,66 @@ function _renderizarProductoresMesa(lista) {
     }
 }
 
+// MODIFICADORES (BLOQUE 11). La clave del carrito de mesa deja de ser el id del
+// producto y pasa a ser "producto + extras elegidos": dos tacos, uno con extra
+// queso y otro sin él, son renglones DISTINTOS y se cobran distinto. Con la
+// clave vieja el segundo se habría fundido con el primero y habría heredado sus
+// extras (y su precio).
+function _claveCarritoMesa(productoId, modificadores) {
+    const firma = (modificadores || [])
+        .map(m => m.option_id)
+        .filter(Boolean)
+        .sort((a, b) => a - b)
+        .join('-');
+    return firma ? `${productoId}|${firma}` : String(productoId);
+}
+
+/** Cuántas unidades de un producto hay en el carrito, sumando todas sus variantes. */
+function _cantidadEnCarritoMesa(productoId) {
+    return Object.values(_carritoMesa)
+        .filter(v => v.producto_id === productoId)
+        .reduce((s, v) => s + v.cantidad, 0);
+}
+
 function _toggleProductoMesa(id, nombre, precio) {
-    if (!_carritoMesa[id]) _carritoMesa[id] = { nombre, precio, cantidad: 0 };
-    _carritoMesa[id].cantidad++;
-    _uuidEnvioMesa = null; // el envío cambió: ya no es el mismo lote
+    const producto = { id, nombre, precio };
+    abrirModalModificadores(producto, (modificadores) => {
+        const clave = _claveCarritoMesa(id, modificadores);
+        if (!_carritoMesa[clave]) {
+            _carritoMesa[clave] = {
+                producto_id: id,
+                nombre,
+                // Lo que se cobra por unidad de ESTE renglón (base + extras).
+                precio: precioConModificadores(precio, modificadores),
+                precio_base: precio,
+                modificadores,
+                cantidad: 0,
+            };
+        }
+        _carritoMesa[clave].cantidad++;
+        _uuidEnvioMesa = null; // el envío cambió: ya no es el mismo lote
+        _actualizarResumenCarritoMesa();
+        filtrarProductosMesa(document.getElementById('mesa-prod-busqueda')?.value || '');
+    });
+}
+
+function _quitarProductoMesa(clave) {
+    if (!_carritoMesa[clave]) return;
+    _carritoMesa[clave].cantidad--;
+    if (_carritoMesa[clave].cantidad <= 0) delete _carritoMesa[clave];
+    _uuidEnvioMesa = null;
     _actualizarResumenCarritoMesa();
     filtrarProductosMesa(document.getElementById('mesa-prod-busqueda')?.value || '');
 }
 
-function _quitarProductoMesa(id) {
-    if (!_carritoMesa[id]) return;
-    _carritoMesa[id].cantidad--;
-    if (_carritoMesa[id].cantidad <= 0) delete _carritoMesa[id];
+/**
+ * El "+" del resumen suma otra unidad del renglón EXACTO, con los extras que ya
+ * tenía. Antes llamaba a `_toggleProductoMesa`, que ahora vuelve a preguntar los
+ * modificadores — y eso convertiría "uno más de lo mismo" en un interrogatorio.
+ */
+function _sumarUnoCarritoMesa(clave) {
+    if (!_carritoMesa[clave]) return;
+    _carritoMesa[clave].cantidad++;
     _uuidEnvioMesa = null;
     _actualizarResumenCarritoMesa();
     filtrarProductosMesa(document.getElementById('mesa-prod-busqueda')?.value || '');
@@ -535,17 +631,21 @@ function _actualizarResumenCarritoMesa() {
     const total = items.reduce((s, [,i]) => s + i.precio * i.cantidad, 0);
     el.innerHTML = `
         <div style="max-height:130px;overflow-y:auto;margin-bottom:6px;">
-            ${items.map(([id, item]) => `
+            ${items.map(([clave, item]) => {
+                // Los extras se listan bajo el nombre: dos renglones del mismo
+                // producto solo se distinguen por ellos.
+                const textoMods = resumenModificadores(item.modificadores);
+                return `
                 <div style="display:flex;align-items:center;gap:5px;padding:3px 0;border-bottom:1px solid #f3f4f6;">
-                    <span style="flex:1;font-size:0.82em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(item.nombre)}</span>
-                    <button onclick="_quitarProductoMesa(${id})" title="Quitar uno"
+                    <span style="flex:1;font-size:0.82em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(item.nombre)}${textoMods ? `<br><span style="font-size:0.85em;color:#b45309;">${esc(textoMods)}</span>` : ''}</span>
+                    <button onclick="_quitarProductoMesa('${esc(clave)}')" title="Quitar uno"
                         style="width:22px;height:22px;border:1px solid #fca5a5;border-radius:4px;background:#fef2f2;cursor:pointer;font-size:14px;color:#ef4444;line-height:1;flex-shrink:0;">−</button>
                     <span style="min-width:18px;text-align:center;font-weight:700;font-size:0.85em;">${item.cantidad}</span>
-                    <button onclick="_toggleProductoMesa(${id}, '${esc(item.nombre)}', ${item.precio})" title="Agregar uno"
+                    <button onclick="_sumarUnoCarritoMesa('${esc(clave)}')" title="Agregar uno"
                         style="width:22px;height:22px;border:1px solid #a5b4fc;border-radius:4px;background:#eef2ff;cursor:pointer;font-size:14px;color:#4f46e5;line-height:1;flex-shrink:0;">+</button>
                     <span style="font-size:0.82em;color:#6b7280;min-width:52px;text-align:right;">${_fmtMesa(item.precio * item.cantidad)}</span>
                 </div>
-            `).join('')}
+            `; }).join('')}
         </div>
         <div style="text-align:right;font-weight:700;font-size:0.88em;color:#374151;">Total: ${_fmtMesa(total)}</div>
     `;
@@ -561,9 +661,14 @@ async function confirmarAgregarProductosMesa() {
         // `updated` declarado aquí (fuera del if) para que esté en scope al marcar el tracker
         let updated = null;
         if (modoConectado && apiClient && tokenActual) {
-            const apiItems = items.map(([prod_id, item]) => ({
-                product_id: parseInt(prod_id),
+            const apiItems = items.map(([, item]) => ({
+                product_id: item.producto_id,
                 quantity: item.cantidad,
+                // El backend resuelve el delta contra su propia base: aquí solo
+                // viaja QUÉ se eligió, nunca cuánto cuesta (BLOQUE 11).
+                ...(item.modificadores && item.modificadores.length
+                    ? { modifiers: item.modificadores }
+                    : {}),
             }));
             // Un uuid por LOTE, estable mientras el carrito no cambie: si el envío
             // se corta después de que el backend lo guardó, reintentar no duplica
@@ -574,8 +679,13 @@ async function confirmarAgregarProductosMesa() {
             _kdsMarcarEnviado(updated.id, updated.updatedAt, updated.items);
             _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(updated);
         } else {
-            for (const [prod_id, item] of items) {
-                await window.api.agregarItemMesa(_pedidoMesaActivo.id, parseInt(prod_id), item.cantidad, item.precio, null);
+            for (const [, item] of items) {
+                // `item.precio` ya trae los extras sumados; `precio_base` es el
+                // del catálogo, para poder desglosarlo en la cuenta.
+                await window.api.agregarItemMesa(
+                    _pedidoMesaActivo.id, item.producto_id, item.cantidad, item.precio, null,
+                    item.modificadores || [], item.precio_base
+                );
             }
             _pedidosMesa[_mesaActivaId] = await window.api.obtenerPedidoMesa(_mesaActivaId) || null;
         }
@@ -590,7 +700,12 @@ async function confirmarAgregarProductosMesa() {
             tipo: 'mesa',
             mesa: mesaKds?.nombre || `Mesa ${_mesaActivaId}`,
             notas: null,
-            items: items.map(([, item]) => ({ nombre: item.nombre, cantidad: item.cantidad, notas: '' }))
+            items: items.map(([, item]) => ({
+                nombre: item.nombre,
+                cantidad: item.cantidad,
+                modificadores: resumenModificadores(item.modificadores),
+                notas: '',
+            }))
         }).catch(() => {});
         mostrarNotificacionExito('Comanda enviada a cocina', 'Enviado');
         // Refrescar badges de stock tras descontar insumos (local e inmediato, sin esperar SSE)
@@ -618,7 +733,7 @@ async function imprimirCuentaMesa() {
     const impresora = ajustes.impresora || '';
     const ahora = new Date().toLocaleString('es-MX');
     const itemsHtml = items.map(it =>
-        `<tr><td>${it.cantidad}× ${esc(it.nombre)}</td><td style="text-align:right">${_fmtMesa(it.subtotal)}</td></tr>`
+        `<tr><td>${it.cantidad}× ${esc(it.nombre)}${resumenModificadores(it.modificadores) ? `<br><span style="color:#555;font-size:0.92em">${esc(resumenModificadores(it.modificadores))}</span>` : ''}</td><td style="text-align:right">${_fmtMesa(it.subtotal)}</td></tr>`
     ).join('');
     const html = `<html><head><style>
         body{font-family:monospace;font-size:12px;width:300px;margin:0;padding:8px;}
@@ -1138,7 +1253,11 @@ async function confirmarCobrarMesa() {
                 }, itemsSnap.map(it => ({
                     product_id: it.producto_id,
                     quantity: it.cantidad,
-                    unit_price: it.precio_unitario,
+                    // El precio BASE, sin extras: el backend suma los
+                    // modificadores por su cuenta (BLOQUE 11).
+                    unit_price: it.precio_base != null ? it.precio_base : it.precio_unitario,
+                    base_unit_price: it.precio_base != null ? it.precio_base : it.precio_unitario,
+                    modifiers: it.modificadores && it.modificadores.length ? it.modificadores : undefined,
                     subtotal: it.subtotal,
                     notes: it.nota_item || null
                 })));
@@ -1234,7 +1353,7 @@ async function imprimirCuentaMesaFinal() {
     const ahora = new Date().toLocaleString('es-MX');
     const metodosLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia' };
     const itemsHtml = items.map(it =>
-        `<tr><td>${it.cantidad}× ${esc(it.nombre)}${it.nota_item ? ` <span style="color:#888">(${esc(it.nota_item)})</span>` : ''}</td><td style="text-align:right">${_fmtMesa(it.subtotal)}</td></tr>`
+        `<tr><td>${it.cantidad}× ${esc(it.nombre)}${resumenModificadores(it.modificadores) ? `<br><span style="color:#555;font-size:0.92em">${esc(resumenModificadores(it.modificadores))}</span>` : ''}${it.nota_item ? ` <span style="color:#888">(${esc(it.nota_item)})</span>` : ''}</td><td style="text-align:right">${_fmtMesa(it.subtotal)}</td></tr>`
     ).join('');
     const html = `<html><head><style>
         body{font-family:monospace;font-size:12px;width:300px;margin:0;padding:8px;}

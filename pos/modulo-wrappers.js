@@ -259,6 +259,10 @@ async function obtenerDetallePedidoWrapper(id) {
                 nombre: item.product ? item.product.name : `Producto ${item.product_id}`,
                 precio: parseFloat(item.unit_price),
                 nota: item.notes || null,
+                // Modificadores congelados (BLOQUE 11), para el ticket. Viajan tal
+                // cual (TEXT JSON): `leerModificadores` los interpreta al pintar.
+                modificadores: item.modifiers || null,
+                precio_base: item.base_unit_price != null ? parseFloat(item.base_unit_price) : null,
                 subtotal: parseFloat(item.subtotal)
             }));
         } catch (error) {

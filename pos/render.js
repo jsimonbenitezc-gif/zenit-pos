@@ -572,6 +572,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // debe pedir propina desde la primera venta, con o sin internet.
     try { await cargarConfigPropina(); } catch(e) { console.error('Error cargarConfigPropina:', e); }
 
+    // Modificadores (BLOQUE 11): el catálogo se lee de la SQLite antes de la
+    // primera venta, por la misma razón — el cajero tiene que poder ofrecer los
+    // extras y cobrarlos con o sin internet. El sync lo refresca después.
+    try { await cargarCatalogoModificadores(); } catch(e) { console.error('Error cargarCatalogoModificadores:', e); }
+
     // Sincronizar desde backend si hay sesión activa
     if (modoConectado) {
         subirPedidosPendientes().catch(e => console.warn('subirPendientes:', e));

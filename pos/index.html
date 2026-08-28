@@ -626,6 +626,15 @@
 
             <section id="view-productos" class="view">
                 <div class="header-actions" style="margin-bottom: 20px; justify-content: flex-end;">
+                    <!-- Biblioteca de modificadores (BLOQUE 11). Vive aquí y no en
+                         Ajustes porque es parte del MENÚ: se configura junto a los
+                         productos que la usan. -->
+                    <button class="btn-secondary" onclick="abrirBibliotecaModificadores()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 5px;">
+                            <path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/>
+                        </svg>
+                        Modificadores
+                    </button>
                     <button class="btn-primary" id="btnNuevaCategoria">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus" style="display: inline-block; vertical-align: middle; margin-right: 5px;">
                             <path d="M5 12h14"/>
@@ -1892,6 +1901,62 @@
     </div>
 </div>
 
+<!-- Biblioteca de modificadores (BLOQUE 11). Solo el DUEÑO puede editarla: cambia
+     lo que se le cobra al cliente, igual que el impuesto y las propinas. -->
+<div class="modal hidden" id="modalBibliotecaMods">
+    <div class="modal-content" style="max-width:640px;">
+        <div class="modal-header">
+            <h3>Modificadores</h3>
+            <button class="close-btn" onclick="cerrarBibliotecaModificadores()">×</button>
+        </div>
+        <p style="color:#6b7280;font-size:0.88em;margin-bottom:12px;">
+            Un grupo se configura una vez y se engancha a todos los productos que lo usan.
+        </p>
+        <div id="bibmods-lista" style="max-height:50vh;overflow-y:auto;"></div>
+        <div class="modal-actions">
+            <button class="btn-secondary" onclick="cerrarBibliotecaModificadores()">Cerrar</button>
+            <button class="btn-primary" onclick="nuevoGrupoModificador()">Nuevo grupo</button>
+        </div>
+    </div>
+</div>
+
+<!-- Enganchar grupos a un producto (BLOQUE 11) -->
+<div class="modal hidden" id="modalProductoMods">
+    <div class="modal-content" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 id="prodmods-titulo">Modificadores del producto</h3>
+            <button class="close-btn" onclick="cerrarModificadoresDeProducto()">×</button>
+        </div>
+        <div id="prodmods-lista" style="max-height:46vh;overflow-y:auto;"></div>
+        <div class="modal-actions">
+            <button class="btn-secondary" onclick="cerrarModificadoresDeProducto()">Cancelar</button>
+            <button class="btn-primary" onclick="guardarModificadoresDeProducto()">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Modificadores (BLOQUE 11) — se abre al agregar un producto que
+     ofrece extras. Si el producto no tiene ninguno, NO aparece: un negocio sin
+     modificadores no debe ver un paso de más al vender. -->
+<div class="modal hidden" id="modalModificadores">
+    <div class="modal-content" style="max-width:460px;">
+        <div class="modal-header">
+            <h3 id="mods-titulo">Producto</h3>
+            <button class="close-btn" onclick="cerrarModalModificadores()">×</button>
+        </div>
+        <div id="mods-grupos" style="max-height:52vh;overflow-y:auto;padding:4px 0;"></div>
+        <div id="mods-aviso" style="color:#b45309;font-size:0.85em;min-height:18px;margin:6px 0;"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid #e5e7eb;padding-top:10px;">
+            <span style="color:#6b7280;font-size:0.9em;">Precio</span>
+            <span id="mods-total" style="font-weight:700;font-size:1.15em;">$0.00</span>
+        </div>
+        <div class="modal-actions">
+            <button class="btn-secondary" onclick="cerrarModalModificadores()">Cancelar</button>
+            <button class="btn-primary" id="mods-confirmar" onclick="confirmarModificadores()">Agregar</button>
+        </div>
+    </div>
+</div>
+
 <!-- Modal de Pago -->
 <div id="modalPago" class="modal hidden">
     <div class="modal-content payment-modal">
@@ -2454,6 +2519,7 @@
 <script src="modulo-impuestos.js"></script>
 <script src="modulo-propinas.js"></script>
 <script src="modulo-pagos.js"></script>
+<script src="modulo-modificadores.js"></script>
 <script src="modulo-dashboard.js"></script>
 <script src="modulo-productos.js"></script>
 <script src="modulo-venta.js"></script>

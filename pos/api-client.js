@@ -409,6 +409,55 @@ class APIClient {
         return await this.request('/alerts', { method: 'GET' });
     }
 
+    // MODIFICADORES (BLOQUE 11) — la biblioteca del negocio.
+    // El catálogo entero viene en UNA llamada: es lo que el desktop guarda en su
+    // SQLite para poder armar un carrito con extras sin internet.
+    async getModifiers() {
+        return await this.request('/modifiers', { method: 'GET' });
+    }
+
+    async createModifierGroup(group) {
+        return await this.request('/modifiers/groups', { method: 'POST', body: group });
+    }
+
+    async updateModifierGroup(id, group) {
+        return await this.request(`/modifiers/groups/${id}`, { method: 'PUT', body: group });
+    }
+
+    async deleteModifierGroup(id) {
+        return await this.request(`/modifiers/groups/${id}`, { method: 'DELETE' });
+    }
+
+    async createModifierOption(groupId, option) {
+        return await this.request(`/modifiers/groups/${groupId}/options`, { method: 'POST', body: option });
+    }
+
+    async updateModifierOption(id, option) {
+        return await this.request(`/modifiers/options/${id}`, { method: 'PUT', body: option });
+    }
+
+    async deleteModifierOption(id) {
+        return await this.request(`/modifiers/options/${id}`, { method: 'DELETE' });
+    }
+
+    async getModifierOptionRecipe(id) {
+        return await this.request(`/modifiers/options/${id}/recipe`, { method: 'GET' });
+    }
+
+    async saveModifierOptionRecipe(id, items) {
+        return await this.request(`/modifiers/options/${id}/recipe`, { method: 'POST', body: { items } });
+    }
+
+    async getProductModifiers(productId) {
+        return await this.request(`/modifiers/products/${productId}`, { method: 'GET' });
+    }
+
+    async setProductModifiers(productId, groupIds) {
+        return await this.request(`/modifiers/products/${productId}`, {
+            method: 'PUT', body: { group_ids: groupIds },
+        });
+    }
+
     // AJUSTES (nube)
     async getSettings() {
         return await this.request('/settings', { method: 'GET' });
