@@ -429,6 +429,10 @@ function inicializarTablas() {
     db.run('ALTER TABLE turnos ADD COLUMN total_propinas_transferencia REAL DEFAULT 0', () => {});
 
     // KDS — Dispositivos de confianza
+    //
+    // ⚠️ `fecha_conexion DATETIME DEFAULT CURRENT_TIMESTAMP` es un error heredado:
+    // en SQLite eso es UTC y toda esta base compara en hora LOCAL (§26). Las
+    // columnas nuevas de abajo se escriben siempre con datetime('now','localtime').
     db.run(`CREATE TABLE IF NOT EXISTS kds_trusted_devices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ip TEXT NOT NULL,
@@ -437,6 +441,28 @@ function inicializarTablas() {
         confianza INTEGER DEFAULT 1,
         fecha_conexion DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    // BLOQUE 13 — La identidad de una pantalla de cocina es un SECRETO, no su IP.
+    //
+    // La lista de IPs de arriba prometía un control que no daba: las IPs las
+    // reparte el router y rotan, así que la tablet aprobada volvía a pedir
+    // permiso al día siguiente y —peor— el celular de un cliente podía heredar
+    // una IP ya aprobada y entrar sin que nadie se enterara. Tampoco quedaba
+    // registro de QUIÉN autorizó el equipo.
+    db.run('ALTER TABLE kds_trusted_devices ADD COLUMN secret_hash TEXT', () => {});
+    db.run("ALTER TABLE kds_trusted_devices ADD COLUMN estado TEXT DEFAULT 'pendiente'", () => {});
+    db.run('ALTER TABLE kds_trusted_devices ADD COLUMN aprobado_por_nombre TEXT', () => {});
+    db.run('ALTER TABLE kds_trusted_devices ADD COLUMN aprobado_por_rol TEXT', () => {});
+    db.run('ALTER TABLE kds_trusted_devices ADD COLUMN aprobado_en DATETIME', () => {});
+    db.run('ALTER TABLE kds_trusted_devices ADD COLUMN revocado_por_nombre TEXT', () => {});
+    db.run('ALTER TABLE kds_trusted_devices ADD COLUMN revocado_en DATETIME', () => {});
+    db.run('ALTER TABLE kds_trusted_devices ADD COLUMN ultimo_acceso DATETIME', () => {});
+    // Los registros viejos no tienen secreto, así que ya no pueden identificar a
+    // nadie. Se marcan como 'legacy' —no como 'revocado', que implicaría que
+    // alguien les quitó el permiso— y la lista explica que hay que volver a
+    // emparejar esos equipos. Es una molestia de una sola vez.
+    db.run("UPDATE kds_trusted_devices SET estado = 'legacy' WHERE secret_hash IS NULL AND (estado IS NULL OR estado != 'legacy')", () => {});
+    db.run('CREATE INDEX IF NOT EXISTS idx_kds_secret ON kds_trusted_devices(secret_hash)', () => {});
 }
 
 function crearDatosEjemplo() {
@@ -1206,6 +1232,43 @@ function obtenerOCrearCliente(telefono, callback) {
             else db.get('SELECT * FROM clientes WHERE id = ?', [this.lastID], callback);
         });
     });
+}
+
+/**
+ * Busca UN cliente por su teléfono. Devuelve null si no existe (no es un error:
+ * un teléfono desconocido es el caso normal de un cliente nuevo).
+ *
+ * ⚠️ Lee SIEMPRE la SQLite local, también en modo conectado, y es a propósito:
+ *   · `syncClientes()` baja los clientes del backend con SUS MISMOS ids, así que
+ *     la tabla local es un espejo fiel de la nube, no una copia divergente.
+ *   · Es la misma fuente que usa el buscador de la pantalla de venta
+ *     (`buscarClientesVenta` en modulo-venta.js). Si esta consulta fuera al backend,
+ *     teclear el mismo teléfono en dos campos podría dar dos respuestas distintas.
+ *   · El backend NO tiene búsqueda por teléfono: `GET /api/customers?search=` filtra
+ *     por NOMBRE. Usarlo exigiría un endpoint nuevo y un despliegue coordinado.
+ *   · Y así el autocompletado funciona SIN INTERNET, que es cuando más falta hace.
+ *
+ * El teléfono se compara exacto y también ignorando separadores (espacios, guiones,
+ * paréntesis, puntos y el +): el cliente pudo quedar guardado como "55 1234 5678"
+ * y el cajero teclea los diez dígitos seguidos.
+ */
+function buscarClientePorTelefono(telefono, callback) {
+    const texto = String(telefono || '').trim();
+    if (!texto) return callback(null, null);
+    const soloDigitos = texto.replace(/\D/g, '');
+    if (!soloDigitos) return callback(null, null);
+
+    db.get(
+        `SELECT * FROM clientes
+         WHERE telefono = ?
+            OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(telefono,' ',''),'-',''),'(',''),')',''),'.',''),'+','') = ?
+         LIMIT 1`,
+        [texto, soloDigitos],
+        (err, row) => {
+            if (err) return callback(err);
+            callback(null, row || null);
+        }
+    );
 }
 
 function obtenerClientes(callback) {
@@ -2605,7 +2668,8 @@ module.exports = {
     obtenerEstadisticas: obtenerEstadisticasDashboard,
     obtenerEstadisticasDashboard,
     registrarMerma,
-    obtenerClientes,           
+    obtenerClientes,
+    buscarClientePorTelefono,
     actualizarCliente,
     obtenerEstadisticasClientes,
     crearCliente, 
@@ -2700,10 +2764,12 @@ module.exports = {
     registrarLogDescuento,
     obtenerLogDescuentos,
     obtenerDispositivosKDS,
-    buscarDispositivoKDS,
-    agregarDispositivoKDS,
+    buscarDispositivoKDSPorSecreto,
+    registrarDispositivoKDSPendiente,
+    aprobarDispositivoKDSLocal,
+    revocarDispositivoKDSLocal,
+    tocarAccesoKDS,
     eliminarDispositivoKDS,
-    bloquearDispositivoKDS,
 }
 
 function syncPedidos(datos, cb) {
@@ -2837,31 +2903,73 @@ function calcularAlertas(callback) {
 // ============================================
 
 function obtenerDispositivosKDS(cb) {
-    db.all('SELECT * FROM kds_trusted_devices ORDER BY fecha_conexion DESC', cb);
+    db.all('SELECT * FROM kds_trusted_devices ORDER BY id DESC', cb);
 }
 
-function buscarDispositivoKDS(ip, cb) {
-    db.get('SELECT * FROM kds_trusted_devices WHERE ip = ?', [ip], cb);
+/**
+ * BUSCA POR SECRETO, no por IP (BLOQUE 13). Es la única forma de identificar de
+ * verdad a una pantalla: la IP cambia sola y puede acabar en otro aparato.
+ */
+function buscarDispositivoKDSPorSecreto(secretHash, cb) {
+    db.get('SELECT * FROM kds_trusted_devices WHERE secret_hash = ?', [secretHash], cb);
 }
 
-function agregarDispositivoKDS(ip, userAgent, nombre, cb) {
+/** Una pantalla nueva se anota como PENDIENTE: registrada, pero sin ver nada. */
+function registrarDispositivoKDSPendiente({ secretHash, ip, userAgent, nombre }, cb) {
     db.run(
-        'INSERT INTO kds_trusted_devices (ip, user_agent, nombre, confianza) VALUES (?, ?, ?, 1)',
-        [ip, userAgent || '', nombre || ip],
-        function(err) { cb(err, this ? this.lastID : null); }
+        `INSERT INTO kds_trusted_devices (ip, user_agent, nombre, confianza, secret_hash, estado, fecha_conexion)
+         VALUES (?, ?, ?, 0, ?, 'pendiente', datetime('now','localtime'))`,
+        [ip || '', userAgent || '', nombre || 'Pantalla de cocina', secretHash],
+        function (err) { cb(err, this ? this.lastID : null); }
     );
+}
+
+/**
+ * Aprueba una pantalla y deja escrito QUIÉN lo hizo. Antes solo se guardaba la
+ * IP y un nombre: si aparecía un equipo de más, no había forma de saber quién lo
+ * había dejado entrar ni cuándo.
+ */
+function aprobarDispositivoKDSLocal({ id, nombre, aprobadoPorNombre, aprobadoPorRol }, cb) {
+    db.run(
+        `UPDATE kds_trusted_devices
+            SET estado = 'activo', confianza = 1,
+                nombre = COALESCE(NULLIF(?, ''), nombre),
+                aprobado_por_nombre = ?, aprobado_por_rol = ?,
+                aprobado_en = datetime('now','localtime')
+          WHERE id = ?`,
+        [nombre || '', aprobadoPorNombre || 'Sin identificar', aprobadoPorRol || '', id],
+        function (err) { cb(err); }
+    );
+}
+
+/**
+ * Revocar (o rechazar). NO se borra la fila: el registro es la auditoría, igual
+ * que con los movimientos de caja (§28.5). Quitarla de la lista es otra acción.
+ */
+function revocarDispositivoKDSLocal({ id, revocadoPorNombre }, cb) {
+    db.run(
+        `UPDATE kds_trusted_devices
+            SET estado = 'revocado', confianza = 0,
+                revocado_por_nombre = ?, revocado_en = datetime('now','localtime')
+          WHERE id = ?`,
+        [revocadoPorNombre || 'Sin identificar', id],
+        function (err) { cb(err); }
+    );
+}
+
+/** Informativo: "última conexión hace 3 min" ayuda a reconocer un equipo. */
+function tocarAccesoKDS(id) {
+    db.run("UPDATE kds_trusted_devices SET ultimo_acceso = datetime('now','localtime') WHERE id = ?", [id], () => {});
 }
 
 function eliminarDispositivoKDS(id, cb) {
-    db.run('DELETE FROM kds_trusted_devices WHERE id = ?', [id], cb);
-}
-
-function bloquearDispositivoKDS(ip, userAgent, cb) {
-    db.run(
-        'INSERT INTO kds_trusted_devices (ip, user_agent, nombre, confianza) VALUES (?, ?, ?, 0)',
-        [ip, userAgent || '', ip],
-        function(err) { cb(err); }
-    );
+    // Nunca se borra una pantalla ACTIVA: dejaría el equipo con acceso y sin
+    // rastro de que alguna vez se le dio. Primero se revoca.
+    db.run("DELETE FROM kds_trusted_devices WHERE id = ? AND estado != 'activo'", [id], function (err) {
+        if (err) return cb(err);
+        if (this.changes === 0) return cb(new Error('Revoca el dispositivo antes de quitarlo de la lista'));
+        cb(null);
+    });
 }
 
 function limpiarDatosLocales(cb) {

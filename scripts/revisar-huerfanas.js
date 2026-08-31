@@ -13,6 +13,10 @@
  *                          Reventaba la vista de mesas ENTERA (§29).
  *   · 4 botones muertos  — eliminarProductoAdmin, eliminarCategoriaAdmin,
  *                          mostrarVista, mostrarToast (2026-08-26).
+ *   · buscarClientePorTelefono — llamada en modulo-clientes.js y ausente de
+ *                          preload.js, main.js y db.js. El autocompletado del
+ *                          pedido a domicilio nunca funcionó (§36, 2026-08-28).
+ *                          La PARTE 2 de este script existe por ese caso.
  *
  * Las tres se descubrieron por accidente. Este script las encuentra en un segundo.
  *
@@ -63,7 +67,13 @@ function empiezaRegex(src, i) {
  * texto de la plantilla interior se cuela como si fuera código y "Propinas ("
  * parece una llamada a función.
  */
-function limpiar(src) {
+/**
+ * @param {boolean} conservarCadenas  Con `true` se mantiene el TEXTO de las cadenas
+ *   (se siguen quitando comentarios y expresiones regulares). Lo necesita la PARTE 2:
+ *   los canales de IPC SON cadenas, y con el borrado normal ipcMain.handle('x')
+ *   quedaba en ipcMain.handle("") y no se encontraba ni un canal.
+ */
+function limpiar(src, conservarCadenas = false) {
     let out = '';
     let i = 0;
     const n = src.length;
@@ -105,9 +115,11 @@ function limpiar(src) {
             continue;
         }
         if (c === '"' || c === "'") {
-            const q = c; i++;
+            const q = c; const desde = i; i++;
             while (i < n && src[i] !== q) { if (src[i] === '\\') i++; i++; }
-            i++; out += '""'; continue;
+            i++;
+            out += conservarCadenas ? src.slice(desde, i) : '""';
+            continue;
         }
         if (c === '`') { pila.push('texto'); i++; out += ' '; continue; }
 
@@ -190,18 +202,135 @@ while ((m = re.exec(fuente)) !== null) {
 
 const sospechosas = [...llamadas.entries()].sort((a, b) => b[1] - a[1]);
 
+// ════════════════════════════════════════════════════════════════════════════
+// PARTE 1 — Funciones llamadas y nunca definidas.
+// ════════════════════════════════════════════════════════════════════════════
+let hayProblemas = false;
+
 console.log(`Scripts analizados: ${archivos.length}`);
 if (sospechosas.length === 0) {
     console.log('✅ Ninguna función llamada sin definir.');
-    process.exit(0);
+} else {
+    hayProblemas = true;
+    console.log('\n⚠️  LLAMADAS SIN DEFINICIÓN — alguien las usa y nadie las escribió:\n');
+    for (const [nombre, veces] of sospechosas) {
+        console.log(`   ${nombre.padEnd(34)} ${veces} uso${veces === 1 ? '' : 's'}`);
+    }
+    console.log('\nComprueba cada una desde zenit-pos-desktop/pos con:');
+    console.log("   PowerShell:  Select-String 'function NOMBRE' *.js");
+    console.log("   Bash:        grep -rn 'function NOMBRE' *.js");
 }
 
-console.log('\n⚠️  LLAMADAS SIN DEFINICIÓN — alguien las usa y nadie las escribió:\n');
-for (const [nombre, veces] of sospechosas) {
-    console.log(`   ${nombre.padEnd(34)} ${veces} uso${veces === 1 ? '' : 's'}`);
+// ════════════════════════════════════════════════════════════════════════════
+// PARTE 2 — El PUENTE renderer ↔ main: window.api → preload → ipcMain.
+//
+// ─── POR QUÉ EXISTE ─────────────────────────────────────────────────────────
+// La parte 1 solo mira funciones GLOBALES, así que se le escapa entera la otra
+// mitad del desktop: los métodos que el renderer invoca a través del preload.
+// Un `window.api.loQueSea()` que nadie expuso no es una función indefinida —es
+// una propiedad `undefined` de un objeto que sí existe—, y revienta igual con
+// un TypeError en cuanto alguien abre esa pantalla.
+//
+// Pasó de verdad: `buscarClientePorTelefono` llevaba MESES llamada en
+// modulo-clientes.js sin estar en preload.js, sin handler en main.js y sin
+// función en db.js (CLAUDE.md §36). El autocompletado del pedido a domicilio
+// nunca funcionó y `npm run revisar` daba verde.
+//
+// Se comprueban los tres eslabones de la cadena:
+//   A) `window.api.X` usado en pos/ pero NO expuesto en preload.js  → TypeError.
+//   B) preload hace `invoke('canal')` y main.js no lo atiende       → promesa rechazada.
+//   C) preload escucha `on('canal')` y main.js nunca lo emite       → callback muerto.
+//
+// El inventario de preload se saca EJECUTÁNDOLO con un `electron` de mentira y
+// leyendo las claves reales del objeto, no con una expresión regular: así da
+// igual cómo esté formateado el archivo.
+// ════════════════════════════════════════════════════════════════════════════
+console.log('');
+
+const rutaPreload = path.join(RAIZ, 'preload.js');
+const rutaMain = path.join(RAIZ, 'main.js');
+
+let expuestos = null;
+if (fs.existsSync(rutaPreload)) {
+    const fuentePreload = fs.readFileSync(rutaPreload, 'utf8');
+    const nulo = () => {};
+    const electronFalso = {
+        contextBridge: { exposeInMainWorld: (nombre, obj) => { if (nombre === 'api') expuestos = obj; } },
+        ipcRenderer: { invoke: nulo, on: nulo, once: nulo, send: nulo, removeListener: nulo },
+    };
+    try {
+        // eslint-disable-next-line no-new-func
+        new Function('require', 'console', 'module', 'exports', fuentePreload)(
+            (n) => { if (n === 'electron') return electronFalso; throw new Error('preload requiere ' + n); },
+            { log: nulo, warn: nulo, error: nulo },
+            { exports: {} }, {}
+        );
+    } catch (e) {
+        console.log(`⚠️  No se pudo leer preload.js (${e.message}); se omite la revisión del puente.`);
+    }
 }
-console.log('\nComprueba cada una desde zenit-pos-desktop/pos con:');
-console.log("   PowerShell:  Select-String 'function NOMBRE' *.js");
-console.log("   Bash:        grep -rn 'function NOMBRE' *.js");
+
+if (!expuestos) {
+    console.log('⚠️  preload.js no expuso `api`; se omite la revisión del puente.');
+} else {
+    const claves = new Set(Object.keys(expuestos));
+
+    // ── A) window.api.X sin exponer ──────────────────────────────────────────
+    // Se busca sobre la fuente YA LIMPIADA: si no, el `window.api.X` de un
+    // comentario que explica esta misma revisión saldría como fallo.
+    const usados = new Map();
+    for (const m of fuente.matchAll(/window\s*\.\s*api\s*\??\s*\.\s*([A-Za-z_$][\w$]*)/g)) {
+        if (!claves.has(m[1])) usados.set(m[1], (usados.get(m[1]) || 0) + 1);
+    }
+
+    if (usados.size === 0) {
+        console.log(`✅ Los ${claves.size} métodos de window.api usados están expuestos en preload.js.`);
+    } else {
+        hayProblemas = true;
+        console.log('\n⚠️  window.api SIN EXPONER — el renderer los llama y preload.js no los tiene:\n');
+        for (const [nombre, veces] of [...usados.entries()].sort((a, b) => b[1] - a[1])) {
+            console.log(`   window.api.${nombre.padEnd(30)} ${veces} uso${veces === 1 ? '' : 's'}`);
+        }
+        console.log('\nCada uno necesita los TRES eslabones: función en database/db.js,');
+        console.log('`ipcMain.handle` en pos/main.js y la entrada en pos/preload.js.');
+    }
+
+    // ── B) y C) canales de IPC sin la otra punta ─────────────────────────────
+    if (fs.existsSync(rutaMain)) {
+        const fuenteMain = limpiar(fs.readFileSync(rutaMain, 'utf8'), true);
+        const fuentePreloadLimpia = limpiar(fs.readFileSync(rutaPreload, 'utf8'), true);
+
+        const atendidos = new Set();
+        for (const m of fuenteMain.matchAll(/ipcMain\s*\.\s*(?:handle|handleOnce|on|once)\s*\(\s*["']([^"']+)["']/g)) atendidos.add(m[1]);
+        const emitidos = new Set();
+        for (const m of fuenteMain.matchAll(/\.\s*send\s*\(\s*["']([^"']+)["']/g)) emitidos.add(m[1]);
+
+        const sinHandler = new Set();
+        for (const m of fuentePreloadLimpia.matchAll(/ipcRenderer\s*\.\s*(?:invoke|send)\s*\(\s*["']([^"']+)["']/g)) {
+            if (!atendidos.has(m[1])) sinHandler.add(m[1]);
+        }
+        const sinEmisor = new Set();
+        for (const m of fuentePreloadLimpia.matchAll(/ipcRenderer\s*\.\s*(?:on|once)\s*\(\s*["']([^"']+)["']/g)) {
+            if (!emitidos.has(m[1])) sinEmisor.add(m[1]);
+        }
+
+        if (sinHandler.size === 0 && sinEmisor.size === 0) {
+            console.log(`✅ Los ${atendidos.size} canales de IPC del preload tienen su contraparte en main.js.`);
+        }
+        if (sinHandler.size > 0) {
+            hayProblemas = true;
+            console.log('\n⚠️  CANALES SIN HANDLER — preload los invoca y main.js no los atiende:\n');
+            for (const canal of sinHandler) console.log(`   ${canal}`);
+            console.log("\nFalta un `ipcMain.handle('canal', ...)` en pos/main.js.");
+        }
+        if (sinEmisor.size > 0) {
+            hayProblemas = true;
+            console.log('\n⚠️  ESCUCHAS SIN EMISOR — preload escucha canales que main.js nunca manda:\n');
+            for (const canal of sinEmisor) console.log(`   ${canal}`);
+            console.log('\nO sobra la escucha, o falta el `webContents.send` en pos/main.js.');
+        }
+    }
+}
+
 // Código 1 para que sirva como puerta antes de compilar (CLAUDE.md §21).
-process.exit(1);
+process.exit(hayProblemas ? 1 : 0);

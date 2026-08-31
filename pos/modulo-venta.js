@@ -1235,20 +1235,29 @@ function seleccionarTipoPedido(tipo, btn) {
         // Prellenar con datos del cliente si está seleccionado
         let nombrePrellenado = '';
         let direccionPrellenada = '';
+        let telefonoPrellenado = '';
 
         if (clienteSeleccionadoVenta) {
             nombrePrellenado = clienteSeleccionadoVenta.nombre;
             direccionPrellenada = clienteSeleccionadoVenta.direccion || '';
+            telefonoPrellenado = clienteSeleccionadoVenta.telefono || '';
         }
 
         contenedor.innerHTML = `
             <div class="campo-grupo">
+                <label>Teléfono (Opcional)</label>
+                <!-- Al completar los 10 dígitos se busca al cliente y se rellenan
+                     nombre y dirección (buscarYAutocompletarCliente, modulo-clientes.js). -->
+                <input type="tel" id="dom-telefono" placeholder="10 dígitos" autocomplete="off"
+                       value="${esc(telefonoPrellenado)}" oninput="buscarYAutocompletarCliente(this.value)">
+            </div>
+            <div class="campo-grupo">
                 <label>Nombre (Opcional)</label>
-                <input type="text" id="dom-nombre" placeholder="Nombre completo" value="${nombrePrellenado}">
+                <input type="text" id="dom-nombre" placeholder="Nombre completo" value="${esc(nombrePrellenado)}">
             </div>
             <div class="campo-grupo">
                 <label>Dirección (Opcional)</label>
-                <input type="text" id="dom-direccion" placeholder="Calle, número, colonia" value="${direccionPrellenada}">
+                <input type="text" id="dom-direccion" placeholder="Calle, número, colonia" value="${esc(direccionPrellenada)}">
             </div>
             <div class="campo-grupo">
                 <label>Link de Ubicación (Maps)</label>

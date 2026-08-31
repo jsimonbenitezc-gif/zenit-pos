@@ -356,6 +356,17 @@ ipcMain.handle('obtener-clientes', async () => {
     });
 });
 
+// Autocompletado del pedido a domicilio: teléfono -> cliente (nombre y dirección).
+// Devuelve null cuando no hay coincidencia; el renderer lo trata como "cliente nuevo".
+ipcMain.handle('buscar-cliente-por-telefono', async (_, telefono) => {
+    return new Promise((resolve, reject) => {
+        db.buscarClientePorTelefono(telefono, (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+});
+
 ipcMain.handle('obtener-estadisticas-clientes', async () => {
     return new Promise((resolve, reject) => {
         db.obtenerEstadisticasClientes((err, stats) => {
@@ -1037,23 +1048,42 @@ function broadcastKDS(data) {
     kdsClients.forEach(c => { try { c.write(msg); } catch(e) {} });
 }
 
-// Pendientes de aprobación: IP → { res, userAgent, timeout }
-const kdsPendingApprovals = new Map();
-
 function getClientIP(req) {
     // Sólo la dirección real del socket. Nunca confiar en headers como
-    // X-Forwarded-For: los controla el cliente y permitirían suplantar
-    // una IP local para saltarse la aprobación de dispositivos.
+    // X-Forwarded-For: los controla el cliente. Ojo: esto ya NO autoriza a
+    // nadie (BLOQUE 13) — la IP solo sirve para rechazar conexiones de fuera de
+    // la red local y para que el dueño reconozca el equipo al aprobarlo.
     return req.socket.remoteAddress?.replace('::ffff:', '') || '0.0.0.0';
 }
 
-// Verifica si un dispositivo está autorizado (promesa)
-function checkDeviceTrust(ip) {
+// ── Confianza de una pantalla de cocina (BLOQUE 13) ──────────────────────────
+// La identidad es un SECRETO que la tablet genera y guarda en su localStorage,
+// no su IP. Las IPs las reparte el router y rotan: con la lista de IPs, la
+// tablet aprobada volvía a pedir permiso al día siguiente y el celular de un
+// cliente podía heredar una IP ya aprobada. Mismo modelo que el KDS de la nube
+// (backend: utils/kdsDevices.js), para que no haya dos niveles de seguridad.
+const crypto = require('crypto');
+
+function hashSecretoKDS(secreto) {
+    return crypto.createHash('sha256').update(String(secreto)).digest('hex');
+}
+
+/** Mismo criterio que el backend: un secreto corto sería adivinable. */
+function secretoKDSValido(secreto) {
+    return typeof secreto === 'string'
+        && secreto.length >= 16 && secreto.length <= 200
+        && /^[A-Za-z0-9._:-]+$/.test(secreto);
+}
+
+function buscarDispositivoPorSecreto(secretHash) {
     return new Promise((resolve) => {
-        db.buscarDispositivoKDS(ip, (err, row) => {
-            if (err || !row) return resolve(null);
-            resolve(row);
-        });
+        db.buscarDispositivoKDSPorSecreto(secretHash, (err, row) => resolve(err ? null : (row || null)));
+    });
+}
+
+function registrarPendiente(datos) {
+    return new Promise((resolve) => {
+        db.registrarDispositivoKDSPendiente(datos, (err, id) => resolve(err ? null : id));
     });
 }
 
@@ -1115,29 +1145,62 @@ const kdsServer = http.createServer(async (req, res) => {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(data);
         });
-    } else if (req.method === 'GET' && req.url === '/events') {
-        // Verificar confianza del dispositivo (localhost siempre permitido)
+    } else if (req.method === 'GET' && req.url.startsWith('/events')) {
+        // ── Confianza por SECRETO (BLOQUE 13) ────────────────────────────────
+        // localhost es esta misma computadora (la ventana del POS abriendo su
+        // propia cocina): no hay nada que aprobar.
         if (!isLocal) {
-            const device = await checkDeviceTrust(clientIP);
-            if (device && device.confianza === 0) {
-                // Dispositivo bloqueado
-                res.writeHead(403); res.end('Dispositivo bloqueado');
+            let secreto = null;
+            try {
+                secreto = new URL(req.url, 'http://localhost').searchParams.get('device');
+            } catch (e) { /* URL inválida */ }
+
+            if (!secretoKDSValido(secreto)) {
+                // Una pantalla sin secreto es una versión vieja de kds.html, o
+                // alguien pidiendo /events a mano. En ambos casos: sin datos.
+                res.writeHead(401, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'sin_dispositivo', message: 'Abre la pantalla de cocina desde su URL' }));
                 return;
             }
+
+            const hash = hashSecretoKDS(secreto);
+            let device = await buscarDispositivoPorSecreto(hash);
+
             if (!device) {
-                // Dispositivo nuevo: pedir aprobación al usuario desktop
+                // Pantalla nueva: se anota como pendiente y se le avisa al POS
+                // para que alguien la apruebe con su PIN.
+                const nuevoId = await registrarPendiente({
+                    secretHash: hash,
+                    ip: clientIP,
+                    userAgent: req.headers['user-agent'] || 'Desconocido',
+                    nombre: 'Pantalla de cocina'
+                });
                 if (mainWindow && !mainWindow.isDestroyed()) {
                     mainWindow.webContents.send('kds-dispositivo-nuevo', {
+                        id: nuevoId,
                         ip: clientIP,
                         userAgent: req.headers['user-agent'] || 'Desconocido'
                     });
                 }
-                // Mientras tanto, no conectar al SSE — responder con 403 pending
                 res.writeHead(403, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ error: 'pending_approval', message: 'Esperando aprobación del administrador' }));
                 return;
             }
-            // Dispositivo confiable → continuar
+
+            if (device.estado !== 'activo') {
+                // 'revocado' y 'legacy' (los registros por IP de antes del bloque,
+                // que ya no identifican a nadie) no ven la cocina.
+                res.writeHead(403, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    error: device.estado === 'revocado' ? 'revocado' : 'pending_approval',
+                    message: device.estado === 'revocado'
+                        ? 'Esta pantalla ya no tiene acceso'
+                        : 'Esperando aprobación del administrador'
+                }));
+                return;
+            }
+
+            db.tocarAccesoKDS(device.id);
         }
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
@@ -1191,23 +1254,41 @@ ipcMain.handle('kds-get-url', () => ({
     port:  KDS_PORT
 }));
 
-// ── KDS: Gestión de dispositivos de confianza ──────────────────────────
-ipcMain.handle('kds-aprobar-dispositivo', (_, { ip, userAgent, nombre }) => {
+// ── KDS: Gestión de dispositivos de confianza (BLOQUE 13) ──────────────
+// Aprobar y revocar reciben el ID de la fila y el nombre de quien autoriza. El
+// PIN se valida en el renderer contra el hash del puesto (funciona sin internet,
+// igual que el PIN de los movimientos de caja del §28.7); aquí se guarda quién
+// fue, que es lo que antes no quedaba registrado en ninguna parte.
+ipcMain.handle('kds-aprobar-dispositivo', (_, { id, nombre, aprobadoPorNombre, aprobadoPorRol }) => {
     return new Promise((resolve, reject) => {
-        db.agregarDispositivoKDS(ip, userAgent, nombre || ip, (err, id) => {
+        db.aprobarDispositivoKDSLocal({ id, nombre, aprobadoPorNombre, aprobadoPorRol }, (err) => {
             if (err) return reject(err);
-            resolve({ id, ip, nombre: nombre || ip });
+            resolve({ id, nombre });
         });
     });
 });
 
-ipcMain.handle('kds-rechazar-dispositivo', (_, { ip, userAgent }) => {
+ipcMain.handle('kds-revocar-dispositivo', (_, { id, revocadoPorNombre }) => {
     return new Promise((resolve, reject) => {
-        db.bloquearDispositivoKDS(ip, userAgent, (err) => {
+        db.revocarDispositivoKDSLocal({ id, revocadoPorNombre }, (err) => {
             if (err) return reject(err);
             resolve(true);
         });
     });
+});
+
+// QR dibujado EN EL EQUIPO. Antes se le pedía a api.qrserver.com metiéndole el
+// dato en la URL: el mismo error que ya se corrigió en el mobile (§3). Aquí
+// solo viajaba la IP de la red local, pero es una fuga igual y encima deja el
+// QR inservible cuando el local se queda sin internet — justo cuando el KDS
+// local es lo único que sigue funcionando.
+ipcMain.handle('kds-generar-qr', async (_, texto) => {
+    try {
+        const QRCode = require('qrcode');
+        return await QRCode.toDataURL(String(texto || ''), { width: 220, margin: 1 });
+    } catch (e) {
+        return null;
+    }
 });
 
 ipcMain.handle('kds-obtener-dispositivos', () => {

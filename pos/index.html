@@ -1497,42 +1497,72 @@
                         </div>
                         <div id="kds-qr-container" style="display:none;flex-shrink:0;width:104px;height:104px;background:#f3f4f6;border-radius:10px;border:1px solid #e5e7eb;align-items:center;justify-content:center;overflow:hidden;">
                             <img id="kds-qr-img" src="" alt="QR" style="width:100px;height:100px;display:none;" onerror="this.style.display='none';document.getElementById('kds-qr-fallback').style.display='flex'">
-                            <div id="kds-qr-fallback" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:8px;color:#9ca3af;font-size:0.7em;">Sin red para QR</div>
+                            <div id="kds-qr-fallback" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:8px;color:#9ca3af;font-size:0.7em;">No se pudo generar el QR</div>
                         </div>
                     </div>
                 </div>
             </div>
             <p id="kds-no-disponible" style="font-size:0.85em;color:#9ca3af;">Iniciando servidor de cocina...</p>
 
-            <!-- Dispositivos KDS de confianza -->
+            <!-- Pantallas de esta red (servidor local) — BLOQUE 13 -->
             <div style="margin-top:18px;border-top:1px solid #e5e7eb;padding-top:14px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-                    <h4 style="margin:0;font-size:0.92em;">Dispositivos KDS</h4>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                    <h4 style="margin:0;font-size:0.92em;">Pantallas en esta red</h4>
                     <label style="display:flex;align-items:center;gap:6px;font-size:0.78em;color:#6b7280;cursor:pointer;">
                         <input type="checkbox" id="kds-notif-toggle" checked onchange="toggleKdsNotificaciones(this.checked)" style="accent-color:#2563eb;">
-                        Notificar nuevos
+                        Notificar nuevas
                     </label>
                 </div>
-                <div id="kds-dispositivos-lista" style="font-size:0.85em;color:#6b7280;">Cargando dispositivos...</div>
+                <p style="font-size:0.78em;color:#9ca3af;margin:0 0 10px;">
+                    Cada pantalla se identifica con su propio código, no con su dirección de red.
+                    Aprobarla pide tu PIN; revocarla le corta el acceso al instante.
+                </p>
+                <div id="kds-dispositivos-lista" style="font-size:0.85em;color:#6b7280;">Cargando pantallas...</div>
+            </div>
+
+            <!-- Pantallas por internet (backend) — BLOQUE 13 -->
+            <div id="kds-nube-bloque" style="margin-top:18px;border-top:1px solid #e5e7eb;padding-top:14px;display:none;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                    <h4 style="margin:0;font-size:0.92em;">Pantallas por internet</h4>
+                    <button onclick="agregarPantallaNubeKDS()" style="background:#2563eb;color:#fff;border:none;padding:6px 12px;border-radius:8px;font-size:0.8em;font-weight:600;cursor:pointer;">+ Agregar pantalla</button>
+                </div>
+                <p style="font-size:0.78em;color:#9ca3af;margin:0 0 10px;">
+                    Para ver la cocina desde fuera del local. El código del QR dura 10 minutos,
+                    sirve una sola vez y no da acceso por sí solo.
+                </p>
+                <div id="kds-nube-qr" style="display:none;text-align:center;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:14px;margin-bottom:12px;">
+                    <img id="kds-nube-qr-img" src="" alt="Código de emparejamiento" style="width:190px;height:190px;">
+                    <div id="kds-nube-codigo" style="font-size:1.3em;font-weight:800;letter-spacing:4px;color:#2563eb;margin-top:8px;"></div>
+                    <div style="font-size:0.76em;color:#9ca3af;margin-top:4px;">Escanea con la pantalla de cocina · dura 10 minutos</div>
+                    <button onclick="cerrarQRNubeKDS()" style="margin-top:10px;background:none;border:1px solid #e5e7eb;color:#374151;padding:5px 14px;border-radius:8px;font-size:0.8em;cursor:pointer;">Listo</button>
+                </div>
+                <div id="kds-nube-lista" style="font-size:0.85em;color:#6b7280;">Cargando pantallas...</div>
             </div>
         </div>
 
-        <!-- Modal: Aprobar/Rechazar dispositivo KDS -->
+        <!-- Modal: Aprobar / revocar una pantalla de cocina (BLOQUE 13) -->
         <div id="modal-kds-dispositivo" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
             <div style="background:#fff;border-radius:14px;padding:24px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
-                <h3 style="margin:0 0 8px;font-size:1em;">Nuevo dispositivo KDS</h3>
-                <p style="margin:0 0 14px;font-size:0.85em;color:#6b7280;">Un dispositivo quiere conectarse a la pantalla de cocina.</p>
-                <div style="background:#f3f4f6;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:0.82em;">
-                    <div><strong>IP:</strong> <span id="kds-nuevo-ip"></span></div>
-                    <div><strong>Navegador:</strong> <span id="kds-nuevo-ua" style="word-break:break-all;"></span></div>
+                <h3 id="kds-modal-titulo" style="margin:0 0 8px;font-size:1em;">Nueva pantalla de cocina</h3>
+                <p id="kds-modal-sub" style="margin:0 0 14px;font-size:0.85em;color:#6b7280;">Un dispositivo quiere ver la cola de cocina.</p>
+                <div id="kds-modal-info" style="background:#f3f4f6;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:0.82em;">
+                    <div><strong>Equipo:</strong> <span id="kds-nuevo-ua" style="word-break:break-all;"></span></div>
+                    <!-- La dirección de red es solo para reconocer el equipo: ya
+                         NO autoriza nada (antes ella sola daba el permiso). -->
+                    <div style="color:#9ca3af;margin-top:2px;">Desde <span id="kds-nuevo-ip"></span></div>
                 </div>
-                <div style="margin-bottom:14px;">
-                    <label style="font-size:0.82em;color:#374151;display:block;margin-bottom:4px;">Nombre (opcional)</label>
+                <div id="kds-modal-campo-nombre" style="margin-bottom:12px;">
+                    <label style="font-size:0.82em;color:#374151;display:block;margin-bottom:4px;">Nombre</label>
                     <input type="text" id="kds-nuevo-nombre" placeholder="Ej: Tablet Cocina" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;box-sizing:border-box;">
                 </div>
+                <div style="margin-bottom:8px;">
+                    <label style="font-size:0.82em;color:#374151;display:block;margin-bottom:4px;">PIN de tu puesto</label>
+                    <input type="password" id="kds-modal-pin" inputmode="numeric" placeholder="&#8226;&#8226;&#8226;&#8226;" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;box-sizing:border-box;">
+                </div>
+                <div id="kds-modal-error" style="display:none;color:#dc2626;font-size:0.82em;margin-bottom:10px;"></div>
                 <div style="display:flex;gap:8px;">
-                    <button onclick="rechazarDispositivoKDS()" style="flex:1;padding:10px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Rechazar</button>
-                    <button onclick="aprobarDispositivoKDS()" style="flex:1;padding:10px;border:none;background:#2563eb;color:#fff;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Aceptar</button>
+                    <button onclick="cerrarModalKDS()" style="flex:1;padding:10px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Cancelar</button>
+                    <button id="kds-modal-ok" onclick="confirmarModalKDS()" style="flex:1;padding:10px;border:none;background:#2563eb;color:#fff;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Aprobar</button>
                 </div>
             </div>
         </div>

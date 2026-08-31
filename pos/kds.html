@@ -177,9 +177,44 @@
         localStorage.setItem('kds-vol', String(volumen));
     }
 
+    // ── IDENTIDAD DE ESTA PANTALLA (BLOQUE 13) ────────────────────────────
+    // Antes bastaba con estar en la red del local: el permiso se daba por IP, y
+    // las IPs las reparte el router y rotan. Esta pantalla se identifica ahora
+    // con un secreto propio que guarda aquí mismo, y no ve un solo pedido hasta
+    // que alguien la aprueba con su PIN desde Ajustes → Pantalla de Cocina.
+    const CLAVE_SECRETO_KDS = 'zenit_kds_local_secret';
+
+    function secretoDeEstaPantalla() {
+        let s = null;
+        try { s = localStorage.getItem(CLAVE_SECRETO_KDS); } catch {}
+        if (s) return s;
+        try {
+            s = (window.crypto && crypto.randomUUID)
+                ? 'd-' + crypto.randomUUID()
+                : 'd-' + Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+            localStorage.setItem(CLAVE_SECRETO_KDS, s);
+        } catch {
+            // Sin localStorage (modo privado) la pantalla pedirá aprobación en
+            // cada recarga. Molesto, pero nunca inseguro.
+            s = 'd-' + Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+        }
+        return s;
+    }
+
+    function mostrarEsperandoAprobacion(revocada) {
+        document.getElementById('dot').className = 'dot offline';
+        document.getElementById('status-text').textContent = revocada ? 'Sin acceso' : 'Esperando aprobación';
+        const grid = document.getElementById('grid');
+        if (grid) {
+            grid.innerHTML = '<div class="empty"><p>' + (revocada
+                ? 'Esta pantalla ya no tiene acceso a la cocina. Pide que la aprueben de nuevo desde Ajustes → Pantalla de Cocina.'
+                : 'Esperando aprobación. En el punto de venta, ve a Ajustes → Pantalla de Cocina y aprueba este dispositivo con tu PIN.') + '</p></div>';
+        }
+    }
+
     function conectar() {
         if (es) es.close();
-        es = new EventSource('/events');
+        es = new EventSource('/events?device=' + encodeURIComponent(secretoDeEstaPantalla()));
         es.onopen = () => {
             document.getElementById('dot').className = 'dot';
             document.getElementById('status-text').textContent = 'Conectado';
@@ -216,9 +251,30 @@
             }
         };
         es.onerror = () => {
-            document.getElementById('dot').className = 'dot offline';
-            document.getElementById('status-text').textContent = 'Sin conexión — reconectando...';
             es.close();
+            // EventSource no expone el código HTTP del fallo, así que se
+            // pregunta aparte: sin esto, una pantalla pendiente de aprobación
+            // diría "sin conexión" y el encargado buscaría el problema en el
+            // Wi-Fi en vez de en el botón de aprobar que tiene delante.
+            // ⚠️ Si el dispositivo SÍ está activo, /events responde un stream que
+            // nunca termina: hay que abortarlo o cada reconexión dejaría una
+            // conexión colgada contra el POS.
+            const ctrl = new AbortController();
+            fetch('/events?device=' + encodeURIComponent(secretoDeEstaPantalla()), { signal: ctrl.signal })
+                .then(r => {
+                    if (r.status === 403 || r.status === 401) {
+                        return r.json().catch(() => ({})).then(d => {
+                            mostrarEsperandoAprobacion(d && d.error === 'revocado');
+                        });
+                    }
+                    ctrl.abort();
+                    document.getElementById('dot').className = 'dot offline';
+                    document.getElementById('status-text').textContent = 'Sin conexión — reconectando...';
+                })
+                .catch(() => {
+                    document.getElementById('dot').className = 'dot offline';
+                    document.getElementById('status-text').textContent = 'Sin conexión — reconectando...';
+                });
             setTimeout(conectar, 4000);
         };
     }

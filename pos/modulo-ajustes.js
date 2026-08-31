@@ -761,13 +761,20 @@ async function cargarUrlKDS() {
             const lanUrl = urls.red || urls.local;
             document.getElementById('kds-url-lan').textContent = lanUrl;
 
-            // QR code via servicio público (requiere internet en la red)
+            // QR dibujado en el propio equipo (BLOQUE 13). Antes se le pedía a
+            // api.qrserver.com metiéndole la URL en la petición: es el mismo
+            // error que ya se corrigió en el mobile (§3, donde además viajaba un
+            // token). Aquí solo se filtraba la IP de la red local, pero encima
+            // dejaba el QR inservible sin internet — justo cuando el KDS local
+            // es lo único que sigue en pie.
             const qrImg = document.getElementById('kds-qr-img');
-            if (qrImg && lanUrl !== urls.local) {
-                const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(lanUrl)}`;
-                qrImg.src = qrSrc;
-                qrImg.style.display = 'block';
-                document.getElementById('kds-qr-fallback').style.display = 'none';
+            if (qrImg && lanUrl !== urls.local && window.api?.kdsGenerarQR) {
+                const dataUrl = await window.api.kdsGenerarQR(lanUrl);
+                if (dataUrl) {
+                    qrImg.src = dataUrl;
+                    qrImg.style.display = 'block';
+                    document.getElementById('kds-qr-fallback').style.display = 'none';
+                }
             }
 
             elUrls.style.display = 'block';
@@ -812,47 +819,19 @@ function copiarUrl(elementId) {
     });
 }
 
-// ── KDS: Dispositivos de confianza ──────────────────────────────────────────
-let _kdsDispositivoPendiente = null;
+// ── KDS: PANTALLAS DE COCINA APROBADAS (BLOQUE 13) ──────────────────────────
+//
+// Aquí conviven las DOS pantallas de cocina de Zenit, ahora bajo el mismo modelo
+// de confianza:
+//   • Las de ESTA RED, servidas por el Express embebido (puerto 3001). Funcionan
+//     sin internet y su registro vive en la SQLite local.
+//   • Las de INTERNET, servidas por el backend. Su registro vive en la nube.
+//
+// En las dos: la identidad es un SECRETO del dispositivo (nunca su IP, que rota
+// y puede acabar en otro aparato), aprobar pide PIN y queda escrito quién
+// autorizó, y revocar corta el acceso al instante.
 
-async function cargarDispositivosKDS() {
-    try {
-        const dispositivos = await window.api.kdsObtenerDispositivos();
-        const contenedor = document.getElementById('kds-dispositivos-lista');
-        if (!contenedor) return;
-        if (!dispositivos || dispositivos.length === 0) {
-            contenedor.innerHTML = '<span style="color:#9ca3af;">No hay dispositivos registrados.</span>';
-            return;
-        }
-        const confianza = dispositivos.filter(d => d.confianza === 1);
-        const bloqueados = dispositivos.filter(d => d.confianza === 0);
-        let html = '';
-        if (confianza.length > 0) {
-            html += confianza.map(d => `
-                <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f3f4f6;">
-                    <div>
-                        <span style="font-weight:600;color:#111827;">${escapeHTML(d.nombre || d.ip)}</span>
-                        <span style="color:#9ca3af;margin-left:6px;font-size:0.82em;">${escapeHTML(d.ip)}</span>
-                        <div style="font-size:0.75em;color:#9ca3af;">${d.fecha_conexion ? new Date(d.fecha_conexion).toLocaleDateString() : ''}</div>
-                    </div>
-                    <button onclick="eliminarDispositivoKDS(${d.id})" style="background:none;border:1px solid #fca5a5;color:#dc2626;padding:4px 10px;border-radius:6px;font-size:0.78em;cursor:pointer;">Eliminar</button>
-                </div>
-            `).join('');
-        }
-        if (bloqueados.length > 0) {
-            html += '<div style="margin-top:8px;font-size:0.78em;color:#9ca3af;">Bloqueados:</div>';
-            html += bloqueados.map(d => `
-                <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f3f4f6;opacity:0.6;">
-                    <span>${escapeHTML(d.ip)}</span>
-                    <button onclick="eliminarDispositivoKDS(${d.id})" style="background:none;border:1px solid #d1d5db;color:#6b7280;padding:3px 8px;border-radius:6px;font-size:0.75em;cursor:pointer;">Quitar</button>
-                </div>
-            `).join('');
-        }
-        contenedor.innerHTML = html;
-    } catch (e) {
-        console.warn('cargarDispositivosKDS:', e);
-    }
-}
+let _kdsAccionPendiente = null; // { destino:'local'|'nube', tipo:'aprobar'|'revocar', dispositivo }
 
 function escapeHTML(str) {
     const div = document.createElement('div');
@@ -860,55 +839,291 @@ function escapeHTML(str) {
     return div.innerHTML;
 }
 
-function mostrarModalDispositivoKDS(data) {
-    _kdsDispositivoPendiente = data;
+function _kdsHaceCuanto(fecha) {
+    if (!fecha) return 'nunca';
+    const min = Math.floor((Date.now() - new Date(fecha).getTime()) / 60000);
+    if (isNaN(min)) return '';
+    if (min < 1) return 'ahora mismo';
+    if (min < 60) return `hace ${min} min`;
+    if (min < 1440) return `hace ${Math.floor(min / 60)} h`;
+    return new Date(fecha).toLocaleDateString();
+}
+
+const _KDS_ESTADO = {
+    activo:    { texto: 'Activa',                 color: '#059669' },
+    pendiente: { texto: 'Esperando aprobación',   color: '#d97706' },
+    revocado:  { texto: 'Sin acceso',             color: '#9ca3af' },
+    legacy:    { texto: 'Requiere emparejarse de nuevo', color: '#9ca3af' },
+};
+
+/** Una fila de la lista, igual para las dos clases de pantalla. */
+function _kdsFila(d, destino) {
+    const est = _KDS_ESTADO[d.estado] || { texto: d.estado || '', color: '#9ca3af' };
+    const nombre = d.nombre || `Pantalla ${d.id}`;
+    let detalle = '';
+    if (d.estado === 'activo') {
+        const quien = d.aprobado_por_nombre ? ` · autorizó ${escapeHTML(d.aprobado_por_nombre)}` : '';
+        detalle = `Última conexión ${_kdsHaceCuanto(d.ultimo_acceso)}${quien}`;
+    } else if (d.estado === 'revocado' && d.revocado_por_nombre) {
+        detalle = `Revocó ${escapeHTML(d.revocado_por_nombre)}`;
+    } else if (d.estado === 'legacy') {
+        detalle = 'Registro anterior por dirección de red';
+    } else if (d.ip || d.ip_registro) {
+        detalle = `Desde ${escapeHTML(d.ip || d.ip_registro)}`;
+    }
+
+    let botones = '';
+    if (d.estado === 'pendiente') {
+        botones = `
+            <button onclick="abrirAccionKDS('${destino}','aprobar',${d.id})" style="background:#2563eb;color:#fff;border:none;padding:5px 12px;border-radius:6px;font-size:0.78em;font-weight:600;cursor:pointer;">Aprobar</button>
+            <button onclick="abrirAccionKDS('${destino}','revocar',${d.id})" style="background:none;border:1px solid #e5e7eb;color:#6b7280;padding:5px 10px;border-radius:6px;font-size:0.78em;cursor:pointer;">Rechazar</button>`;
+    } else if (d.estado === 'activo') {
+        botones = `<button onclick="abrirAccionKDS('${destino}','revocar',${d.id})" style="background:none;border:1px solid #fca5a5;color:#dc2626;padding:5px 12px;border-radius:6px;font-size:0.78em;font-weight:600;cursor:pointer;">Revocar</button>`;
+    } else {
+        botones = `<button onclick="quitarPantallaKDS('${destino}',${d.id})" style="background:none;border:1px solid #d1d5db;color:#6b7280;padding:5px 10px;border-radius:6px;font-size:0.78em;cursor:pointer;">Quitar</button>`;
+    }
+
+    return `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid #f3f4f6;">
+            <div style="min-width:0;">
+                <div style="font-weight:600;color:#111827;">${escapeHTML(nombre)}</div>
+                <div style="font-size:0.78em;font-weight:600;color:${est.color};">${est.texto}${d.branch_name ? ' · ' + escapeHTML(d.branch_name) : ''}</div>
+                ${detalle ? `<div style="font-size:0.75em;color:#9ca3af;">${detalle}</div>` : ''}
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">${botones}</div>
+        </div>`;
+}
+
+// Las dos listas se guardan para que el modal pueda leer el dispositivo por id
+// sin volver a pedirlo.
+let _kdsPantallasLocales = [];
+let _kdsPantallasNube = [];
+
+async function cargarDispositivosKDS() {
+    try {
+        _kdsPantallasLocales = (await window.api.kdsObtenerDispositivos()) || [];
+        const contenedor = document.getElementById('kds-dispositivos-lista');
+        if (!contenedor) return;
+        if (_kdsPantallasLocales.length === 0) {
+            contenedor.innerHTML = '<span style="color:#9ca3af;">Ninguna pantalla emparejada todavía. Abre la URL de arriba en la tablet de la cocina y aparecerá aquí para que la apruebes.</span>';
+            return;
+        }
+        contenedor.innerHTML = _kdsPantallasLocales.map(d => _kdsFila(d, 'local')).join('');
+    } catch (e) {
+        console.warn('cargarDispositivosKDS:', e);
+    }
+}
+
+/** Pantallas registradas en el backend (las que abren el KDS por internet). */
+async function cargarPantallasNubeKDS() {
+    const bloque = document.getElementById('kds-nube-bloque');
+    if (!bloque) return;
+    // Sin cuenta no hay pantallas en la nube que gestionar: el bloque se oculta
+    // entero en vez de mostrar una lista vacía que no se puede llenar.
+    if (!modoConectado || !apiClient || !tokenActual) {
+        bloque.style.display = 'none';
+        return;
+    }
+    bloque.style.display = 'block';
+    try {
+        const r = await apiClient.request('/kds/devices');
+        _kdsPantallasNube = r?.data || [];
+        const contenedor = document.getElementById('kds-nube-lista');
+        if (!contenedor) return;
+        contenedor.innerHTML = _kdsPantallasNube.length
+            ? _kdsPantallasNube.map(d => _kdsFila(d, 'nube')).join('')
+            : '<span style="color:#9ca3af;">Ninguna pantalla por internet. Usa "Agregar pantalla" para emparejar una.</span>';
+    } catch (e) {
+        console.warn('cargarPantallasNubeKDS:', e);
+    }
+}
+
+/** Código de emparejamiento + QR dibujado aquí mismo. */
+async function agregarPantallaNubeKDS() {
+    try {
+        const r = await apiClient.request('/kds/pairing', {
+            method: 'POST',
+            body: { branch_id: sucursalIdActual || null }
+        });
+        const caja = document.getElementById('kds-nube-qr');
+        document.getElementById('kds-nube-codigo').textContent = r.codigo || '';
+        const img = document.getElementById('kds-nube-qr-img');
+        const url = (typeof r.url === 'string' && r.url.startsWith('http')) ? r.url : null;
+        if (img && url && window.api?.kdsGenerarQR) {
+            const dataUrl = await window.api.kdsGenerarQR(url);
+            if (dataUrl) img.src = dataUrl;
+        }
+        if (caja) caja.style.display = 'block';
+    } catch (e) {
+        alertaZenit('No se pudo generar el código: ' + (e.message || 'error'));
+    }
+}
+
+function cerrarQRNubeKDS() {
+    const caja = document.getElementById('kds-nube-qr');
+    if (caja) caja.style.display = 'none';
+    cargarPantallasNubeKDS();
+}
+
+// ── Modal de aprobar / revocar ───────────────────────────────────────────────
+
+function abrirAccionKDS(destino, tipo, id) {
+    const lista = destino === 'nube' ? _kdsPantallasNube : _kdsPantallasLocales;
+    const dispositivo = lista.find(d => String(d.id) === String(id));
+    if (!dispositivo) return;
+    _kdsAccionPendiente = { destino, tipo, dispositivo };
+
+    const aprobar = tipo === 'aprobar';
+    document.getElementById('kds-modal-titulo').textContent = aprobar ? 'Aprobar pantalla de cocina' : 'Retirar el acceso';
+    document.getElementById('kds-modal-sub').textContent = aprobar
+        ? 'Esta pantalla podrá ver la cola de cocina hasta que la revoques.'
+        : 'La pantalla deja de ver los pedidos de inmediato.';
+    document.getElementById('kds-nuevo-ip').textContent = dispositivo.ip || dispositivo.ip_registro || '—';
+    document.getElementById('kds-nuevo-ua').textContent = (dispositivo.user_agent || 'Desconocido').substring(0, 120);
+    document.getElementById('kds-modal-campo-nombre').style.display = aprobar ? 'block' : 'none';
+    document.getElementById('kds-nuevo-nombre').value = dispositivo.nombre || '';
+    document.getElementById('kds-modal-pin').value = '';
+    document.getElementById('kds-modal-ok').textContent = aprobar ? 'Aprobar' : 'Revocar';
+    const err = document.getElementById('kds-modal-error');
+    if (err) err.style.display = 'none';
+    document.getElementById('modal-kds-dispositivo').style.display = 'flex';
+    setTimeout(() => document.getElementById('kds-modal-pin')?.focus(), 100);
+}
+
+function cerrarModalKDS() {
+    _kdsAccionPendiente = null;
     const modal = document.getElementById('modal-kds-dispositivo');
-    if (!modal) return;
-    document.getElementById('kds-nuevo-ip').textContent = data.ip;
-    document.getElementById('kds-nuevo-ua').textContent = (data.userAgent || '').substring(0, 120);
-    document.getElementById('kds-nuevo-nombre').value = '';
-    modal.style.display = 'flex';
+    if (modal) modal.style.display = 'none';
 }
 
-async function aprobarDispositivoKDS() {
-    if (!_kdsDispositivoPendiente) return;
-    const nombre = document.getElementById('kds-nuevo-nombre')?.value?.trim() || _kdsDispositivoPendiente.ip;
+function _kdsError(mensaje) {
+    const err = document.getElementById('kds-modal-error');
+    if (err) { err.textContent = mensaje; err.style.display = 'block'; }
+}
+
+/**
+ * Valida el PIN del puesto activo contra el hash local.
+ *
+ * ⚠️ Un puesto SIN PIN configurado solo confirma, no bloquea (§19.19): si el
+ * dueño no le puso PIN a ese puesto no hay nada contra qué validar, y exigir uno
+ * dejaría al negocio sin poder aprobar la pantalla de su propia cocina. La
+ * acción se sigue registrando: lo que se pierde es la barrera, no el rastro.
+ */
+async function _validarPinPuestoLocal(pin) {
     try {
-        await window.api.kdsAprobarDispositivo({
-            ip: _kdsDispositivoPendiente.ip,
-            userAgent: _kdsDispositivoPendiente.userAgent,
-            nombre
-        });
-        mostrarNotificacionExito('Dispositivo aprobado', `${nombre} puede conectarse al KDS`);
+        const ajustes = await window.api.obtenerAjustes();
+        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        let permisos = Object.fromEntries(Object.entries(guardados).filter(([k]) => !k.startsWith('__b_')));
+        if (sucursalIdActual && guardados[`__b_${sucursalIdActual}`]) {
+            permisos = guardados[`__b_${sucursalIdActual}`];
+        }
+        const perfil = permisos[rolActivo];
+        if (!perfil || !perfil.pin_set || !perfil.pin) return { ok: true, sinPin: true };
+        if (!pin) return { ok: false, error: 'Ingresa el PIN de tu puesto' };
+        const hash = await hashPin(pin);
+        if (hash !== perfil.pin) return { ok: false, error: 'PIN incorrecto' };
+        return { ok: true, sinPin: false };
     } catch (e) {
-        console.error('Error aprobando dispositivo:', e);
+        return { ok: false, error: 'No se pudo verificar el PIN' };
     }
-    document.getElementById('modal-kds-dispositivo').style.display = 'none';
-    _kdsDispositivoPendiente = null;
-    cargarDispositivosKDS();
 }
 
-async function rechazarDispositivoKDS() {
-    if (!_kdsDispositivoPendiente) return;
-    try {
-        await window.api.kdsRechazarDispositivo({
-            ip: _kdsDispositivoPendiente.ip,
-            userAgent: _kdsDispositivoPendiente.userAgent
-        });
-    } catch (e) {
-        console.error('Error rechazando dispositivo:', e);
-    }
-    document.getElementById('modal-kds-dispositivo').style.display = 'none';
-    _kdsDispositivoPendiente = null;
-    cargarDispositivosKDS();
-}
+async function confirmarModalKDS() {
+    if (!_kdsAccionPendiente) return;
+    const { destino, tipo, dispositivo } = _kdsAccionPendiente;
+    const pin = document.getElementById('kds-modal-pin')?.value || '';
+    const nombre = document.getElementById('kds-nuevo-nombre')?.value?.trim() || dispositivo.nombre || '';
+    const btn = document.getElementById('kds-modal-ok');
+    if (btn) btn.disabled = true;
 
-async function eliminarDispositivoKDS(id) {
     try {
-        await window.api.kdsEliminarDispositivo(id);
+        if (destino === 'nube') {
+            // El PIN lo valida el BACKEND (acepta el del puesto o la contraseña
+            // de una cuenta, utils/verifyPin.js). Se manda tal cual se tecleó.
+            const ruta = tipo === 'aprobar'
+                ? `/kds/devices/${dispositivo.id}/approve`
+                : `/kds/devices/${dispositivo.id}/revoke`;
+            await apiClient.request(ruta, {
+                method: 'POST',
+                body: {
+                    role: rolActivo || null,
+                    pin: pin || undefined,
+                    employee_name: nombreActivo || '',
+                    ...(tipo === 'aprobar' ? { nombre } : {}),
+                }
+            });
+        } else {
+            // Pantalla de esta red: el PIN se valida CONTRA EL HASH LOCAL, para
+            // que aprobar la cocina siga funcionando con el internet caído —
+            // que es justo cuando el KDS local es lo único que queda en pie.
+            const v = await _validarPinPuestoLocal(pin);
+            if (!v.ok) { _kdsError(v.error); if (btn) btn.disabled = false; return; }
+
+            if (tipo === 'aprobar') {
+                await window.api.kdsAprobarDispositivo({
+                    id: dispositivo.id,
+                    nombre,
+                    aprobadoPorNombre: nombreActivo || rolActivo || 'Sin identificar',
+                    aprobadoPorRol: rolActivo || '',
+                });
+            } else {
+                await window.api.kdsRevocarDispositivo({
+                    id: dispositivo.id,
+                    revocadoPorNombre: nombreActivo || rolActivo || 'Sin identificar',
+                });
+            }
+            // Auditoría en la nube cuando hay cuenta. Sin conexión el rastro
+            // queda igualmente en la fila local (quién aprobó y cuándo).
+            _auditarPantallaKDS(tipo, nombre || dispositivo.nombre);
+        }
+
+        cerrarModalKDS();
+        mostrarNotificacionExito(
+            tipo === 'aprobar' ? 'Pantalla aprobada' : 'Acceso retirado',
+            tipo === 'aprobar'
+                ? `${nombre || 'La pantalla'} ya puede ver la cocina`
+                : 'La pantalla dejó de ver los pedidos'
+        );
         cargarDispositivosKDS();
+        cargarPantallasNubeKDS();
     } catch (e) {
-        console.error('Error eliminando dispositivo KDS:', e);
+        _kdsError(e.message || 'No se pudo completar la acción');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+/** Registra la acción en la auditoría del negocio (solo si hay cuenta). */
+function _auditarPantallaKDS(tipo, nombrePantalla) {
+    if (!modoConectado || !apiClient || !tokenActual) return;
+    apiClient.request('/audit', {
+        method: 'POST',
+        body: {
+            employee_name: nombreActivo || rolActivo || 'Sin identificar',
+            action_type: tipo === 'aprobar' ? 'approve_kds_device' : 'revoke_kds_device',
+            target_description: `${tipo === 'aprobar' ? 'Aprobó' : 'Revocó'} la pantalla de cocina "${nombrePantalla || 'sin nombre'}" en la red local`,
+            branch_id: sucursalIdActual || null,
+        }
+    }).catch(() => { /* el rastro local ya quedó escrito; esto es el extra */ });
+}
+
+async function quitarPantallaKDS(destino, id) {
+    const ok = await confirmarZenit(
+        'El registro desaparece de la lista. La pantalla seguirá sin acceso.',
+        'Quitar de la lista',
+        { textoOk: 'Quitar', peligro: true }
+    );
+    if (!ok) return;
+    try {
+        if (destino === 'nube') {
+            await apiClient.request(`/kds/devices/${id}`, { method: 'DELETE' });
+            cargarPantallasNubeKDS();
+        } else {
+            await window.api.kdsEliminarDispositivo(id);
+            cargarDispositivosKDS();
+        }
+    } catch (e) {
+        alertaZenit(e.message || 'No se pudo quitar el dispositivo');
     }
 }
 
@@ -918,16 +1133,16 @@ function toggleKdsNotificaciones(checked) {
     }
 }
 
-// Inicializar listener de dispositivos nuevos
+// Una pantalla nueva de la red local acaba de pedir permiso. Se recarga la lista
+// y se abre el modal directamente sobre ella: el encargado la tiene delante.
 if (window.api && window.api.onKdsDispositivoNuevo) {
-    window.api.onKdsDispositivoNuevo((data) => {
-        // Siempre mostrar modal cuando llega un dispositivo nuevo
-        mostrarModalDispositivoKDS(data);
+    window.api.onKdsDispositivoNuevo(async (data) => {
+        await cargarDispositivosKDS();
+        if (data && data.id) abrirAccionKDS('local', 'aprobar', data.id);
 
-        // Toast opcional si toggle activo
         const toggle = document.getElementById('kds-notif-toggle');
         if (toggle && toggle.checked) {
-            mostrarNotificacionExito('Dispositivo nuevo', `IP: ${data.ip} quiere conectarse al KDS`);
+            mostrarNotificacionExito('Pantalla nueva', 'Un dispositivo quiere ver la cola de cocina');
         }
     });
 }
@@ -1112,9 +1327,10 @@ async function cargarAjustesInstalados() {
         // Sucursales
         await cargarSucursalesAjustes();
 
-        // KDS
+        // KDS: las dos clases de pantalla (esta red y por internet)
         cargarUrlKDS();
         cargarDispositivosKDS();
+        cargarPantallasNubeKDS();
 
         // Restaurar toggle de notificaciones KDS
         const kdsNotifToggle = document.getElementById('kds-notif-toggle');

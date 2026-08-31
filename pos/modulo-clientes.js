@@ -228,21 +228,63 @@ function configurarBuscadorClientes(clientes) {
     });
 }
 
+/**
+ * Autocompletado del pedido a domicilio: el cajero teclea el teléfono y, si ese
+ * cliente ya existe, se rellenan su nombre y su dirección.
+ *
+ * ⚠️ Esta función existía desde hacía meses llamando a `window.api.buscarClientePorTelefono`,
+ * un método que NADIE había expuesto en preload.js (ni tenía handler en main.js ni
+ * función en db.js). Y encima el formulario de domicilio ni siquiera tenía campo de
+ * teléfono, así que la función jamás llegó a ejecutarse. Es la misma familia de bug
+ * que `fmt()` (§28), `_desgloseMesa()` (§29) y los 4 botones muertos: algo referenciado
+ * y nunca escrito, que el desktop no detecta porque no tiene pruebas ni compilación.
+ * Lo cubre ahora `npm run revisar`, que además compara los `window.api.X` contra preload.
+ *
+ * Se busca a partir de 10 dígitos: por debajo de eso el teléfono está a medio teclear
+ * y cualquier coincidencia sería casual.
+ */
 async function buscarYAutocompletarCliente(telefono) {
-    if (telefono.length >= 10) {
-        const cliente = await window.api.buscarClientePorTelefono(telefono);
-        if (cliente) {
-            // Si el cliente existe, llenamos los campos de domicilio automáticamente
-            if (document.getElementById('dom-nombre')) {
-                document.getElementById('dom-nombre').value = cliente.nombre;
-                document.getElementById('dom-direccion').value = cliente.direccion || '';
-                // `mostrarToast` no existe; el único toast del sistema es este.
-                // Sin esto, autocompletar un cliente por teléfono reventaba y
-                // dejaba el formulario de domicilio a medio llenar.
-                mostrarNotificacionExito(cliente.nombre, 'Cliente reconocido');
-            }
-        }
+    const soloDigitos = String(telefono || '').replace(/\D/g, '');
+    if (soloDigitos.length < 10) return;
+    if (!window.api?.buscarClientePorTelefono) return;
+
+    let cliente = null;
+    try {
+        cliente = await window.api.buscarClientePorTelefono(soloDigitos);
+    } catch (e) {
+        // Un fallo aquí NUNCA puede estorbar el cobro: el cajero siempre puede
+        // escribir los datos a mano. Mismo criterio que la impresión del ticket.
+        console.warn('No se pudo buscar el cliente por teléfono:', e.message);
+        return;
     }
+    if (!cliente) return;
+
+    const campoNombre = document.getElementById('dom-nombre');
+    if (!campoNombre) return;   // El formulario de domicilio ya no está en pantalla.
+
+    campoNombre.value = cliente.nombre || '';
+    const campoDireccion = document.getElementById('dom-direccion');
+    if (campoDireccion) campoDireccion.value = cliente.direccion || '';
+
+    // Además de rellenar el formulario, se ENLAZA el cliente a la venta: sin esto
+    // el POS anunciaría "Cliente reconocido" y aun así registraría el pedido como
+    // anónimo (sin cliente_id y sin puntos de fidelidad). Solo si no hay ya uno
+    // elegido a mano en el ticket — una elección explícita del cajero manda.
+    if (!clienteSeleccionadoVenta && typeof seleccionarClienteVenta === 'function') {
+        seleccionarClienteVenta(
+            cliente.id,
+            cliente.nombre || '',
+            cliente.telefono || soloDigitos,
+            cliente.direccion || '',
+            cliente.puntos || 0,
+            cliente.en_fidelidad || 0
+        );
+        // Refrescar el panel "Cliente de esta venta" del modal de cobro, que se
+        // pintó antes de que supiéramos quién era.
+        if (typeof actualizarInfoClientePago === 'function') actualizarInfoClientePago();
+    }
+
+    mostrarNotificacionExito(cliente.nombre || soloDigitos, 'Cliente reconocido');
 }
 
 function abrirModalCliente() {
