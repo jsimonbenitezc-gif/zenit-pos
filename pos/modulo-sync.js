@@ -309,6 +309,17 @@ async function sincronizarDesdeBackend() {
                 await window.api.guardarAjuste('propina_sugerencias', JSON.stringify(normalizarSugerenciasPropina(ajustesNegocio.propina_sugerencias)));
             }
             if (typeof cargarConfigPropina === 'function') await cargarConfigPropina();
+
+            // Horario del negocio (BLOQUE 14). Se cachea local para que aprobar
+            // una pantalla del KDS de ESTA RED siga funcionando con el internet
+            // caído — que es justo cuando el KDS local es lo único en pie.
+            // `undefined` (backend viejo) NO toca el ajuste; `null` sí lo borra,
+            // porque significa que el dueño quitó el horario.
+            if (ajustesNegocio.horario_operacion !== undefined) {
+                const r = normalizarHorarioSemana(ajustesNegocio.horario_operacion);
+                await window.api.guardarAjuste('horario_operacion', r.horario ? JSON.stringify(r.horario) : '');
+            }
+            if (typeof cargarHorarioDesdeAjustes === 'function') await cargarHorarioDesdeAjustes();
         }
 
         if (pedidosBackend) {

@@ -1036,6 +1036,23 @@ async function confirmarModalKDS() {
     const btn = document.getElementById('kds-modal-ok');
     if (btn) btn.disabled = true;
 
+    // BLOQUE 14 — la ÚNICA acción que el horario restringe en todo Zenit.
+    // Aprobar da acceso PERMANENTE a la cola de pedidos, y a las 3 de la mañana
+    // no hay nadie mirando quién teclea un PIN que además es de un puesto entero.
+    // No es un bloqueo: fuera de horario lo sube al DUEÑO, para que quien instala
+    // la tablet antes de abrir siga teniendo salida. REVOCAR nunca se restringe —
+    // cortarle el acceso a una tablet perdida es justo lo que hay que poder hacer
+    // de madrugada. El backend aplica la misma regla en el KDS de la nube.
+    if (tipo === 'aprobar' && typeof fueraDeHorarioAhora === 'function'
+        && fueraDeHorarioAhora() && rolActivo !== 'dueno') {
+        _kdsError(
+            `Fuera del horario del negocio (hoy ${ventanaDeHoy()}) solo el administrador puede ` +
+            `autorizar una pantalla de cocina. Pídeselo, o cambia el horario en Ajustes.`
+        );
+        if (btn) btn.disabled = false;
+        return;
+    }
+
     try {
         if (destino === 'nube') {
             // El PIN lo valida el BACKEND (acepta el del puesto o la contraseña
@@ -1241,6 +1258,7 @@ async function cargarAjustesInstalados() {
         // sabe qué cobra aunque esté sin internet.
         _pintarConfigImpuesto(ajustes);
         _pintarConfigPropina(ajustes);
+        _pintarConfigHorario(ajustes);
 
         // Modo oscuro
         if(ajustes.dark_mode === 'true') {
@@ -1496,6 +1514,24 @@ function agregarListenersGuardadoAjustes() {
         });
     }
 
+    // Horario del negocio (BLOQUE 14): mismo patrón. Apagarlo se guarda de
+    // inmediato (quitar el horario apaga TODAS las señales del bloque y no
+    // necesita más datos); encenderlo espera al botón para llevarse la semana.
+    const elHorActivo = document.getElementById('adj-horario-activo');
+    if (elHorActivo) {
+        elHorActivo.addEventListener('change', () => {
+            const grupo = document.getElementById('grupo-horario');
+            if (grupo) grupo.style.display = elHorActivo.checked ? '' : 'none';
+            if (!elHorActivo.checked) guardarConfigHorario({ quitar: true });
+            else {
+                // Al encenderlo por primera vez se dibuja una semana razonable
+                // (L-S 9-18, domingo cerrado) para que no arranque en blanco.
+                if (!_horarioEditor) _horarioEditor = horarioPorDefecto();
+                _renderizarEditorHorario();
+            }
+        });
+    }
+
     // Sistema de puntos
     const elPuntosActivos = document.getElementById('aj-puntos-activos');
     if (elPuntosActivos) {
@@ -1637,6 +1673,136 @@ function _pintarConfigPropina(ajustes = {}) {
         card.style.opacity = esDueno ? '' : '0.55';
         card.title = esDueno ? '' : 'Solo el administrador puede cambiar las propinas';
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HORARIO DEL NEGOCIO (BLOQUE 14) — SEÑAL de seguridad, nunca candado
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// ⚠️ Esta tarjeta NO configura ningún bloqueo. Definir un horario no impide
+// vender, cobrar ni abrir turno a ninguna hora: solo hace que las acciones
+// sensibles (cancelar, devolver, descontar, ajustar inventario, mover caja) que
+// ocurran fuera de él queden marcadas en la auditoría y avisen al dueño.
+// La única acción que el horario restringe es aprobar una pantalla de cocina, y
+// tampoco la prohíbe: fuera de horario la sube al dueño.
+
+// Semana que se está editando. Es una copia: no se toca `horarioNegocio` hasta
+// guardar, para que salir de Ajustes sin guardar no cambie nada.
+let _horarioEditor = null;
+
+/** Pinta la tarjeta de horario con los ajustes (locales o de la nube). */
+function _pintarConfigHorario(ajustes = {}) {
+    const elActivo = document.getElementById('adj-horario-activo');
+    const grupo    = document.getElementById('grupo-horario');
+    if (!elActivo) return;
+
+    const semana = normalizarHorarioSemana(ajustes?.horario_operacion).horario;
+    _horarioEditor = semana ? JSON.parse(JSON.stringify(semana)) : null;
+
+    elActivo.checked = !!semana;
+    if (grupo) grupo.style.display = semana ? '' : 'none';
+    if (semana) _renderizarEditorHorario();
+
+    // Solo el administrador puede tocarlo (el backend además responde 403): que
+    // lo cambiara un empleado sería dejarle apagar la alarma que vigila sus
+    // propias acciones. Mismo criterio que el impuesto y las propinas.
+    const esDueno = (rolActivo === 'dueno');
+    const card = document.getElementById('card-horario');
+    elActivo.disabled = !esDueno;
+    if (card) {
+        card.style.opacity = esDueno ? '' : '0.55';
+        card.title = esDueno ? '' : 'Solo el administrador puede cambiar el horario del negocio';
+    }
+    if (grupo) grupo.querySelectorAll('input, button').forEach(el => { el.disabled = !esDueno; });
+}
+
+/** Dibuja las 7 filas del editor a partir de `_horarioEditor`. */
+function _renderizarEditorHorario() {
+    const cont = document.getElementById('adj-horario-dias');
+    if (!cont) return;
+    if (!Array.isArray(_horarioEditor)) _horarioEditor = horarioPorDefecto();
+
+    const esDueno = (rolActivo === 'dueno');
+    cont.innerHTML = _horarioEditor.map((dia, i) => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <span style="width:78px;font-size:0.85em;color:#6b7280;">${HORARIO_DIAS_CORTO[i]}</span>
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.8em;color:#6b7280;cursor:pointer;">
+                <input type="checkbox" ${dia.cerrado ? 'checked' : ''} ${esDueno ? '' : 'disabled'}
+                       onchange="_cambiarDiaHorario(${i}, 'cerrado', this.checked)"> cerrado
+            </label>
+            <input type="time" value="${esc(dia.abre || '09:00')}" ${dia.cerrado || !esDueno ? 'disabled' : ''}
+                   style="width:110px;" onchange="_cambiarDiaHorario(${i}, 'abre', this.value)">
+            <span style="color:#9ca3af;">a</span>
+            <input type="time" value="${esc(dia.cierra || '18:00')}" ${dia.cerrado || !esDueno ? 'disabled' : ''}
+                   style="width:110px;" onchange="_cambiarDiaHorario(${i}, 'cierra', this.value)">
+        </div>
+    `).join('');
+
+    const resumen = document.getElementById('adj-horario-resumen');
+    if (resumen) resumen.innerText = resumenHorario(_horarioEditor);
+}
+
+/** Cambia un campo de un día del editor y vuelve a pintar. */
+function _cambiarDiaHorario(indice, campo, valor) {
+    if (!Array.isArray(_horarioEditor) || !_horarioEditor[indice]) return;
+    const dia = _horarioEditor[indice];
+    if (campo === 'cerrado') {
+        // Marcar cerrado NO borra las horas: desmarcarlo las recupera tal cual,
+        // que es lo que espera quien cierra un día por temporada.
+        dia.cerrado = !!valor;
+        if (!dia.abre)   dia.abre   = '09:00';
+        if (!dia.cierra) dia.cierra = '18:00';
+    } else {
+        dia[campo] = valor;
+    }
+    _renderizarEditorHorario();
+}
+
+/** Guarda el horario: en la nube (si hay cuenta) y SIEMPRE en local. */
+async function guardarConfigHorario(opciones = {}) {
+    if (rolActivo !== 'dueno') {
+        alertaZenit('Solo el administrador puede cambiar el horario del negocio.', 'Sin permiso');
+        return;
+    }
+
+    const quitar = opciones.quitar === true;
+    let semana = null;
+
+    if (!quitar) {
+        const r = normalizarHorarioSemana(_horarioEditor);
+        if (!r.ok) { alertaZenit(r.error, 'Horario inválido'); return; }
+        if (!r.horario) {
+            // Los siete días cerrados no son un horario: es no tenerlo. Se dice en
+            // vez de guardarlo en silencio, porque el dueño creería que configuró
+            // algo y esperaría unas alertas que nunca van a llegar.
+            alertaZenit(
+                'Marcaste los siete días como cerrados, así que no hay horario que aplicar. ' +
+                'Deja abierto al menos un día, o apaga el horario del negocio.',
+                'Sin horario'
+            );
+            return;
+        }
+        semana = r.horario;
+    }
+
+    if (modoConectado && apiClient && tokenActual) {
+        try {
+            await apiClient.saveSettings({ horario_operacion: semana });
+        } catch (e) {
+            alertaZenit(e?.message || 'No se pudo guardar el horario en la nube.', 'Error');
+            return;
+        }
+    }
+    // Local también: el KDS de esta red se aprueba SIN internet, y esa es
+    // justamente la situación en la que el KDS local es lo único que queda en
+    // pie (mismo criterio que el PIN de los movimientos de caja).
+    await window.api.guardarAjuste('horario_operacion', semana ? JSON.stringify(semana) : '');
+    await cargarHorarioDesdeAjustes();
+
+    mostrarNotificacionExito(
+        quitar ? 'El horario dejó de aplicarse' : resumenHorario(semana),
+        quitar ? 'Sin horario' : 'Horario guardado'
+    );
 }
 
 /**

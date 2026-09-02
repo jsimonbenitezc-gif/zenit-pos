@@ -146,10 +146,15 @@ async function cargarAuditLog() {
             ${logs.map((log, idx) => {
                 const tipo  = TIPOS[log.action_type] || { icon: '🔒', label: log.action_type };
                 const fecha = new Date(log.createdAt).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' });
-                return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:7px;margin-bottom:4px;background:#f8fafc;border-left:3px solid #6366f1;font-size:0.82em;">
+                // BLOQUE 14 — lo ocurrido fuera del horario del negocio se distingue
+                // de un vistazo. Es la razón de ser de la marca: el dueño no debería
+                // tener que leer 200 acciones normales para encontrar las tres de la
+                // madrugada. Sin horario configurado esto nunca se enciende.
+                const fuera = log.fuera_horario === true || log.fuera_horario === 1;
+                return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:7px;margin-bottom:4px;background:${fuera ? '#fffbeb' : '#f8fafc'};border-left:3px solid ${fuera ? '#f59e0b' : '#6366f1'};font-size:0.82em;">
                     <span style="font-size:1em;flex-shrink:0;">${tipo.icon}</span>
                     <div style="flex:1;min-width:0;">
-                        <div style="font-weight:600;color:#374151;">${tipo.label}</div>
+                        <div style="font-weight:600;color:#374151;">${tipo.label}${fuera ? ' <span style="font-weight:600;color:#b45309;font-size:0.9em;">· fuera de horario</span>' : ''}</div>
                         <div style="color:#6b7280;">${esc(log.target_description || '')} — ${esc(log.employee_name)}</div>
                     </div>
                     <div style="flex-shrink:0;text-align:right;">
@@ -227,9 +232,12 @@ function abrirReporteAudit(idx) {
                 </div>
             </div>
 
-            <div style="background:#f9fafb;border-radius:8px;padding:12px;margin-bottom:16px;">
+            <div style="background:${(log.fuera_horario === true || log.fuera_horario === 1) ? '#fffbeb' : '#f9fafb'};border-radius:8px;padding:12px;margin-bottom:16px;">
                 <div style="font-size:0.75em;color:#9ca3af;margin-bottom:4px;font-weight:600;">FECHA Y HORA</div>
                 <div style="font-weight:500;font-size:0.9em;">${esc(fecha)}</div>
+                ${(log.fuera_horario === true || log.fuera_horario === 1)
+                    ? `<div style="margin-top:6px;font-size:0.82em;color:#b45309;font-weight:600;">⚠️ Ocurrió fuera del horario del negocio</div>`
+                    : ''}
             </div>
 
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">

@@ -572,6 +572,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // debe pedir propina desde la primera venta, con o sin internet.
     try { await cargarConfigPropina(); } catch(e) { console.error('Error cargarConfigPropina:', e); }
 
+    // Horario (BLOQUE 14): se lee de la SQLite al arrancar para que aprobar una
+    // pantalla del KDS local sepa si estamos fuera de horario aunque no haya red.
+    try { await cargarHorarioDesdeAjustes(); } catch(e) { console.error('Error cargarHorarioDesdeAjustes:', e); }
+
     // Modificadores (BLOQUE 11): el catálogo se lee de la SQLite antes de la
     // primera venta, por la misma razón — el cajero tiene que poder ofrecer los
     // extras y cobrarlos con o sin internet. El sync lo refresca después.
@@ -813,6 +817,20 @@ async function _sincronizarAjustesDesdeCloud() {
         // celular y la caja del local tiene que empezar a pedirlas de inmediato.
         if (s.propinas_activas !== undefined || s.propina_sugerencias !== undefined) {
             if (typeof _pintarConfigPropina === 'function') _pintarConfigPropina(s);
+        }
+        // Horario del negocio (BLOQUE 14): el dueño lo cambia desde el celular y
+        // este equipo tiene que dejar de marcar (o empezar a marcar) al instante.
+        // Se guarda en local además de pintarse, porque el KDS de esta red lo
+        // consulta sin internet.
+        if (s.horario_operacion !== undefined) {
+            const r = typeof normalizarHorarioSemana === 'function'
+                ? normalizarHorarioSemana(s.horario_operacion) : { horario: null };
+            window.api.guardarAjuste('horario_operacion', r.horario ? JSON.stringify(r.horario) : '')
+                .then(() => {
+                    if (typeof cargarHorarioDesdeAjustes === 'function') return cargarHorarioDesdeAjustes();
+                })
+                .catch(() => {});
+            if (typeof _pintarConfigHorario === 'function') _pintarConfigHorario(s);
         }
         // Venta sin turno (también sincronizar variable global)
         if (s.venta_sin_turno !== undefined) {

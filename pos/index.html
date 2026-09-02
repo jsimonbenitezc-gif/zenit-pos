@@ -1403,6 +1403,38 @@
             </div>
         </div>
 
+        <!-- Horario del negocio (BLOQUE 14) — SEÑAL de seguridad, NUNCA candado.
+             Configurarlo NO impide vender, cobrar ni abrir turno a ninguna hora:
+             solo hace que las acciones sensibles de fuera de horario queden
+             marcadas y avisen al dueño. Configuración de la CUENTA: solo el dueño. -->
+        <div class="ajustes-card" id="card-horario" style="position:relative;">
+            <h3>Horario del negocio</h3>
+            <div class="setting-item">
+                <div>
+                    <span>Definir horario de operación</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">
+                        <strong>Nunca bloquea la caja:</strong> se puede vender, cobrar y abrir turno a cualquier hora.
+                        Sirve para detectar lo raro — una cancelación o un ajuste de inventario a las 3 a.m. queda
+                        marcado y te llega un aviso.
+                    </p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-horario-activo">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div id="grupo-horario" style="display:none;">
+                <div id="adj-horario-dias" style="margin-top:10px;"></div>
+                <p style="margin:8px 0 0; font-size:0.8em; color:#9ca3af;">
+                    Si cierras después de medianoche, pon la hora de cierre igual (ej. 18:00 → 02:00):
+                    el sistema entiende que la noche sigue siendo del día anterior.
+                    Para 24 horas, pon la misma hora en apertura y cierre.
+                </p>
+                <p style="margin:6px 0 0; font-size:0.8em; color:#9ca3af;" id="adj-horario-resumen"></p>
+                <button class="btn-primary" style="margin-top:10px;" onclick="guardarConfigHorario()">Guardar horario</button>
+            </div>
+        </div>
+
         <!-- Sistema de Puntos -->
         <div class="ajustes-card" id="card-puntos" style="position:relative;">
             <h3>Sistema de Puntos <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></h3>
@@ -2632,6 +2664,7 @@
 <script src="modulo-wrappers.js"></script>
 <script src="modulo-impuestos.js"></script>
 <script src="modulo-propinas.js"></script>
+<script src="modulo-horarios.js"></script>
 <script src="modulo-pagos.js"></script>
 <script src="modulo-modificadores.js"></script>
 <script src="modulo-dashboard.js"></script>
