@@ -1009,6 +1009,39 @@ function _totalDeLaCuenta() {
     return _desgloseMesa(_itemsDeLaCuenta()).total;
 }
 
+/**
+ * La cuenta partida en UNIDADES asignables, no en renglones.
+ *
+ * ⚠️ Cuatro refrescos iguales son UN renglón con cantidad 4, y dos parejas que
+ * pagan por separado necesitan 2 y 2. Repartiendo renglones enteros, los cuatro
+ * caen forzosamente en el mismo ticket: el caso más común de un restaurante no
+ * se podía cobrar. Cada unidad lleva un id propio ("12#0", "12#1"…) y su parte
+ * del subtotal, así que montoDeItems() —que es la fórmula compartida con el
+ * backend y el mobile— sigue funcionando SIN TOCARLA: la suma de las unidades
+ * es exactamente la suma de los renglones.
+ */
+function _unidadesDeLaCuenta() {
+    const unidades = [];
+    for (const it of _itemsDeLaCuenta()) {
+        const cant = parseInt(it.cantidad, 10);
+        const sub = parseFloat(it.subtotal) || 0;
+        // Una cantidad rara (fraccionaria, 0, texto) se trata como un solo bloque:
+        // partir "0.75 kg de queso" en unidades no significaría nada.
+        const piezas = Number.isFinite(cant) && cant > 1 ? cant : 1;
+        for (let k = 0; k < piezas; k++) {
+            unidades.push({
+                id: String(it.id) + '#' + k,
+                item_id: it.id,
+                nombre: it.nombre || 'Producto',
+                subtotal: sub / piezas,
+                pieza: k + 1,
+                de: piezas,
+            });
+        }
+    }
+    return unidades;
+}
+
 function dividirMesaEnPartes(n) {
     const montos = dividirEnPartes(_totalDeLaCuenta(), n);
     pagosMesa = montos.map(monto => ({
@@ -1050,8 +1083,10 @@ function quitarPagoMesa(indice) {
     _actualizarBotonCobrarMesa();
 }
 
-function alAsignarItemDivision(itemId, indicePago) {
-    asignacionItems[itemId] = parseInt(indicePago) || 0;
+// `unidadId` es el id de una UNIDAD ("12#0"), no el del renglón: es texto y
+// llega por data-uid, no interpolado en el onchange.
+function alAsignarItemDivision(unidadId, indicePago) {
+    asignacionItems[unidadId] = parseInt(indicePago) || 0;
     _recalcularPagosPorItems();
     _renderizarDivisionMesa();
     _actualizarBotonCobrarMesa();
@@ -1071,15 +1106,18 @@ function alCambiarPagoMesa(indice, campo, valor) {
 
 /** Reparte el total entre los pagos según qué items le tocó pagar a cada uno. */
 function _recalcularPagosPorItems() {
-    const items = _itemsDeLaCuenta();
+    const unidades = _unidadesDeLaCuenta();
     const total = _totalDeLaCuenta();
 
     for (let i = 0; i < pagosMesa.length; i++) {
-        const idsGrupo = items
-            .filter(it => (asignacionItems[it.id] || 0) === i)
-            .map(it => it.id);
-        pagosMesa[i].item_ids = idsGrupo;
-        pagosMesa[i].amount = montoDeItems(items, idsGrupo, total);
+        const suyas = unidades.filter(u => (asignacionItems[u.id] || 0) === i);
+        // El monto se calcula por UNIDADES; los item_ids que se guardan son los
+        // ids REALES (sin repetir), porque es lo que el backend sabe validar.
+        // Con un renglón partido entre dos pagos, su id aparece en los dos: eso
+        // es la verdad — los dos pagaron parte de ese renglón. El cuadre lo hace
+        // el amount, nunca esta lista (§31).
+        pagosMesa[i].item_ids = [...new Set(suyas.map(u => u.item_id))];
+        pagosMesa[i].amount = montoDeItems(unidades, suyas.map(u => u.id), total);
     }
     // Las proporciones dejan centavos sueltos: se le cargan al último pago para
     // que la suma dé exactamente la cuenta (el backend exige que cuadre).
@@ -1089,15 +1127,21 @@ function _recalcularPagosPorItems() {
 function _renderizarDivisionMesa() {
     const listaItems = document.getElementById('lista-items-division');
     if (listaItems && modoDivisionMesa === 'items') {
-        const items = _itemsDeLaCuenta();
-        listaItems.innerHTML = items.map(it => {
+        const unidades = _unidadesDeLaCuenta();
+        listaItems.innerHTML = unidades.map(u => {
             const opciones = pagosMesa.map((_, i) =>
-                '<option value="' + i + '"' + ((asignacionItems[it.id] || 0) === i ? ' selected' : '') + '>Pago ' + (i + 1) + '</option>'
+                '<option value="' + i + '"' + ((asignacionItems[u.id] || 0) === i ? ' selected' : '') + '>Pago ' + (i + 1) + '</option>'
             ).join('');
+            // Con varias piezas se numeran ("Refresco · 2 de 4") para que el
+            // cajero vea de un vistazo cuáles ya repartió.
+            const etiqueta = u.de > 1
+                ? u.nombre + ' <span style="color:#94a3b8;">· ' + u.pieza + ' de ' + u.de + '</span>'
+                : u.nombre;
             return '<div style="display:flex;gap:6px;align-items:center;font-size:0.85em;">' +
-                '<span style="flex:1;color:#334155;">' + (it.cantidad || 1) + '× ' + (it.nombre || 'Producto') + '</span>' +
-                '<span style="color:#64748b;">' + _fmtMesa(it.subtotal || 0) + '</span>' +
-                '<select onchange="alAsignarItemDivision(' + it.id + ', this.value)"' +
+                '<span style="flex:1;color:#334155;">' + etiqueta + '</span>' +
+                '<span style="color:#64748b;">' + _fmtMesa(u.subtotal || 0) + '</span>' +
+                '<select onchange="alAsignarItemDivision(this.dataset.uid, this.value)"' +
+                ' data-uid="' + u.id + '"' +
                 ' style="padding:4px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">' + opciones + '</select>' +
             '</div>';
         }).join('');

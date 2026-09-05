@@ -617,10 +617,14 @@ class APIClient {
         });
     }
 
-    async createMovementWithPin(data, employeeId, pin, employeeName) {
+    // `role` es el PUESTO (cajero, encargado…) y es lo que el backend puede
+    // verificar de verdad: en el POS el cajero teclea el PIN de su PUESTO, no la
+    // contraseña de una cuenta. Sin él, un ajuste de inventario nunca autorizaba
+    // (mismo error que ya arrastraron cancelOrder y updateCustomerWithPin).
+    async createMovementWithPin(data, employeeId, pin, employeeName, role) {
         return await this.request('/inventory/movements', {
             method: 'POST',
-            body: { ...data, employee_id: employeeId, pin, employee_name: employeeName }
+            body: { ...data, employee_id: employeeId, pin, employee_name: employeeName, role }
         });
     }
 

@@ -770,58 +770,110 @@ function cerrarModalSalida() {
     document.getElementById('modal-salida').classList.add('hidden');
 }
 
-async function _guardarSalidaBase() {
+// Una SALIDA siempre RESTA. El "motivo" es solo la etiqueta del historial.
+//
+// ⚠️ NO confundas el MOTIVO con la OPERACIÓN. El modal dice "Cantidad a
+// descontar" y ofrece seis motivos, uno de ellos "Ajuste de inventario". Antes
+// ese motivo se mandaba al backend como `type: 'ajuste'`, que allá significa
+// otra cosa: FIJAR el stock en ese número en vez de restarlo. Elegir un motivo
+// cambiaba lo que hacía el botón, sin avisar: teclear 285 para descontar dejaba
+// el insumo EN 285. El backend ya separa bien las dos cosas (`type` = operación,
+// `reason` = motivo) y el mobile ya lo hacía así; el desktop era el que las unía.
+async function _registrarSalidaYSincronizar({ insumo_id, cantidad, motivo, notas, auth }) {
+    await window.api.registrarSalidaInsumo({ insumo_id, cantidad, motivo, notas });
+
+    if (modoConectado && apiClient && tokenActual) {
+        const movData = {
+            ingredient_id: insumo_id,
+            type: 'salida',
+            quantity: cantidad,
+            reason: motivo,
+            notes: notas || undefined,
+            branch_id: sucursalIdActual || undefined,
+        };
+        // ⚠️ Si el backend rechaza el movimiento hay que DECIRLO. Antes el error
+        // se tiraba a la basura con un .catch() vacío y justo después se volvía a
+        // bajar el inventario de la nube, que sobreescribía la resta local: el
+        // modal se cerraba con "¡Salida registrada!" y el stock no se movía.
+        try {
+            if (auth) {
+                await apiClient.createMovementWithPin(
+                    movData, auth.employeeId, auth.pin, auth.employeeName, auth.role
+                );
+            } else {
+                await apiClient.createMovement(movData);
+            }
+        } catch (e) {
+            // El backend no la registró, así que la resta local tampoco vale:
+            // se deshace releyendo el inventario, y el error SÍ se propaga.
+            await _actualizarInventarioDesdeBackend().catch(() => {});
+            throw new Error(e.message || 'El servidor no aceptó la salida');
+        }
+        await _actualizarInventarioDesdeBackend();
+    } else {
+        insumosCache = await window.api.obtenerInsumos();
+        renderizarTablaInsumos();
+        renderizarTablaPreparaciones();
+    }
+}
+
+function _leerFormularioSalida() {
     const insumo_id = parseInt(document.getElementById('salida-insumo-id').value);
     const cantidad = parseFloat(document.getElementById('salida-cantidad').value);
     const motivo = document.getElementById('salida-motivo').value;
     const notas = document.getElementById('salida-notas').value.trim();
-    if (!insumo_id || !cantidad || cantidad <= 0) { alertaZenit('Selecciona un insumo y escribe una cantidad válida.'); return; }
+    if (!insumo_id || !cantidad || cantidad <= 0) {
+        alertaZenit('Selecciona un insumo y escribe una cantidad válida.');
+        return null;
+    }
+    return { insumo_id, cantidad, motivo, notas };
+}
+
+async function _guardarSalidaBase() {
+    const datos = _leerFormularioSalida();
+    if (!datos) return;
     try {
-        await window.api.registrarSalidaInsumo({ insumo_id, cantidad, motivo, notas });
-        if (modoConectado && apiClient && tokenActual) {
-            await apiClient.createMovement({ ingredient_id: insumo_id, type: 'salida', quantity: cantidad, reason: motivo, notes: notas || undefined, branch_id: sucursalIdActual || undefined })
-                .catch(e => console.warn('No se pudo sincronizar salida al backend:', e.message));
-            // Resincronizar inventario desde backend (con branch_id) para mostrar stock correcto por sucursal
-            await _actualizarInventarioDesdeBackend();
-        } else {
-            insumosCache = await window.api.obtenerInsumos();
-            renderizarTablaInsumos();
-            renderizarTablaPreparaciones();
-        }
+        await _registrarSalidaYSincronizar(datos);
         cerrarModalSalida();
         cargarTablaSalidas();
-        mostrarNotificacionExito(`−${cantidad} registrado`, '¡Salida Registrada!');
-    } catch(e) { alertaZenit('Error al registrar la salida'); }
+        mostrarNotificacionExito('\u2212' + datos.cantidad + ' registrado', '¡Salida Registrada!');
+    } catch (e) {
+        alertaZenit('No se pudo registrar la salida: ' + (e.message || 'Error'));
+    }
 }
 
 // ============================================
 
-// --- Integración: Ajuste de inventario con PIN ---
+// --- Salida por ajuste: resta igual que las demás, pero queda AUDITADA ---
 async function guardarSalida() {
     const motivo = document.getElementById('salida-motivo')?.value;
     if (motivo === 'ajuste' && modoConectado && apiClient && tokenActual) {
-        const insumo_id = parseInt(document.getElementById('salida-insumo-id').value);
-        const cantidad  = parseFloat(document.getElementById('salida-cantidad').value);
-        const notas     = document.getElementById('salida-notas').value.trim();
-        if (!insumo_id || !cantidad || cantidad <= 0) { alertaZenit('Selecciona un insumo y escribe una cantidad válida.'); return; }
+        const datos = _leerFormularioSalida();
+        if (!datos) return;
 
         pedirPinEmpleado(
-            `Ajuste manual de inventario. Esta acción quedará registrada. Ingresa tu PIN para confirmar.`,
+            'Ajuste manual de inventario. Esta acción quedará registrada. Ingresa tu PIN para confirmar.',
             async (employeeId, pin, employeeName, employeeRole) => {
                 try {
-                    await window.api.registrarSalidaInsumo({ insumo_id, cantidad, motivo, notas });
-                    const movData = { ingredient_id: insumo_id, type: 'ajuste', quantity: cantidad, reason: motivo, notes: notas || undefined, branch_id: sucursalIdActual || undefined };
-                    if (employeeId) {
-                        await apiClient.createMovementWithPin(movData, employeeId, null, employeeName || '').catch(() => {});
-                    } else {
-                        await apiClient.createMovement(movData).catch(() => {});
-                    }
-                    await _actualizarInventarioDesdeBackend().catch(() => {});
+                    // ⚠️ El PIN y el PUESTO viajan COMPLETOS al backend. Antes se
+                    // mandaba `null` como PIN y el servidor respondía 400 "Se
+                    // requiere PIN": el mismo error que dejó muertos cancelar-pedido
+                    // y editar-cliente (CLAUDE.md §12.2), corregido en todas partes
+                    // menos aquí. Y el error se tragaba, así que no se notaba.
+                    await _registrarSalidaYSincronizar({
+                        ...datos,
+                        auth: {
+                            employeeId,
+                            pin,
+                            employeeName: employeeName || '',
+                            role: employeeRole || '',
+                        },
+                    });
                     cerrarModalSalida();
                     cargarTablaSalidas();
-                    mostrarNotificacionExito('Ajuste registrado', '¡Ajuste Registrado!');
-                } catch(e) {
-                    alertaZenit('Error al registrar ajuste: ' + (e.message || 'Error'));
+                    mostrarNotificacionExito('\u2212' + datos.cantidad + ' registrado', '¡Salida Registrada!');
+                } catch (e) {
+                    alertaZenit('No se pudo registrar la salida: ' + (e.message || 'Error'));
                 }
             }
         );
