@@ -56,6 +56,19 @@ function allAsync(sql, params = []) {
 // TABLAS Y ESTRUCTURA
 // ============================================
 function inicializarTablas() {
+    // ⚠️ TODO ESTO VA EN SERIE, Y NO ES ESTILO: node-sqlite3 arranca en modo
+    // PARALELO, así que sin este serialize las 49 sentencias ALTER TABLE de abajo
+    // pueden ejecutarse ANTES del CREATE TABLE de su propia tabla. Cuando eso pasa,
+    // el ALTER falla con "no such table", su callback () => {} se traga el error
+    // (CLAUDE.md §44.1) y la columna NO se crea.
+    //
+    // En una instalación NUEVA eso dejaba a la tabla `pedidos` sin sus nueve columnas
+    // de los bloques 8-10, así que en el PRIMER arranque el tablero y la lista de
+    // pedidos reventaban y —lo grave— LA PRIMERA VENTA NO SE PODÍA REGISTRAR ("table
+    // pedidos has no column named descuento_id"). Al segundo arranque la tabla ya
+    // existía, los ALTER pasaban y todo se "arreglaba" solo: por eso nadie lo vio
+    // nunca. Lo encontró el recorrido de pruebas-ui (BLOQUE 16).
+    db.serialize(() => {
     
     // 1. PRODUCTOS
     db.run(`CREATE TABLE IF NOT EXISTS productos (
@@ -248,7 +261,6 @@ function inicializarTablas() {
     db.run("ALTER TABLE insumos ADD COLUMN contenido_unidad TEXT", () => {});
     db.run("ALTER TABLE receta_items ADD COLUMN unidad_receta TEXT", () => {});
     db.run("ALTER TABLE preparacion_items ADD COLUMN unidad_receta TEXT", () => {});
-    db.run("ALTER TABLE mesas ADD COLUMN branch_id INTEGER", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN mesa_id INTEGER", () => {});
     db.run("ALTER TABLE pedidos ADD COLUMN comensales INTEGER DEFAULT 0", () => {});
     // Impuesto (BLOQUE 8). Igual que en el backend: total = subtotal + impuesto.
@@ -372,6 +384,14 @@ function inicializarTablas() {
         capacidad INTEGER DEFAULT 4,
         activa INTEGER DEFAULT 1
     )`);
+    // Sucursal de la mesa (BLOQUE 4). ⚠️ VA AQUÍ, DESPUÉS DEL CREATE: estaba 120
+    // líneas más arriba, así que en una instalación nueva se ejecutaba sobre una
+    // tabla que todavía no existía, fallaba con "no such table", su callback
+    // () => {} se tragaba el error (§44.1) y la columna NO se creaba. Resultado:
+    // en el PRIMER arranque no se podía crear ni una mesa ("table mesas has no
+    // column named branch_id") y la vista de Mesas quedaba inservible hasta
+    // reiniciar la app. Lo encontró el recorrido `mesas` de pruebas-ui.
+    db.run('ALTER TABLE mesas ADD COLUMN branch_id INTEGER', () => {});
 
     // TURNOS — Corte de caja
     db.run(`CREATE TABLE IF NOT EXISTS turnos (
@@ -463,6 +483,7 @@ function inicializarTablas() {
     // emparejar esos equipos. Es una molestia de una sola vez.
     db.run("UPDATE kds_trusted_devices SET estado = 'legacy' WHERE secret_hash IS NULL AND (estado IS NULL OR estado != 'legacy')", () => {});
     db.run('CREATE INDEX IF NOT EXISTS idx_kds_secret ON kds_trusted_devices(secret_hash)', () => {});
+    }); // fin de db.serialize
 }
 
 function crearDatosEjemplo() {
@@ -2590,16 +2611,56 @@ function eliminarItemMesa(item_id, pedido_id, cb) {
     );
 }
 
-function cerrarPedidoMesa(pedido_id, metodo_pago, propina, propina_metodo, cb) {
-    // La propina (BLOQUE 9) se decide AL COBRAR, no al abrir la mesa, así que se
-    // escribe aquí. NO toca el total: la cuenta es lo que se consumió.
-    db.run(
-        // Hora LOCAL, igual que crearPedido. Con CURRENT_TIMESTAMP (UTC) la venta de
-        // la mesa quedaba fechada horas en el futuro respecto al resto del día y
-        // viajaba así al backend al sincronizar.
-        "UPDATE pedidos SET estado='completado', metodo_pago=?, propina=?, propina_metodo=?, pendiente_sync=1, fecha_pedido=datetime('now','localtime') WHERE id=?",
-        [metodo_pago, propina || 0, (propina > 0 ? (propina_metodo || metodo_pago) : null), pedido_id], cb
-    );
+async function cerrarPedidoMesa(pedido_id, metodo_pago, propina, propina_metodo, pagos, cb) {
+    // Firma con `pagos` opcional: quien llame con la firma vieja (5 argumentos,
+    // el último el callback) sigue funcionando igual.
+    if (typeof pagos === 'function') { cb = pagos; pagos = null; }
+
+    try {
+        // La propina (BLOQUE 9) se decide AL COBRAR, no al abrir la mesa, así que se
+        // escribe aquí. NO toca el total: la cuenta es lo que se consumió.
+        await runAsync(
+            // Hora LOCAL, igual que crearPedido. Con CURRENT_TIMESTAMP (UTC) la venta de
+            // la mesa quedaba fechada horas en el futuro respecto al resto del día y
+            // viajaba así al backend al sincronizar.
+            "UPDATE pedidos SET estado='completado', metodo_pago=?, propina=?, propina_metodo=?, pendiente_sync=1, fecha_pedido=datetime('now','localtime') WHERE id=?",
+            [metodo_pago, propina || 0, (propina > 0 ? (propina_metodo || metodo_pago) : null), pedido_id]
+        );
+
+        // PAGOS DIVIDIDOS DE LA MESA (BLOQUE 10).
+        //
+        // ⚠️ Esto FALTABA, y descuadraba la caja del negocio que trabaja sin
+        // cuenta. Dividir la cuenta entre dos comensales guardaba
+        // `metodo_pago = 'multiple'` y NI UNA fila de pago, así que el corte —que
+        // reparte por método mirando primero `pagos_pedido` (§31)— no encontraba
+        // nada y esos $340 no entraban en ninguno de los tres métodos: al cerrar,
+        // el efectivo esperado salía corto justo por la mitad que se pagó en
+        // efectivo. En modo conectado no pasaba porque el desglose lo guardaba el
+        // backend. Lo encontró el recorrido `mesas` de pruebas-ui.
+        //
+        // Se reemplaza el reparto anterior en vez de acumularlo: cobrar dos veces
+        // la misma mesa por error sumaría de más y volvería a descuadrar (§31.9).
+        if (Array.isArray(pagos) && pagos.length > 0) {
+            await runAsync('DELETE FROM pagos_pedido WHERE pedido_id = ?', [pedido_id]);
+            for (const pago of pagos) {
+                await runAsync(
+                    `INSERT INTO pagos_pedido (pedido_id, metodo, monto, propina, item_ids, fecha)
+                     VALUES (?, ?, ?, ?, ?, datetime('now','localtime'))`,
+                    [
+                        pedido_id,
+                        pago.metodo || pago.method || 'efectivo',
+                        pago.monto != null ? pago.monto : pago.amount,
+                        pago.propina != null ? pago.propina : (pago.tip_amount || 0),
+                        Array.isArray(pago.item_ids) && pago.item_ids.length
+                            ? JSON.stringify(pago.item_ids) : null,
+                    ]
+                );
+            }
+        }
+        if (cb) cb(null);
+    } catch (err) {
+        if (cb) cb(err);
+    }
 }
 
 function transferirMesa(pedido_id, nueva_mesa_id, cb) {

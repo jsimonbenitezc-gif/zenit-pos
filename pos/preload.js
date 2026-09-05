@@ -177,7 +177,7 @@ contextBridge.exposeInMainWorld('api', {
     abrirPedidoMesa:     (m, nom, caj, com, not, imp) => ipcRenderer.invoke('abrir-pedido-mesa', m, nom, caj, com, not, imp),
     agregarItemMesa:     (ped, prod, cant, px, n, mods, pxBase) => ipcRenderer.invoke('agregar-item-mesa', ped, prod, cant, px, n, mods, pxBase),
     eliminarItemMesa:    (item, ped)              => ipcRenderer.invoke('eliminar-item-mesa', item, ped),
-    cerrarPedidoMesa:    (ped, metodo, propina, propinaMetodo) => ipcRenderer.invoke('cerrar-pedido-mesa', ped, metodo, propina, propinaMetodo),
+    cerrarPedidoMesa:    (ped, metodo, propina, propinaMetodo, pagos) => ipcRenderer.invoke('cerrar-pedido-mesa', ped, metodo, propina, propinaMetodo, pagos),
     transferirMesa:      (ped, nueva)             => ipcRenderer.invoke('transferir-mesa', ped, nueva),
     actualizarNotasMesa: (ped, notas)             => ipcRenderer.invoke('actualizar-notas-mesa', ped, notas),
     actualizarPuntosCliente: (id, delta)          => ipcRenderer.invoke('actualizar-puntos-cliente', id, delta),

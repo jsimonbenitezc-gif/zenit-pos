@@ -140,23 +140,35 @@ function _indexarCatalogoModificadores(grupos, enlaces) {
  *   'local'   → lo lee de la SQLite (modo local puro, o sin internet)
  */
 async function cargarCatalogoModificadores() {
-    try {
-        if (modoConectado && apiClient && tokenActual) {
-            const data = await apiClient.getModifiers();
-            _indexarCatalogoModificadores(data.groups, data.product_groups);
-            // Se guarda local para poder vender sin internet.
-            await window.api.guardarCatalogoModificadores(data).catch(() => {});
-            return;
-        }
-    } catch (e) {
-        console.warn('Catálogo de modificadores desde la nube:', e && e.message);
-    }
+    // ⚠️ PRIMERO LO LOCAL, Y LA NUBE DESPUÉS SIN BLOQUEAR.
+    //
+    // Antes era al revés: en modo conectado se esperaba a `getModifiers()` y solo
+    // se caía al respaldo local si fallaba. Como esta función va DENTRO de la
+    // cadena del arranque (render.js), un servidor dormido —el caso normal con el
+    // plan gratuito de Render, que tarda cerca de un minuto en despertar y agota
+    // los 30 s de timeout— dejaba la app colgada ahí: sin menú cableado, sin vista
+    // inicial y sin el indicador de conexión. Lo encontró el recorrido `dormido`
+    // de pruebas-ui (§46).
+    //
+    // El catálogo local es un espejo fiel del de la nube (§32), así que pintarlo
+    // primero deja la caja lista para vender en el acto; cuando el servidor
+    // conteste, se reindexa con lo de arriba y se vuelve a guardar.
     try {
         const local = await window.api.obtenerCatalogoModificadores();
         _indexarCatalogoModificadores(local.groups, local.product_groups);
     } catch (e) {
         console.warn('Catálogo de modificadores local:', e && e.message);
         catalogoModificadores = { grupos: [], porProducto: new Map(), opciones: new Map() };
+    }
+
+    if (modoConectado && apiClient && tokenActual) {
+        apiClient.getModifiers()
+            .then(async (data) => {
+                _indexarCatalogoModificadores(data.groups, data.product_groups);
+                // Se guarda local para poder vender sin internet.
+                await window.api.guardarCatalogoModificadores(data).catch(() => {});
+            })
+            .catch((e) => console.warn('Catálogo de modificadores desde la nube:', e && e.message));
     }
 }
 

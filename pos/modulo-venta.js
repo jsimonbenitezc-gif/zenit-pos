@@ -16,16 +16,36 @@ let descuentoPuntosVenta = 0;   // pesos descontados por canje de puntos de fide
    ============================================ */
 
 async function cargarCatalogoVenta() {
-    try {
-        clasificaciones = await obtenerProductosAgrupadosWrapper();
+    const pintar = (cats) => {
+        clasificaciones = cats || [];
         productosGlobales = [];
         clasificaciones.forEach(c => {
-            c.productos.forEach(p => productosGlobales.push({...p, categoria: c.nombre}));
+            (c.productos || []).forEach(p => productosGlobales.push({...p, categoria: c.nombre}));
         });
         renderizarFiltrosCategorias();
         renderizarGridVenta(productosGlobales);
         renderizarCarrito();
+    };
+
+    // ⚠️ LA PANTALLA DE VENTA SE PINTA CON LO LOCAL Y NO ESPERA AL SERVIDOR.
+    //
+    // Antes se hacía al revés —la nube primero, lo local solo si fallaba— y con un
+    // servidor DORMIDO (el plan gratuito de Render tarda cerca de un minuto en
+    // despertar, más que los 30 s de timeout) la caja se quedaba medio minuto sin
+    // catálogo: un punto de venta que no puede cobrar. Es el peor caso posible de
+    // toda la app, y lo encontró el recorrido `dormido` de pruebas-ui (§46).
+    //
+    // El catálogo local es un espejo del de la nube (`syncProductos`), así que se
+    // pinta al instante y se corrige solo cuando el servidor conteste.
+    try {
+        pintar(await window.api.obtenerProductosAgrupados());
     } catch (e) { console.error(e); }
+
+    if (modoConectado && apiClient && tokenActual) {
+        obtenerProductosAgrupadosWrapper()
+            .then(pintar)
+            .catch(e => console.warn('Catálogo de venta desde la nube:', e && e.message));
+    }
 }
 
 function renderizarFiltrosCategorias() {

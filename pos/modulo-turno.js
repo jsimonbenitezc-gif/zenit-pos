@@ -269,14 +269,35 @@ let _movGuardando = false;
 
 /**
  * ¿Hay que pedir el PIN del puesto para sacar dinero?
- * Es una decisión del dueño (`movimientos_caja_pin`, ajuste de la CUENTA). Se lee
- * de la SQLite local para que funcione igual sin internet; el default es pedirlo.
+ *
+ * Dos condiciones, y las DOS tienen que cumplirse:
+ *   1. que el dueño lo quiera (`movimientos_caja_pin`, ajuste de la CUENTA; se lee
+ *      de la SQLite local para que funcione igual sin internet, y el default es sí), y
+ *   2. que el puesto activo TENGA un PIN contra el que validar.
+ *
+ * ⚠️ La segunda condición faltaba, y dejaba sin caja al caso más común de todos.
+ * Un negocio SIN cuenta —el modo local puro, que es como se estrena Zenit— no
+ * tiene puestos configurados y por tanto no tiene ningún PIN; aun así el modal
+ * exigía uno y respondía "Ingresa el PIN de tu puesto" a un dinero que el cajero
+ * acababa de sacar del cajón. La única salida era teclear cualquier cosa, porque
+ * `_movVerificarPinLocal` sí sabe que un puesto sin PIN no valida nada — o sea que
+ * ni siquiera protegía: solo estorbaba. Es exactamente la regla del §19.19 ("un
+ * puesto sin PIN configurado autoriza con solo confirmar") aplicada donde faltaba.
+ * Lo encontró el recorrido `caja` de pruebas-ui, registrando un gasto de $50.
  */
 async function _movPinRequerido(tipo) {
     if (tipo === 'deposito') return false;
     try {
         const ajustes = await window.api.obtenerAjustes();
-        return !(ajustes.movimientos_caja_pin === 'false' || ajustes.movimientos_caja_pin === false);
+        const loPideElDueno = !(ajustes.movimientos_caja_pin === 'false' || ajustes.movimientos_caja_pin === false);
+        if (!loPideElDueno) return false;
+
+        const guardados = JSON.parse(ajustes.permisos_roles || '{}');
+        const efectivos = (sucursalIdActual && guardados[`__b_${sucursalIdActual}`])
+            ? guardados[`__b_${sucursalIdActual}`]
+            : Object.fromEntries(Object.entries(guardados).filter(([k]) => !k.startsWith('__b_')));
+        const perfil = efectivos[rolActivo];
+        return Boolean(perfil?.pin_set && perfil?.pin);
     } catch(e) {
         return true; // ante la duda, se pide
     }

@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' http://localhost:* http://127.0.0.1:* https: wss: ws:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' http://localhost:* http://127.0.0.1:* https: wss: ws:; font-src 'self' data:; object-src 'none'; base-uri 'self';">
     <title>Zenit POS</title>
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -37,7 +37,7 @@
                 <div class="perfil-desc">Ventas y pedidos</div>
             </button>
             <button class="perfil-btn" id="perfil-btn-encargado" onclick="seleccionarPerfil('encargado')">
-                <div class="perfil-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12h.01"/><path d="M16.5 6H18a1 1 0 0 1 1 1v11a2 2 0 0 1-4 0V6a1 1 0 0 1 1-1 1.5"/><path d="M2 21a2 2 0 0 0 4 0V6a1 1 0 0 1 1-1h1.5"/><path d="M7 21a2 2 0 0 0 4 0V11"/><path d="M12 21a2 2 0 0 0 4 0V11"/></svg></div>
+                <div class="perfil-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12h.01"/><path d="M16.5 6H18a1 1 0 0 1 1 1v11a2 2 0 0 1-4 0V6a1 1 0 0 1 1-1"/><path d="M2 21a2 2 0 0 0 4 0V6a1 1 0 0 1 1-1h1.5"/><path d="M7 21a2 2 0 0 0 4 0V11"/><path d="M12 21a2 2 0 0 0 4 0V11"/></svg></div>
                 <div class="perfil-nombre">Encargado</div>
                 <div class="perfil-desc">Gestión completa</div>
             </button>
@@ -401,6 +401,10 @@
            <section id="view-pedidos" class="view">
     <div id="branch-tabs-pedidos" style="display:none;margin-bottom:16px;gap:8px;flex-wrap:wrap;"></div>
     <div id="branch-aviso-pedidos" style="display:none;margin-bottom:16px;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;color:#92400e;font-size:0.88em;"></div>
+    <!-- Aviso de "sin conexión": la lista de abajo sale de la SQLite de ESTE equipo.
+         Antes, cuando el servidor no respondía, esta vista se quedaba VACÍA con un
+         mensaje rojo, aunque los pedidos estuvieran guardados aquí mismo. -->
+    <div id="pedidos-aviso-offline" style="display:none;margin-bottom:16px;padding:10px 14px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;color:#9a3412;font-size:0.88em;"></div>
     <div class="table-card">
         <div class="table-header" style="flex-direction:column; align-items:stretch; gap:10px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">

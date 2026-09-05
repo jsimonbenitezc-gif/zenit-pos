@@ -369,6 +369,55 @@ function actualizarIndicadorModo() {
     }
 }
 
+/**
+ * El estado de la conexión, dicho en la píldora de la cabecera.
+ *
+ * ⚠️ POR QUÉ EXISTE. Con el plan gratuito de Render el servidor se DUERME tras un
+ * rato sin uso y tarda cerca de un minuto en despertar. Durante esa espera la app
+ * no enseñaba absolutamente nada: parecía rota, y quien la abría por primera vez
+ * en el día concluía —con razón— que "no carga". Un círculo girando y una frase
+ * honesta convierten un fallo aparente en una espera entendible.
+ *
+ * Estados: 'conectando' | 'conectado' | 'sin-conexion' | 'local'.
+ */
+function indicarEstadoConexion(estado) {
+    const caja  = document.getElementById('btn-modo-conexion');
+    const icono = document.getElementById('icono-modo');
+    const texto = document.getElementById('texto-modo');
+    if (!caja || !icono || !texto) return;
+
+    // El spinner es un elemento aparte: el <svg> del icono se conserva para poder
+    // volver a él sin reconstruir nada cuando la conexión responde.
+    let rueda = document.getElementById('spinner-conexion');
+    if (!rueda) {
+        rueda = document.createElement('span');
+        rueda.id = 'spinner-conexion';
+        rueda.className = 'zenit-spinner';
+        rueda.style.display = 'none';
+        caja.insertBefore(rueda, caja.firstChild);
+    }
+
+    const esperando = estado === 'conectando';
+    rueda.style.display = esperando ? '' : 'none';
+    icono.style.display = esperando ? 'none' : '';
+
+    if (esperando) {
+        texto.innerText = 'Conectando…';
+        caja.title = 'Buscando el servidor. Si llevaba rato sin usarse puede tardar hasta un minuto en despertar.';
+        return;
+    }
+
+    if (estado === 'sin-conexion') {
+        icono.innerHTML = '<path d="M2 20h20"/><path d="m15 9-6 6m0-6 6 6"/><rect x="3" y="4" width="18" height="12" rx="2"/>';
+        texto.innerText = 'Sin conexión';
+        caja.title = 'No se pudo hablar con el servidor. Puedes seguir vendiendo: todo se guarda en este equipo y sube al reconectar.';
+        return;
+    }
+
+    caja.title = '';
+    actualizarIndicadorModo();
+}
+
 
 // ============================================
 // SISTEMA DE ACTUALIZACIONES
@@ -517,25 +566,41 @@ async function inicializarLogin() {
         return;
     }
 
-    try {
-        const backendUrl = ajustesPwd.api_url || 'https://zenit-pos-backend.onrender.com/api';
-        apiClient.setBaseURL(backendUrl);
-        apiClient.setToken(token);
-        const refresh = await window.api.obtenerRefreshSeguro();
-        if (refresh) apiClient.setRefreshToken(refresh);
-        const me = await apiClient.request('/auth/me');
-        // Token válido (o renovado automáticamente con el refresh token) — mantener sesión.
-        // Refrescar el estado de verificación de correo (por si el usuario ya confirmó
-        // vía el enlace del email): así el aviso suave se limpia solo.
-        if (me && typeof me.email_verified !== 'undefined') {
-            await window.api.guardarAjuste('zenit_email_verified', me.email_verified === false ? 'false' : 'true');
-        }
-    } catch (e) {
-        // Si la sesión expiró de verdad (refresh falló), onSessionExpired ya limpió todo.
-        // Cualquier otro error (ej. sin internet) NO cierra la sesión: la app sigue
-        // funcionando offline y reintentará cuando haya conexión.
-        console.warn('No se pudo validar la sesión al arrancar:', e.message);
-    }
+    const backendUrl = ajustesPwd.api_url || 'https://zenit-pos-backend.onrender.com/api';
+    apiClient.setBaseURL(backendUrl);
+    apiClient.setToken(token);
+    const refresh = await window.api.obtenerRefreshSeguro();
+    if (refresh) apiClient.setRefreshToken(refresh);
+
+    // ⚠️ LA VALIDACIÓN DE LA SESIÓN NO BLOQUEA EL ARRANQUE, Y ES DELIBERADO.
+    //
+    // Esta llamada estaba con `await` en medio de la cadena del DOMContentLoaded,
+    // así que la app entera se quedaba esperándola: sin config de modo, sin plan,
+    // sin impuesto, sin propinas, sin catálogo de modificadores, sin menú y sin
+    // vista inicial. Con el plan gratuito de Render el servidor SE DUERME y tarda
+    // cerca de un minuto en despertar —más que los 30 s de timeout del cliente—,
+    // así que la primera vez que se abría la app en el día quedaba **medio muerta
+    // durante medio minuto**: el tablero en $0.00, la lista de pedidos vacía y la
+    // píldora diciendo "Modo Local" aunque hubiera cuenta. Después de reiniciar
+    // "funcionaba", porque el servidor ya estaba despierto. Ese es exactamente el
+    // síntoma que reportó el dueño del producto, y lo reprodujo el recorrido
+    // `dormido` de pruebas-ui (§46).
+    //
+    // Nada de lo que hace hace falta para arrancar: refresca la marca de correo
+    // verificado, y de detectar una sesión REALMENTE expirada ya se encarga
+    // `onSessionExpired` dentro del propio cliente HTTP. Así que se lanza y se
+    // sigue: la app arranca en local y se pone al día cuando el servidor conteste.
+    apiClient.request('/auth/me')
+        .then(async (me) => {
+            if (me && typeof me.email_verified !== 'undefined') {
+                await window.api.guardarAjuste('zenit_email_verified', me.email_verified === false ? 'false' : 'true');
+            }
+        })
+        .catch((e) => {
+            // Si la sesión expiró de verdad (refresh falló), onSessionExpired ya limpió
+            // todo. Cualquier otro error (ej. sin internet) NO cierra la sesión.
+            console.warn('No se pudo validar la sesión al arrancar:', e.message);
+        });
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -583,8 +648,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Sincronizar desde backend si hay sesión activa
     if (modoConectado) {
+        // Mientras se busca al servidor, la píldora de la cabecera gira. Si la
+        // primera conversación falla —el caso normal con un Render dormido, que
+        // tarda más que los 30 s de timeout del cliente— se dice "Sin conexión" en
+        // vez de dejar al usuario mirando una app que parece rota. Vender sigue
+        // funcionando: todo se guarda aquí y sube al reconectar (§13).
+        indicarEstadoConexion('conectando');
         subirPedidosPendientes().catch(e => console.warn('subirPendientes:', e));
-        sincronizarDesdeBackend().catch(e => console.warn('syncDesdeBackend:', e));
+        sincronizarDesdeBackend()
+            .then(ok => indicarEstadoConexion(ok ? 'conectado' : 'sin-conexion'))
+            .catch(e => { console.warn('syncDesdeBackend:', e); indicarEstadoConexion('sin-conexion'); });
         cargarSucursalesAjustes().catch(e => console.warn('cargarSucursales:', e));
     }
 

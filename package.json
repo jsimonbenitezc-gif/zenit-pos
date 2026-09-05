@@ -10,7 +10,8 @@
     "revisar": "node scripts/revisar-huerfanas.js",
     "build": "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --publish never",
     "build-publish": "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --publish always",
-    "verificar": "npm run revisar && node scripts/smoke-cliente-por-telefono.js && node scripts/smoke-division-por-unidades.js && node scripts/smoke-kds-dispositivos.js && node scripts/smoke-rentabilidad.js"
+    "verificar": "npm run revisar && node scripts/smoke-cliente-por-telefono.js && node scripts/smoke-division-por-unidades.js && node scripts/smoke-kds-dispositivos.js && node scripts/smoke-rentabilidad.js && npm run probar:ui",
+    "probar:ui": "node pruebas-ui/correr.js"
   },
   "build": {
     "appId": "com.zenit.pos",
@@ -57,6 +58,7 @@
   "devDependencies": {
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
-    "nodemon": "^3.1.9"
+    "nodemon": "^3.1.9",
+    "playwright-core": "^1.63.0"
   }
 }

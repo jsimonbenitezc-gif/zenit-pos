@@ -1262,11 +1262,22 @@ async function confirmarCobrarMesa() {
             // siempre (un solo método, sin filas de pago).
             await apiClient.closeTableOrder(pedidoSnap.id, metodo, propinaSnap, propinaMetodoSnap, pagosSnap);
         } else {
-            await window.api.cerrarPedidoMesa(pedidoSnap.id, metodo, propinaSnap, propinaMetodoSnap);
+            // El reparto de la cuenta dividida también se guarda en LOCAL: sin él,
+            // el corte de caja no sabe por qué método entró cada peso (§31).
+            await window.api.cerrarPedidoMesa(pedidoSnap.id, metodo, propinaSnap, propinaMetodoSnap, pagosSnap);
 
-            // Sincronizar al backend si está conectado (modo local con sync)
+            // Sincronizar al backend si está conectado (modo local con sync).
+            //
+            // ⚠️ Solo si hay SESIÓN. `apiClient` existe desde el arranque aunque el
+            // equipo nunca haya iniciado sesión, así que sin esta guarda un negocio
+            // SIN CUENTA —el modo local puro, que es como se estrena Zenit— llamaba
+            // al backend en cada cobro de mesa, esperaba a que la red fallara y
+            // dejaba dos errores en la consola. La venta no se rompía (va dentro de
+            // un try), pero era trabajo inútil en el modo que existe justo para no
+            // depender de internet.
+            if (apiClient?.token) {
             try {
-                await apiClient?.createOrder({
+                await apiClient.createOrder({
                     total: totalSnap,
                     // Tasa con la que se cobró la mesa (BLOQUE 8). El backend solo
                     // la acepta si la venta llega como diferida; en este camino
@@ -1308,6 +1319,7 @@ async function confirmarCobrarMesa() {
                 await window.api.marcarPedidoSincronizado(pedidoSnap.id);
             } catch(e) {
                 console.warn('Pedido de mesa guardado local, sin sync al backend:', e);
+            }
             }
         }
 

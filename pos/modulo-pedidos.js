@@ -7,15 +7,37 @@ async function cargarPedidos() {
     if (!contenedor) return;
 
     renderizarTabsSucursal('pedidos');
-    contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center;">Cargando pedidos...</td></tr>';
+    contenedor.innerHTML = '<tr><td colspan="7"><div class="zenit-esperando">' +
+        '<span class="zenit-spinner grande"></span><span>Cargando pedidos…</span></div></td></tr>';
 
     try {
         const resultado = await obtenerPedidosWrapper({ ...filtroActual, pagina: paginaPedidos, limite: 50 });
         const pedidos = resultado.data || [];
         const pag = resultado.pagination || {};
 
-        if (resultado._backendError) {
-            contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc2626;">Error de conexión con el servidor. Tus pedidos están guardados en la nube, revisa tu conexión e intenta de nuevo.</td></tr>';
+        // ── SIN CONEXIÓN: se ENSEÑA lo que hay, no una pantalla vacía ───────
+        //
+        // `obtenerPedidosWrapper` ya se toma la molestia de leer la SQLite de este
+        // equipo cuando el servidor no contesta… y esta vista tiraba ese resultado
+        // a la basura para pintar un mensaje rojo. El cajero se quedaba sin poder
+        // ver la venta que acababa de cobrar, con la venta guardada a medio metro.
+        //
+        // El aviso dice la verdad completa —esto es lo de ESTE equipo, puede faltar
+        // lo que se cobró en otra caja o en el celular— porque media verdad aquí
+        // haría que alguien diera por perdido un pedido que sí existe.
+        const avisoOffline = document.getElementById('pedidos-aviso-offline');
+        if (avisoOffline) {
+            avisoOffline.style.display = resultado._backendError ? '' : 'none';
+            if (resultado._backendError) {
+                avisoOffline.innerHTML = '<strong>Sin conexión con el servidor.</strong> ' +
+                    'Estás viendo los pedidos guardados en este equipo; puede faltar lo que se ' +
+                    'haya cobrado en otra caja o en el celular. Se actualiza solo al volver la conexión.';
+            }
+        }
+
+        if (pedidos.length === 0 && paginaPedidos === 1 && resultado._backendError) {
+            contenedor.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#6b7280;">' +
+                'Sin conexión y sin pedidos guardados en este equipo.</td></tr>';
             return;
         }
         if (pedidos.length === 0 && paginaPedidos === 1) {
@@ -326,6 +348,15 @@ async function cambiarEstadoPedido(pedidoId, nuevoEstado, selectElement) {
                 try {
                     if (employeeId || employeeRole) {
                         await apiClient.cancelOrder(pedidoId, employeeId, pin, employeeName || '', employeeRole || null);
+                        // Y también en la copia local. La cancelación la manda el
+                        // backend, pero la SQLite del equipo es el espejo que se usa
+                        // EN CUANTO SE CAE EL INTERNET (§13). El sync sí vuelve a
+                        // bajar pedidos, pero con `INSERT OR IGNORE` (syncPedidos,
+                        // database/db.js): NUNCA corrige una fila que ya existe. Sin
+                        // esta línea, el pedido se quedaba aquí como 'registrado'
+                        // para siempre y un corte sin conexión contaba una venta
+                        // que se canceló.
+                        await window.api.actualizarEstadoPedido(pedidoId, 'cancelado').catch(() => {});
                     } else {
                         await window.api.actualizarEstadoPedido(pedidoId, 'cancelado');
                     }

@@ -327,9 +327,13 @@ async function sincronizarDesdeBackend() {
         }
 
         console.log('✅ Sincronización desde backend completada');
+        return true;
     } catch (error) {
-        // Si falla en FASE 2 (descarga), los datos locales quedan intactos
+        // Si falla en FASE 2 (descarga), los datos locales quedan intactos.
+        // Se devuelve `false` en vez de relanzar: quien llama decide qué hacer
+        // (hoy, pintar "Sin conexión" en la cabecera) y nada más se rompe.
         console.error('⚠️ Error en sincronización desde backend:', error);
+        return false;
     }
 }
 
