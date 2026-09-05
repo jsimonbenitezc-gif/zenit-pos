@@ -10,6 +10,7 @@ let descuentoEditandoId = null;
 let comboEditandoId = null;
 
 async function cargarOfertas() {
+    _mostrarTabOfertasPorDefecto();
     try {
         descuentosCache = await window.api.obtenerDescuentos();
         combosCache = await window.api.obtenerCombos();
@@ -25,10 +26,30 @@ async function cargarOfertas() {
 }
 
 function cambiarTabOfertas(tab, btn) {
-    document.querySelectorAll('.inv-tabs .inv-tab').forEach(b => b.classList.remove('active'));
+    // Acotado a esta vista por el mismo motivo que en Inventario: las clases
+    // .inv-tab / .inv-panel se comparten entre las dos y un selector global
+    // apaga las pestañas de la otra.
+    const vista = document.getElementById('view-ofertas');
+    if (vista) vista.querySelectorAll('.inv-tab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('oferta-panel-descuentos').style.display = tab === 'descuentos' ? 'block' : 'none';
     document.getElementById('oferta-panel-combos').style.display = tab === 'combos' ? 'block' : 'none';
+}
+
+// La vista arranca con Descuentos visible, pero basta con que otra vista haya
+// apagado estos paneles para que quede en blanco. Se restablece al entrar en
+// vez de confiar en el estado que dejó quien pasó antes.
+function _mostrarTabOfertasPorDefecto() {
+    const vista = document.getElementById('view-ofertas');
+    if (!vista) return;
+    const botones = vista.querySelectorAll('.inv-tab');
+    const activo = vista.querySelector('.inv-tab.active') || botones[0];
+    const esCombos = activo && /combos/i.test(activo.textContent || '');
+    botones.forEach(b => b.classList.toggle('active', b === activo));
+    const pDesc = document.getElementById('oferta-panel-descuentos');
+    const pCombos = document.getElementById('oferta-panel-combos');
+    if (pDesc) pDesc.style.display = esCombos ? 'none' : 'block';
+    if (pCombos) pCombos.style.display = esCombos ? 'block' : 'none';
 }
 
 // --- DESCUENTOS ---

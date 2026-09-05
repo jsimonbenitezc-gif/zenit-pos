@@ -80,9 +80,17 @@ function fmtStock(val) {
   }
 
 function cambiarTabInventario(tab, btn) {
-    document.querySelectorAll('.inv-tab').forEach(b => b.classList.remove('active'));
+    // ⚠️ ACOTADO A ESTA VISTA. Antes buscaba en TODO el documento, y la vista de
+    // Ofertas usa las mismas clases (.inv-tab / .inv-panel) para sus dos
+    // pestañas: entrar a Inventario y tocar cualquier pestaña dejaba los dos
+    // paneles de Ofertas con display:none. Al abrir Ofertas se veían las dos
+    // pestañas y NADA más, y solo revivía al tocar una (que les pone display
+    // explícito). Un querySelectorAll sin acotar alcanza a otras vistas.
+    const vista = document.getElementById('view-inventario');
+    if (!vista) return;
+    vista.querySelectorAll('.inv-tab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    document.querySelectorAll('.inv-panel').forEach(p => p.style.display = 'none');
+    vista.querySelectorAll('.inv-panel').forEach(p => p.style.display = 'none');
     document.getElementById(`inv-panel-${tab}`).style.display = 'block';
     if (tab === 'entradas') cargarTablaEntradas();
     if (tab === 'salidas') cargarTablaSalidas();
