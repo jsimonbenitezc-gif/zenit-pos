@@ -356,7 +356,24 @@ async function guardarCliente() {
         cargarClientes();
     } catch (error) {
         console.error("Error al guardar cliente:", error);
-        alertaZenit("Error al guardar el cliente");
+        // ⚠️ EL MOTIVO REAL, NO "hubo un error". El teléfono es UNIQUE, así que el
+        // caso más común de largo es que ese cliente YA ESTÉ dado de alta — el
+        // cajero teclea un número conocido justamente porque es cliente de
+        // siempre. Un aviso genérico lo deja sin saber qué pasó ni qué hacer
+        // (BLOQUE 17, roce F-6).
+        const yaExiste = /UNIQUE|constraint|duplicad/i.test(error?.message || '');
+        if (yaExiste) {
+            const previo = await window.api.buscarClientePorTelefono(telefono).catch(() => null);
+            alertaZenit(
+                previo
+                    ? `Ya tienes un cliente con el teléfono ${telefono}: "${previo.nombre}".\n\n` +
+                      'Búscalo en el directorio para editarlo, o usa otro número.'
+                    : `Ya tienes un cliente registrado con el teléfono ${telefono}.`,
+                'Ese teléfono ya está registrado'
+            );
+        } else {
+            alertaZenit('No se pudo guardar el cliente: ' + (error?.message || 'error desconocido'));
+        }
         if (btnGuardar) btnGuardar.disabled = false;
     }
 }

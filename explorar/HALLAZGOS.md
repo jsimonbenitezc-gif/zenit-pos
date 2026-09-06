@@ -196,8 +196,8 @@ número que el cajero le canta al cliente.
 **Propuesta:** cuando hay propina, dos renglones ("Venta" y "TOTAL PAGADO"),
 como ya hace el ticket impreso del §30.
 
-### F-6 · Un teléfono repetido dice "Error al guardar el cliente"
-**Estado:** abierto — 2026-09-05 · `pos/modulo-clientes.js`
+### F-6 · Un teléfono repetido decía "Error al guardar el cliente"
+**Estado:** arreglado — 2026-09-06 · `pos/modulo-clientes.js`
 Clientes → Nuevo Cliente con un teléfono que ya existe. Se rechaza —bien, la
 columna es UNIQUE y el directorio queda limpio— pero el aviso es genérico:
 **"Error al guardar el cliente"**. El cajero no sabe que el cliente ya está dado
@@ -207,8 +207,8 @@ de alta ni qué hacer.
 Doña Carmen") y, mejor todavía, ofrecer abrirlo. Es el mismo caso del §36: el
 cajero teclea un teléfono conocido porque el cliente es de siempre.
 
-### F-7 · Ofertas acepta un descuento del 150 %
-**Estado:** abierto — 2026-09-05 · `pos/modulo-ofertas.js`
+### F-7 · Ofertas aceptaba un descuento del 150 %
+**Estado:** arreglado — 2026-09-06 · `pos/modulo-ofertas.js`
 Ofertas → Nuevo Descuento → tipo porcentaje, valor **150**. Se guarda sin
 protestar.
 

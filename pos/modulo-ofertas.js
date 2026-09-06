@@ -107,6 +107,21 @@ async function guardarDescuento() {
     const valor       = parseFloat(document.getElementById('ndesc-valor').value);
     const requiresPin = document.getElementById('ndesc-requires-pin')?.checked === true;
     if (!nombre || isNaN(valor) || valor <= 0) { alertaZenit('Completa todos los campos correctamente.'); return; }
+    // ⚠️ AQUÍ SÍ ES UN TOPE, NO UN AVISO — y es la excepción a la regla del §37.
+    // Un descuento de más del 100 % no significa nada: no existe cobrar menos que
+    // gratis. Es distinto de una merma mayor que el stock (F-1) o de un retiro
+    // mayor que el cajón (F-2), que sí pueden haber ocurrido de verdad y por eso
+    // solo avisan. Guardarlo dejaba un "150 %" en la lista de descuentos rápidos
+    // del cobro (BLOQUE 17, roce F-7).
+    if (tipo === 'porcentaje' && valor > 100) {
+        alertaZenit(
+            'Un descuento en porcentaje no puede pasar de 100 %: eso sería cobrar menos que gratis.\n\n' +
+            'Si quieres regalar el producto, usa 100 %. Para una cantidad fija en pesos, ' +
+            'cambia el tipo a "Monto fijo".',
+            'Porcentaje fuera de rango'
+        );
+        return;
+    }
     try {
         const datos = { nombre, tipo, valor, requires_pin: requiresPin };
         if (modoConectado && apiClient && tokenActual) {
