@@ -1258,7 +1258,26 @@ function quitarDescuento() {
     renderizarCarrito();
 }
 
-function mostrarModalImpresion(pedidoId) {
+// Impresión automática: si la caja tiene activado "Imprimir el ticket
+// automáticamente" (Ajustes → Impresora), el ticket sale SOLO y no se pregunta
+// nada. Es lo que quiere un negocio que siempre imprime: en hora pico, un modal
+// entre venta y venta es fricción pura, y a las diez veces se cierra por reflejo.
+//
+// ⚠️ Un fallo de impresora NUNCA puede tumbar ni frenar la venta: la venta ya
+// está registrada cuando se llega aquí. Por eso la lectura del ajuste va en su
+// propio try y, si falla, se cae al modal de siempre — el cajero siempre puede
+// imprimir a mano. Mismo criterio que el ticket del mobile (§32.12).
+async function mostrarModalImpresion(pedidoId) {
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        if (ajustes && ajustes.impresora_auto === 'true') {
+            imprimirTicket(pedidoId);
+            return;
+        }
+    } catch (e) {
+        console.warn('No se pudo leer el ajuste de impresión automática:', e);
+    }
+
     const modal = document.getElementById('modal-imprimir-ticket');
     if (!modal) return;
 

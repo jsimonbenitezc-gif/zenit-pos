@@ -1233,6 +1233,12 @@ async function cargarAjustesInstalados() {
         // Stock en Nueva Venta
         if(document.getElementById('adj-mostrar-stock'))
             document.getElementById('adj-mostrar-stock').checked = (ajustes.mostrar_stock_venta === 'true');
+        // Ajuste del EQUIPO, no de la cuenta: una caja tiene impresora y otra no.
+        // Al llamarse `impresora_auto` entra en la lista blanca `impresora%` de
+        // `limpiarAjustesCuenta` (db.js), así que sobrevive al cerrar sesión —
+        // como el resto de la configuración de impresión.
+        if(document.getElementById('adj-impresora-auto'))
+            document.getElementById('adj-impresora-auto').checked = (ajustes.impresora_auto === 'true');
 
         // Venta sin turno (default activo — solo se desactiva si el usuario lo apagó explícitamente)
         ventaSinTurno = !(ajustes.venta_sin_turno === false || ajustes.venta_sin_turno === 'false');

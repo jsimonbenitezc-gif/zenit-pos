@@ -1367,6 +1367,21 @@ async function confirmarCobrarMesa() {
             }
         }
 
+        // Impresión automática (Ajustes → "Imprimir el ticket automáticamente").
+        // Mismo ajuste del equipo que usa la venta de mostrador: si esta caja
+        // siempre imprime, la cuenta de la mesa sale sola. El modal de éxito se
+        // sigue mostrando —el cajero necesita ver que cobró y cuánto—, lo que se
+        // ahorra es el paso extra de pedir el ticket.
+        // Un fallo al leer el ajuste no puede frenar nada: la mesa ya está cobrada.
+        try {
+            const ajustesEquipo = await window.api.obtenerAjustes();
+            if (ajustesEquipo && ajustesEquipo.impresora_auto === 'true') {
+                imprimirCuentaMesaFinal();
+            }
+        } catch (e) {
+            console.warn('No se pudo leer el ajuste de impresión automática:', e);
+        }
+
         // Mostrar estado de éxito con botón de imprimir
         document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(totalSnap);
         const footer = document.querySelector('#modal-cobrar-mesa .modal-footer');

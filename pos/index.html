@@ -1231,6 +1231,16 @@
                     <option value="default">Impresora del Sistema</option>
                 </select>
             </div>
+            <div class="setting-item" style="margin-top:12px;">
+                <div>
+                    <span>Imprimir el ticket automáticamente</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Al cobrar, el ticket sale solo sin preguntar. Actívalo si esta caja siempre imprime.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-impresora-auto" onchange="guardarAjusteDirecto('impresora_auto', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
             <div class="backup-section">
                 <h3>Actualizaciones</h3>
                 <p>Versión actual: <span id="version-actual">Cargando...</span></p>
