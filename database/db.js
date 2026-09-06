@@ -1904,19 +1904,18 @@ function calcularTotalesTurno(fechaApertura, cb) {
 //   3. El ingreso es NETO: se le quitan impuesto y descuentos con el factor
 //      `subtotal del pedido / suma de los renglones`.
 
-// Convierte la cantidad de una receta a la unidad en la que se guarda el insumo.
-// Espeja a utils/unidades.js del backend.
-const FACTORES_CONVERSION_LOCAL = {
-    'kg_g': 1000, 'g_kg': 0.001,
-    'l_ml': 1000, 'ml_l': 0.001,
-    'ml_gal': 0.000264, 'gal_ml': 3785.41,
-    'l_gal': 0.26417, 'gal_l': 3.78541,
-};
-function _convertirCantidadLocal(cantidad, unidadOrigen, unidadDestino) {
-    if (!unidadOrigen || !unidadDestino || unidadOrigen === unidadDestino) return cantidad;
-    const f = FACTORES_CONVERSION_LOCAL[`${unidadOrigen}_${unidadDestino}`];
-    return f ? cantidad * f : cantidad;
-}
+// ⚠️ AQUÍ VIVÍA UNA TERCERA COPIA DE LA TABLA DE CONVERSIÓN, y se desvió.
+//
+// Este archivo ya tenía `convertirUnidad()` —la que usa el DESCUENTO de
+// inventario— y el costo usaba otra distinta que además NO miraba el contenido
+// del paquete (§45). Peor todavía: la consulta de recetas ni siquiera traía
+// `unidad_receta`, así que 60 g de queso se costeaban como 60 KILOS. Una
+// quesadilla de $42.50 aparecía con un costo de $10,451 y un margen de −28,424 %,
+// y con ella el reporte entero quedaba inservible.
+//
+// Ahora el costo usa la MISMA función que el consumo. Es la regla del §34 —"si
+// costo y consumo partieran de factores distintos, el reporte dejaría de cuadrar
+// con lo que salió de la bodega"— aplicada donde faltaba.
 
 const _centavos = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -1931,10 +1930,10 @@ function _mapaDeCostosLocal() {
             db.all(sql, params, (e, r) => e ? ko(e) : ok(r || [])));
 
         Promise.all([
-            q('SELECT id, nombre, unidad, COALESCE(costo_unitario, 0) AS costo FROM insumos'),
+            q('SELECT id, nombre, unidad, contenido_cantidad, contenido_unidad, COALESCE(costo_unitario, 0) AS costo FROM insumos'),
             q('SELECT preparacion_id, insumo_id, cantidad, unidad_receta FROM preparacion_items'),
             q('SELECT id, COALESCE(rinde, 1) AS rinde FROM preparaciones'),
-            q('SELECT producto_id, tipo, referencia_id, cantidad FROM receta_items'),
+            q('SELECT producto_id, tipo, referencia_id, cantidad, unidad_receta FROM receta_items'),
             q('SELECT opcion_id, tipo, referencia_id, cantidad, unidad_receta FROM modificador_receta'),
             q('SELECT id FROM productos'),
         ]).then(([insumos, prepItems, rindes, recetas, modRecetas, productos]) => {
@@ -1952,7 +1951,7 @@ function _mapaDeCostosLocal() {
                     const ing = insumoPorId.get(Number(referenciaId));
                     if (!ing) return { costo: 0, faltantes: ['(insumo eliminado)'] };
                     const precio = parseFloat(ing.costo) || 0;
-                    const q2 = _convertirCantidadLocal(cant, unidadReceta, ing.unidad);
+                    const q2 = convertirUnidad(cant, unidadReceta, ing);
                     return { costo: q2 * precio, faltantes: precio > 0 ? [] : [ing.nombre] };
                 }
                 const prep = prepCosto.get(Number(referenciaId));

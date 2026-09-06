@@ -31,8 +31,8 @@ const db = new sqlite3.Database(':memory:');
 // nuestro `db` en memoria. Si alguna se renombra o desaparece, esto falla.
 const partes = [
     'function _fraccionDeTanda',
-    'const FACTORES_CONVERSION_LOCAL',
-    'function _convertirCantidadLocal',
+    'const FACTORES_CONVERSION',
+    'function convertirUnidad',
     'const _centavos',
     'function _mapaDeCostosLocal',
     'function obtenerRentabilidad(',
@@ -43,11 +43,17 @@ for (const marca of partes) {
         process.exit(1);
     }
 }
-const ini = fuente.indexOf('const FACTORES_CONVERSION_LOCAL');
+// El reporte arranca en `_centavos`: la conversión ya no vive aquí, sino junto
+// al DESCUENTO de inventario, que es justo el punto (§34).
+const ini = fuente.indexOf('const _centavos');
 const fin = fuente.indexOf('// ── Movimientos de caja (BLOQUE 7)');
 // _fraccionDeTanda vive mucho antes en el archivo (junto al descuento de
 // inventario, que es su otro consumidor), así que se extrae aparte.
-const iniFrac = fuente.indexOf('function _fraccionDeTanda');
+// ⚠️ Se extrae desde la TABLA DE CONVERSIÓN, no desde _fraccionDeTanda: el costo
+// usa ahora la MISMA `convertirUnidad()` que el descuento de inventario. Hasta el
+// 2026-09-05 el costo tenía su propia copia —y su propia consulta, que ni siquiera
+// traía `unidad_receta`—, así que 60 g de queso se costeaban como 60 KILOS.
+const iniFrac = fuente.indexOf('const FACTORES_CONVERSION = {');
 const finFrac = fuente.indexOf('/** Vender: descuenta los insumos de la receta. */');
 const codigo = fuente.slice(iniFrac, finFrac) + fuente.slice(ini, fin);
 // eslint-disable-next-line no-new-func
@@ -72,7 +78,8 @@ const fila = (rep, id) => rep.productos.find(p => p.product_id === id);
 async function esquema() {
     await run(`CREATE TABLE productos (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL, emoji TEXT, activo INTEGER DEFAULT 1)`);
     await run(`CREATE TABLE insumos (id INTEGER PRIMARY KEY, nombre TEXT, unidad TEXT, stock_actual REAL DEFAULT 0,
-        stock_minimo REAL DEFAULT 0, activo INTEGER DEFAULT 1, costo_unitario REAL DEFAULT 0)`);
+        stock_minimo REAL DEFAULT 0, activo INTEGER DEFAULT 1, costo_unitario REAL DEFAULT 0,
+        contenido_cantidad REAL, contenido_unidad TEXT)`);
     await run(`CREATE TABLE preparaciones (id INTEGER PRIMARY KEY, nombre TEXT, activo INTEGER DEFAULT 1, rinde REAL DEFAULT 1)`);
     await run(`CREATE TABLE preparacion_items (id INTEGER PRIMARY KEY, preparacion_id INTEGER, insumo_id INTEGER,
         cantidad REAL, unidad_receta TEXT)`);
@@ -86,11 +93,15 @@ async function esquema() {
         cantidad INTEGER, precio_unitario REAL, subtotal REAL, modificadores TEXT)`);
 }
 
-// La receta local NO tiene columna `unidad_receta` en el esquema original de
-// `receta_items` (solo cantidad): esa es la razón de que el desktop guarde las
-// recetas en la unidad del insumo. El smoke test la agrega para poder probar
-// también el camino con conversión, que sí existe en preparaciones y en
-// modificadores.
+// ⚠️ ESTE COMENTARIO DECÍA QUE `receta_items` NO TENÍA `unidad_receta`, Y ERA
+// FALSO: database/db.js la agrega con un ALTER y la interfaz la escribe (guardar
+// una receta en gramos contra un insumo en kilos es lo normal). Por creerlo, este
+// script sembraba TODAS las recetas de producto en la unidad del propio insumo —
+// justo el caso donde no hace falta convertir— y por eso pasó en verde mientras
+// el costo de una quesadilla salía en $10,451 (2026-09-05).
+//
+// La lección: un fixture que codifica una suposición equivocada sobre el esquema
+// es ciego exactamente donde la suposición está mal.
 
 async function datos() {
     // Insumos
@@ -129,6 +140,26 @@ async function datos() {
     // Opción "sin cebolla": devuelve 500 g de cebolla → −$20
     await run(`INSERT INTO modificador_receta (opcion_id, tipo, referencia_id, cantidad, unidad_receta) VALUES
         (77, 'insumo', 4, -500, 'g')`);
+    // ── LA CONVERSIÓN DE UNIDADES EN EL COSTO (§45 / 2026-09-05) ──────────────
+    // Es lo que este script no probaba: una receta de producto escrita en una
+    // unidad DISTINTA a la del insumo.
+    await run(`INSERT INTO insumos (id, nombre, unidad, costo_unitario) VALUES (6, 'Queso', 'kg', 148.50)`);
+    // Un insumo de PAQUETE: lata de 380 g a $38.50.
+    await run(`INSERT INTO insumos (id, nombre, unidad, costo_unitario, contenido_cantidad, contenido_unidad)
+        VALUES (7, 'Chipotle', 'latas', 38.50, 380, 'g')`);
+
+    // Quesadilla real: 60 g de queso. En KILOS son 0.06 → $8.91.
+    // Sin conversión salía $8,910: el bug exacto que se encontró usando la app.
+    await run(`INSERT INTO productos (id, nombre, precio, emoji) VALUES (7, 'Quesadilla real', 42.50, 'cheese')`);
+    await run(`INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad, unidad_receta) VALUES
+        (7, 'insumo', 6, 60, 'g')`);
+
+    // Y una receta en gramos contra un insumo en LATAS: 40/380 = 0.10526 latas
+    // → $4.05. Sin el contenido del paquete salían 40 latas = $1,540.
+    await run(`INSERT INTO productos (id, nombre, precio, emoji) VALUES (8, 'Salsa chipotle', 30, 'pepper')`);
+    await run(`INSERT INTO receta_items (producto_id, tipo, referencia_id, cantidad, unidad_receta) VALUES
+        (8, 'insumo', 7, 40, 'g')`);
+
     // Opción "extra carne": +100 g → +$20
     await run(`INSERT INTO modificador_receta (opcion_id, tipo, referencia_id, cantidad, unidad_receta) VALUES
         (88, 'insumo', 1, 100, 'g')`);
@@ -242,6 +273,30 @@ async function main() {
     // ── 8. Rango fuera del periodo ───────────────────────────────────────
     rep = await reporte({ desde: '2020-01-01', hasta: '2020-01-31' });
     comprobar('8. Un rango viejo no trae nada', rep.productos.length, 0);
+
+    // ── 9. LA CONVERSIÓN EN EL COSTO ─────────────────────────────────────────
+    // El bug que esto vigila: el costo usaba su propia tabla de conversión y una
+    // consulta que no traía `unidad_receta`, así que 60 g de queso se costeaban
+    // como 60 KILOS. Una quesadilla de $42.50 salía con un costo de $10,451 y un
+    // margen de −28,424 %. Encontrado explorando la app (§48).
+    await run(`INSERT INTO pedidos (id, total, subtotal, estado, fecha_pedido)
+        VALUES (90, 42.50, 36.64, 'completado', datetime('now','localtime'))`);
+    await run(`INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal)
+        VALUES (90, 7, 1, 42.50, 42.50)`);
+    await run(`INSERT INTO pedidos (id, total, subtotal, estado, fecha_pedido)
+        VALUES (91, 30, 30, 'completado', datetime('now','localtime'))`);
+    await run(`INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, subtotal)
+        VALUES (91, 8, 1, 30, 30)`);
+
+    rep = await new Promise((ok, ko) => obtenerRentabilidad({}, (e, r) => e ? ko(e) : ok(r)));
+
+    comprobar('9. 60 g de un insumo en kg cuestan 0.06 kg, no 60',
+        Math.round(fila(rep, 7).costo * 100) / 100, 8.91);
+    comprobar('9b. 40 g de un insumo en LATAS de 380 g cuestan la fracción de lata',
+        Math.round(fila(rep, 8).costo * 100) / 100, 4.05);
+    // Y el margen deja de ser un disparate.
+    comprobar('9c. el margen vuelve a tener sentido (no −28,424 %)',
+        fila(rep, 7).margen_pct > 70 && fila(rep, 7).margen_pct < 80, true);
 
     console.log('');
     if (fallos > 0) {

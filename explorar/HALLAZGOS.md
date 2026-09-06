@@ -10,6 +10,39 @@
 
 ## ERRORES
 
+### E-5 · Rentabilidad costeaba 60 g de queso como 60 KILOS 🔴
+**Estado:** arreglado — 2026-09-05
+**Dónde:** `database/db.js` → `_mapaDeCostosLocal`
+
+Reproducir, sobre el negocio sembrado del arnés:
+
+1. Vender una **Quesadilla** ($42.50; su receta lleva 1 tortilla y **60 g de queso**,
+   con el queso guardado en **kg** a $148.50).
+2. Ir a **Rentabilidad**.
+
+Qué salía: **Costo de insumos $10,451.20**, ganancia **−$10,414.56**, margen
+**−28,424 %**. Con eso, el reporte entero es inservible — y es una función premium.
+
+Dos causas, las dos en el mismo sitio:
+
+- La consulta de recetas **no traía `unidad_receta`**
+  (`SELECT producto_id, tipo, referencia_id, cantidad FROM receta_items`), así que la
+  conversión recibía `undefined` y dejaba la cantidad tal cual: 60 g → 60 kg.
+- Y el costo usaba **una tercera copia** de la tabla de conversión
+  (`_convertirCantidadLocal`) que además no miraba el contenido del paquete (§45).
+
+⚠️ Es el §34 al revés: *el costo y el consumo partían de factores distintos*. La bodega
+descontaba 0.06 kg y el reporte costeaba 60. Arreglo: se borró la tercera copia y el costo
+usa ahora **la misma `convertirUnidad()` que el descuento de inventario**.
+
+⚠️ **Por qué el smoke test no lo vio:** su propio comentario afirmaba que `receta_items`
+*"NO tiene columna unidad_receta"* — y es falso, `db.js` la agrega con un ALTER y la interfaz
+la escribe. Por creerlo, sembraba todas las recetas en la unidad del propio insumo, justo
+donde no hace falta convertir. **Un fixture que codifica una suposición equivocada sobre el
+esquema es ciego exactamente donde la suposición está mal.**
+
+---
+
 ### E-1 · Un descuento fijo mayor que el ticket registra una venta con total NEGATIVO 🔴
 **Estado:** arreglado — 2026-09-05
 **Dónde:** `pos/modulo-venta.js` (modo local y conectado, el cálculo del ticket)
@@ -162,3 +195,28 @@ número que el cajero le canta al cliente.
 
 **Propuesta:** cuando hay propina, dos renglones ("Venta" y "TOTAL PAGADO"),
 como ya hace el ticket impreso del §30.
+
+### F-6 · Un teléfono repetido dice "Error al guardar el cliente"
+**Estado:** abierto — 2026-09-05 · `pos/modulo-clientes.js`
+Clientes → Nuevo Cliente con un teléfono que ya existe. Se rechaza —bien, la
+columna es UNIQUE y el directorio queda limpio— pero el aviso es genérico:
+**"Error al guardar el cliente"**. El cajero no sabe que el cliente ya está dado
+de alta ni qué hacer.
+
+**Propuesta:** decir el motivo real ("Ya tienes un cliente con ese teléfono:
+Doña Carmen") y, mejor todavía, ofrecer abrirlo. Es el mismo caso del §36: el
+cajero teclea un teléfono conocido porque el cliente es de siempre.
+
+### F-7 · Ofertas acepta un descuento del 150 %
+**Estado:** abierto — 2026-09-05 · `pos/modulo-ofertas.js`
+Ofertas → Nuevo Descuento → tipo porcentaje, valor **150**. Se guarda sin
+protestar.
+
+Ya **no es peligroso**: desde el arreglo del E-1 el descuento se topa al ticket,
+así que aplicarlo deja el total en $0 y no en negativo (comprobado). Pero es un
+dato sin sentido que se queda en la lista de descuentos rápidos del cobro, y a la
+primera vez que alguien lo toque va a pensar que la app se equivocó.
+
+**Propuesta:** topar el porcentaje a 100 en el formulario. Aquí sí es un tope y
+no un aviso: un descuento de más del 100 % no significa nada, a diferencia de una
+merma mayor que el stock (F-1), que sí puede haber ocurrido de verdad.
