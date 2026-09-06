@@ -101,7 +101,7 @@ function inicializarTablas() {
         nombre TEXT, 
         direccion TEXT, 
         notas TEXT, 
-        fecha_registro DATETIME DEFAULT CURRENT_TIMESTAMP
+        fecha_registro DATETIME DEFAULT (datetime('now','localtime'))
     )`);
 
 // 4. AJUSTES DEL SISTEMA
@@ -160,7 +160,7 @@ function inicializarTablas() {
         cantidad INTEGER NOT NULL,
         motivo TEXT,                -- Ej: "Caducidad", "Accidente", "Calidad"
         usuario_responsable TEXT,
-        fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+        fecha DATETIME DEFAULT (datetime('now','localtime')),
         FOREIGN KEY (producto_id) REFERENCES productos(id)
     )`);
 
@@ -212,7 +212,7 @@ function inicializarTablas() {
         insumo_id INTEGER NOT NULL,
         cantidad REAL NOT NULL,
         notas TEXT,
-        fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+        fecha DATETIME DEFAULT (datetime('now','localtime')),
         FOREIGN KEY (insumo_id) REFERENCES insumos(id)
     )`);
 
@@ -355,7 +355,7 @@ function inicializarTablas() {
 
     db.run(`CREATE TABLE IF NOT EXISTS log_descuentos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+        fecha DATETIME DEFAULT (datetime('now','localtime')),
         cajero TEXT,
         descuento_nombre TEXT,
         monto_descuento REAL,
@@ -368,7 +368,7 @@ function inicializarTablas() {
         cantidad REAL NOT NULL,
         motivo TEXT DEFAULT 'merma',
         notas TEXT,
-        fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+        fecha DATETIME DEFAULT (datetime('now','localtime')),
         FOREIGN KEY (insumo_id) REFERENCES insumos(id)
     )`);
 
@@ -1072,14 +1072,59 @@ function obtenerDetallesPedido(pedidoId, callback) {
     });
 }
 
+/**
+ * Cambia el estado de un pedido y, al CANCELARLO, devuelve sus insumos.
+ *
+ * ⚠️ Esto era un `UPDATE ... SET estado` pelado, y ahí estaba el defecto: la
+ * venta descuenta la receta al registrarse (`crearPedidoDirecto`) y cancelarla
+ * NO la devolvía. `restaurarInsumosDeVenta` existía desde siempre y solo la
+ * llamaba `eliminarItemMesa` (§32.6b), así que en MODO LOCAL el inventario se
+ * desviaba en silencio, una cancelación a la vez — exactamente el bug hermano
+ * que ese párrafo describe para las mesas. En modo conectado el backend sí
+ * restaura (§19.14), de modo que la misma acción tenía dos efectos distintos
+ * según el modo. Encontrado explorando (BLOQUE 17, hallazgo E-2).
+ *
+ * Es la regla §19.28: si descuentas inventario, escribe también el camino de
+ * vuelta; la pareja tiene que ser SIMÉTRICA o el stock se desvía solo.
+ *
+ * Dos cuidados:
+ *   • Solo se devuelve al ENTRAR a 'cancelado' desde un estado que no lo era.
+ *     Cancelar dos veces no puede devolver el doble.
+ *   • Un fallo del inventario NUNCA tumba la cancelación: se traga por renglón.
+ *     Que una venta cancelada siga contando en la caja es peor que un stock
+ *     desviado (mismo criterio fire-and-forget del §32.6b).
+ */
 function actualizarEstadoPedido(pedidoId, nuevoEstado, callback) {
-    db.run('UPDATE pedidos SET estado = ? WHERE id = ?', [nuevoEstado, pedidoId], callback);
+    db.get('SELECT estado FROM pedidos WHERE id = ?', [pedidoId], (errLectura, fila) => {
+        const anterior = !errLectura && fila ? fila.estado : null;
+        db.run('UPDATE pedidos SET estado = ? WHERE id = ?', [nuevoEstado, pedidoId], (err) => {
+            if (err) return callback(err);
+            if (nuevoEstado !== 'cancelado' || anterior === null || anterior === 'cancelado') {
+                return callback(null);
+            }
+            db.all(
+                'SELECT producto_id, cantidad, modificadores FROM pedido_items WHERE pedido_id = ?',
+                [pedidoId],
+                async (errItems, items) => {
+                    if (errItems || !items) return callback(null);
+                    for (const item of items) {
+                        try {
+                            await restaurarInsumosDeVenta(item.producto_id, item.cantidad);
+                            // Y el ajuste de los extras con el signo invertido (§32.6).
+                            await aplicarRecetaModificadoresLocal(item.modificadores, item.cantidad, +1);
+                        } catch (_) { /* el inventario no puede impedir la cancelación */ }
+                    }
+                    callback(null);
+                }
+            );
+        });
+    });
 }
 
 // --- MERMAS (Funciones base para el futuro) ---
 function registrarMerma(item, callback) {
     // item: { producto_id, cantidad, motivo }
-    db.run('INSERT INTO mermas (producto_id, cantidad, motivo) VALUES (?, ?, ?)', 
+    db.run("INSERT INTO mermas (producto_id, cantidad, motivo, fecha) VALUES (?, ?, ?, datetime('now','localtime'))", 
         [item.producto_id, item.cantidad, item.motivo], 
         function(err) {
             if(err) return callback(err);
@@ -1248,7 +1293,7 @@ function obtenerOCrearCliente(telefono, callback) {
     db.get('SELECT * FROM clientes WHERE telefono = ?', [telefono], (err, row) => {
         if (err) return callback(err);
         if (row) return callback(null, row);
-        db.run('INSERT INTO clientes (telefono, nombre) VALUES (?, ?)', [telefono, 'Cliente Nuevo'], function (err) {
+        db.run("INSERT INTO clientes (telefono, nombre, fecha_registro) VALUES (?, ?, datetime('now','localtime'))", [telefono, 'Cliente Nuevo'], function (err) {
             if (err) callback(err);
             else db.get('SELECT * FROM clientes WHERE id = ?', [this.lastID], callback);
         });
@@ -1306,7 +1351,7 @@ function actualizarCliente(id, datos, callback) {
 
 function crearCliente(datos, callback) {
     db.run(
-        'INSERT INTO clientes (telefono, nombre, direccion, notas) VALUES (?, ?, ?, ?)',
+        "INSERT INTO clientes (telefono, nombre, direccion, notas, fecha_registro) VALUES (?, ?, ?, ?, datetime('now','localtime'))",
         [datos.telefono, datos.nombre, datos.direccion, datos.notas || ''],
         callback
     );
@@ -1557,7 +1602,7 @@ function calcularStockProducto(productoId, callback) {
 
 // Registro de entrada de insumos (abastecimiento)
 function registrarEntradaInsumo(datos, callback) {
-    db.run("INSERT INTO entradas_insumos (insumo_id, cantidad, notas) VALUES (?, ?, ?)",
+    db.run("INSERT INTO entradas_insumos (insumo_id, cantidad, notas, fecha) VALUES (?, ?, ?, datetime('now','localtime'))",
         [datos.insumo_id, datos.cantidad, datos.notas || ''], function(err) {
             if (err) return callback(err);
             db.run("UPDATE insumos SET stock_actual = COALESCE(stock_actual, 0) + ? WHERE id = ?",
@@ -1581,7 +1626,7 @@ function obtenerEntradasInsumo(insumoId, callback) {
 }
 
 function registrarSalidaInsumo(datos, callback) {
-    db.run("INSERT INTO salidas_insumos (insumo_id, cantidad, motivo, notas) VALUES (?, ?, ?, ?)",
+    db.run("INSERT INTO salidas_insumos (insumo_id, cantidad, motivo, notas, fecha) VALUES (?, ?, ?, ?, datetime('now','localtime'))",
         [datos.insumo_id, datos.cantidad, datos.motivo || 'merma', datos.notas || ''], function(err) {
             if (err) return callback(err);
             db.run("UPDATE insumos SET stock_actual = MAX(0, COALESCE(stock_actual, 0) - ?) WHERE id = ?",
@@ -2689,7 +2734,7 @@ function obtenerClientesFidelidad(cb) {
 
 function registrarLogDescuento(datos, cb) {
     db.run(
-        "INSERT INTO log_descuentos (cajero, descuento_nombre, monto_descuento, total_antes) VALUES (?, ?, ?, ?)",
+        "INSERT INTO log_descuentos (cajero, descuento_nombre, monto_descuento, total_antes, fecha) VALUES (?, ?, ?, ?, datetime('now','localtime'))",
         [datos.cajero, datos.descuento_nombre, datos.monto_descuento, datos.total_antes],
         cb
     );

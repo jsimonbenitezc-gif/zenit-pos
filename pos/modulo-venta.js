@@ -352,8 +352,40 @@ function editarModificadoresCarrito(index) {
 // descuentos (promoción + canje de puntos). El impuesto se calcula SOBRE ella,
 // nunca sobre el precio de lista. Ver BLOQUE 8 / modulo-impuestos.js.
 function _baseGravableCarrito() {
+    return _descuentosDelCarrito().base;
+}
+
+/**
+ * El descuento que de verdad se aplica, ACOTADO al ticket.
+ *
+ * ⚠️ Sin este tope, un descuento fijo mayor que el ticket produce una venta con
+ * TOTAL NEGATIVO: "Cortesía $50" —que Zenit siembra en toda instalación nueva—
+ * sobre un taco de $24.50 registraba una venta de **−$25.50**, el turno la
+ * sumaba como venta negativa y el efectivo esperado del cierre bajaba $25.50,
+ * dejando un SOBRANTE FANTASMA de ese importe en el cajón. Es la misma familia
+ * de descuadre que cerraron el §28 (gastos), el §30 (propinas) y el §31 (pagos
+ * divididos). Encontrado explorando (BLOQUE 17, hallazgo E-1).
+ *
+ * El backend lo acota desde siempre (`routes/orders.js`:
+ * `Math.min(Math.max(discount_amount, 0), calculatedTotal)`), así que sin esto
+ * el cajero veía −$25.50 en pantalla y el servidor registraba $0.00: dos
+ * números distintos para la misma venta.
+ *
+ * Los PUNTOS se aplican primero y la PROMOCIÓN absorbe el recorte: los puntos
+ * son dinero del cliente que ya se comprometió (§19.14) y quemarlos para nada
+ * sería peor que recortar un cupón que de todas formas no cabía.
+ */
+function _descuentosDelCarrito() {
     const suma = carrito.reduce((sum, i) => sum + i.precio, 0);
-    return suma - descuentoActual - descuentoPuntosVenta;
+    const puntos = Math.min(Math.max(descuentoPuntosVenta || 0, 0), suma);
+    const promocion = Math.min(Math.max(descuentoActual || 0, 0), suma - puntos);
+    return {
+        suma,
+        puntos,
+        promocion,
+        visible: promocion + puntos,
+        base: suma - promocion - puntos,   // nunca negativa, por construcción
+    };
 }
 
 /** Total a cobrar de la venta en curso (ya con impuesto, si el negocio lo cobra). */
@@ -536,8 +568,12 @@ function renderizarCarrito() {
 
     // Actualizar subtotal, descuento y total. El renglón "descuento" muestra la suma
     // (promoción + puntos), que es lo que el cliente percibe; internamente van separados.
-    const descuentoVisible = descuentoActual + descuentoPuntosVenta;
-    const desglose = desglosarImpuesto(subtotal - descuentoVisible);
+    // El renglón muestra el descuento EFECTIVO (ya acotado al ticket), no el
+    // nominal: si enseñara "-$50.00" sobre un ticket de $24.50, los renglones
+    // dejarían de sumar y el cliente vería un desglose que no cuadra.
+    const _desc = _descuentosDelCarrito();
+    const descuentoVisible = _desc.visible;
+    const desglose = desglosarImpuesto(_desc.base);
     const totalFinal = desglose.total;
     if (subtotalEl) subtotalEl.innerText = `$${subtotal.toFixed(2)}`;
     if (descuentoEl) descuentoEl.innerText = `-$${descuentoVisible.toFixed(2)}`;
@@ -937,9 +973,13 @@ async function ejecutarVenta() {
             total: total,
             // El descuento de promoción viaja con su descuento_id (autorización que
             // exige el backend) y SEPARADO del canje de puntos, que no requiere PIN.
-            descuento_monto: descuentoActual || 0,
+            // Se guardan ACOTADOS al ticket, que es lo que de verdad se descontó
+            // (§ E-1): mandar el nominal dejaría la fila local diciendo que se
+            // descontaron $50 de una venta de $24.50, y el backend registraría
+            // otra cosa porque él sí lo acota.
+            descuento_monto: _descuentosDelCarrito().promocion,
             descuento_id: descuentoIdActual || null,
-            descuento_puntos_monto: descuentoPuntosVenta || 0,
+            descuento_puntos_monto: _descuentosDelCarrito().puntos,
             puntos_usados: descuentoPuntosVenta > 0 ? (puntosUsadosVenta || 0) : 0,
             // Desglose del impuesto (BLOQUE 8). La tasa viaja CONGELADA con la venta:
             // si sube tarde y el dueño ya cambió el impuesto, el backend respeta la

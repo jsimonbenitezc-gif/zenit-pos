@@ -42,3 +42,8 @@ desktop.ini
 PLAN_*.md
 *.backup
 pos/render_core.js
+
+# Banco de la interfaz y sesiones de exploración (§46, §48)
+pruebas-ui/capturas/
+explorar/capturas/
+explorar/.sesion.json

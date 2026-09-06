@@ -72,9 +72,17 @@ function _parsearItemsMesa(items_raw) {
 // Calcula tiempo transcurrido desde una fecha string (CURRENT_TIMESTAMP format)
 function _tiempoEnMesa(fechaStr) {
     if (!fechaStr) return '';
-    // SQLite: '2024-01-01 10:00:00' → añadir 'T' y 'Z'
-    // ISO backend: '2024-01-01T10:00:00.000Z' → usar directamente
-    const inicio = fechaStr.includes('T') ? new Date(fechaStr) : new Date(fechaStr.replace(' ', 'T') + 'Z');
+    // ⚠️ LA SQLITE DEL DESKTOP GUARDA HORA LOCAL, NO UTC.
+    // Aquí se le pegaba una 'Z' —declarándola UTC— y el tiempo en mesa salía
+    // desfasado el huso ENTERO: una mesa recién abierta decía llevar "5h 0m" en
+    // Cancún y "6h 0m" en Ciudad de México, y todas las mesas del comedor
+    // parecían llevar medio día ocupadas. Es la trampa del §26: esa base escribe
+    // siempre con `datetime('now','localtime')`. Encontrado explorando (BLOQUE
+    // 17, hallazgo E-3).
+    //
+    // Del BACKEND sí llega en ISO con zona ('...T10:00:00.000Z'), y ése se
+    // interpreta tal cual: por eso se distinguen los dos formatos.
+    const inicio = fechaStr.includes('T') ? new Date(fechaStr) : new Date(fechaStr.replace(' ', 'T'));
     const diff = Math.floor((Date.now() - inicio.getTime()) / 60000);
     if (diff < 0) return '0min';
     if (diff < 60) return `${diff}min`;
