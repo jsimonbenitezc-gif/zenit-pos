@@ -206,6 +206,53 @@ function cerrarModalInsumo() {
     insumoEditandoId = null;
 }
 
+/**
+ * Avisa antes de cambiarle la unidad a un insumo que YA tiene recetas (§45).
+ *
+ * Cambiar el orégano de gramos a "bolsas" no toca las recetas: siguen diciendo
+ * "18", pero ahora ese 18 se lee en BOLSAS. Con bolsas de 50 g eso es cincuenta
+ * veces el consumo real, y hasta hoy no lo decía nada — ni un aviso, ni un
+ * error, ni una traza. El usuario cambia un desplegable y su inventario empieza
+ * a vaciarse solo.
+ *
+ * ⚠️ AVISA, NO PROHÍBE: cambiar la unidad es legítimo (un negocio que empieza a
+ * comprar por bolsa), y un candado dejaría al dueño sin poder corregirse. Lo que
+ * hace falta es que VEA en qué unidad están escritas sus recetas y qué va a
+ * pasar con ellas.
+ */
+async function _confirmarCambioDeUnidad(unidadNueva) {
+    if (!insumoEditandoId) return true;
+    const actual = insumosCache.find(i => i.id === insumoEditandoId);
+    if (!actual || !actual.unidad || actual.unidad === unidadNueva) return true;
+
+    let recetas = [];
+    try {
+        recetas = await window.api.recetasQueUsanInsumo(insumoEditandoId) || [];
+    } catch (e) {
+        // Un fallo al consultar no puede impedir guardar: se sigue sin avisar.
+        console.warn('No pude revisar las recetas del insumo:', e && e.message);
+        return true;
+    }
+    if (!recetas.length) return true;
+
+    const lista = recetas.slice(0, 6)
+        .map(r => `  · ${r.nombre}: ${r.cantidad} ${r.unidad_receta || actual.unidad}`)
+        .join('\n');
+    const resto = recetas.length > 6 ? `\n  …y ${recetas.length - 6} más` : '';
+
+    return confirmarZenit(
+        `Este insumo pasa de "${actual.unidad}" a "${unidadNueva}", y ${recetas.length} ` +
+        `receta${recetas.length === 1 ? '' : 's'} lo usa${recetas.length === 1 ? '' : 'n'}:\n\n` +
+        lista + resto + '\n\n' +
+        `Esas cantidades NO se cambian solas. Si quedan escritas en una unidad que ya no ` +
+        `corresponde, el sistema descontará mal.\n\n` +
+        `Si compras por "${unidadNueva}", lo normal es llenar "Contenido" (cuánto trae cada ` +
+        `una) y dejar las recetas como están. ¿Continuar?`,
+        'Cambiar la unidad afecta a las recetas',
+        { textoOk: 'Sí, cambiar', textoCancelar: 'Volver', peligro: true }
+    );
+}
+
 async function guardarInsumo() {
     const nombre = document.getElementById('ins-nombre').value.trim();
     const unidad = document.getElementById('ins-unidad').value;
@@ -214,6 +261,7 @@ async function guardarInsumo() {
     const costo_unitario = parseFloat(document.getElementById('ins-costo').value) || 0;
     if (!nombre) { alertaZenit('El nombre es obligatorio'); return; }
     if (costo_unitario < 0) { alertaZenit('El costo no puede ser negativo'); return; }
+    if (!(await _confirmarCambioDeUnidad(unidad))) return;
     try {
         const contenido_cantidad = parseFloat(document.getElementById('ins-contenido-cantidad').value) || null;
         const contenido_unidad = document.getElementById('ins-contenido-unidad').value || null;
@@ -602,15 +650,36 @@ function actualizarUnidadReceta(selectIngrediente, unidadGuardada = null) {
         'latas': 'latas', 'bolsas': 'bolsas', 'pzas': 'pzas', 'porciones': 'porciones'
     };
 
-    selUnidad.innerHTML = unidadesDisponibles.map(u => {
+    // ⚠️ UNA UNIDAD GUARDADA QUE YA NO ENCAJA NO SE CAMBIA EN SILENCIO (§45).
+    //
+    // Si el dueño cambió la unidad del insumo, la receta puede seguir escrita en
+    // una unidad que ya no está en la lista. Antes ninguna <option> quedaba
+    // marcada, el navegador elegía la PRIMERA, y al guardar la receta se
+    // reinterpretaba sola: "18 g" pasaba a ser "18 bolsas" sin que nadie tocara
+    // ese número. Ahora esa unidad se conserva como opción, marcada como rota,
+    // para que se vea y se corrija a propósito.
+    const opciones = [...unidadesDisponibles];
+    const rota = unidadGuardada && !opciones.includes(unidadGuardada);
+    if (rota) opciones.unshift(unidadGuardada);
+
+    selUnidad.innerHTML = opciones.map(u => {
         let label = etiquetas[u] || u;
         // Si es la unidad de contenido, mostrar la conversión como referencia
         if (u === insumo.contenido_unidad && insumo.contenido_cantidad && u !== insumo.unidad) {
             label += ` (1 ${esc(insumo.unidad)} = ${insumo.contenido_cantidad}${u})`;
         }
+        if (rota && u === unidadGuardada) label = `⚠️ ${label} — ya no aplica`;
         const selected = (unidadGuardada === u) || (!unidadGuardada && u === insumo.unidad) ? 'selected' : '';
         return `<option value="${u}" ${selected}>${label}</option>`;
     }).join('');
+
+    // Y se dice EN LA LÍNEA, no solo dentro del desplegable: un aviso que hay que
+    // abrir para verlo no avisa de nada.
+    selUnidad.style.borderColor = rota ? '#f59e0b' : '';
+    selUnidad.title = rota
+        ? `Esta receta está escrita en "${unidadGuardada}", que ya no corresponde a un insumo ` +
+          `medido en "${insumo.unidad}". Corrige la cantidad y la unidad antes de guardar.`
+        : '';
 }
 
 async function guardarReceta() {

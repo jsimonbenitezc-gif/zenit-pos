@@ -585,16 +585,26 @@ function convertirUnidad(cantidad, unidadReceta, insumo) {
     }
 
     // 2. Conversión a través de presentación (latas con kg definido)
-    if (insumo.contenido_cantidad && insumo.contenido_unidad) {
+    //
+    // ⚠️ ESPEJO EXACTO de `convertirParaInsumo()` en `utils/unidades.js` del
+    // backend (§45). Hasta el 2026-09-05 el backend NO tenía esta parte —sus
+    // columnas de contenido ni existían—, así que la MISMA venta descontaba una
+    // cosa sin internet y otra con él. Si cambias una, cambia la otra.
+    //
+    // El saneado también es el mismo: un contenido cero, negativo o basura NO se
+    // usa. Dividir entre 0 da Infinity y vaciaría el insumo de un golpe; dividir
+    // entre un negativo SUMARÍA stock al vender.
+    const _contenido = parseFloat(insumo.contenido_cantidad);
+    if (insumo.contenido_unidad && isFinite(_contenido) && _contenido > 0) {
         // Receta en la misma unidad de contenido (kg en latas-con-kg)
         if (unidadReceta === insumo.contenido_unidad) {
-            return cantidad / insumo.contenido_cantidad;
+            return cantidad / _contenido;
         }
         // Receta en equivalente de la unidad de contenido (g cuando contenido es kg)
         const claveHaciaContenido = `${unidadReceta}_${insumo.contenido_unidad}`;
         if (FACTORES_CONVERSION[claveHaciaContenido]) {
             const enContenidoUnidad = cantidad * FACTORES_CONVERSION[claveHaciaContenido];
-            return enContenidoUnidad / insumo.contenido_cantidad;
+            return enContenidoUnidad / _contenido;
         }
     }
 
@@ -1523,6 +1533,31 @@ function eliminarRecetaProducto(productoId) {
     return new Promise((resolve, reject) => {
         db.run("DELETE FROM receta_items WHERE producto_id = ?", [productoId], err => err ? reject(err) : resolve());
     });
+}
+
+/**
+ * Qué recetas usan un insumo, y en qué unidad están escritas.
+ *
+ * Existe para poder AVISAR antes de cambiarle la unidad a un insumo (§45):
+ * cambiar el orégano de gramos a bolsas reinterpreta en silencio todas sus
+ * recetas —una de "18 g" pasa a leerse "18 bolsas"— y hasta hoy nada lo decía.
+ * Devuelve también las recetas de PREPARACIONES, que consumen insumos igual que
+ * los productos y se olvidan con la misma facilidad.
+ */
+function recetasQueUsanInsumo(insumoId, cb) {
+    db.all(
+        `SELECT 'producto' AS origen, p.nombre AS nombre, ri.cantidad, ri.unidad_receta
+           FROM receta_items ri
+           JOIN productos p ON p.id = ri.producto_id
+          WHERE ri.tipo = 'insumo' AND ri.referencia_id = ?
+         UNION ALL
+         SELECT 'preparacion' AS origen, pr.nombre AS nombre, pi.cantidad, pi.unidad_receta
+           FROM preparacion_items pi
+           JOIN preparaciones pr ON pr.id = pi.preparacion_id
+          WHERE pi.insumo_id = ?`,
+        [insumoId, insumoId],
+        cb
+    );
 }
 
 function guardarRecetaProducto(productoId, items, cb) {
@@ -2796,6 +2831,7 @@ module.exports = {
     obtenerRecetaProducto,
     eliminarRecetaProducto,
     guardarRecetaProducto,
+    recetasQueUsanInsumo,
     calcularStockPreparacion,
     calcularStockProducto,
     registrarEntradaInsumo,

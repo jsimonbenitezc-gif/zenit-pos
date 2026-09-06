@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('api', {
     obtenerRecetaProducto: (id) => ipcRenderer.invoke('obtener-receta-producto', id),
     eliminarRecetaProducto: (id) => ipcRenderer.invoke('eliminar-receta-producto', id),
     guardarRecetaProducto: (id, items) => ipcRenderer.invoke('guardar-receta-producto', id, items),
+    recetasQueUsanInsumo: (id) => ipcRenderer.invoke('recetas-que-usan-insumo', id),
     calcularStockPreparacion: (id) => ipcRenderer.invoke('calcular-stock-preparacion', id),
     calcularStockProducto: (id) => ipcRenderer.invoke('calcular-stock-producto', id),
     registrarEntradaInsumo: (datos) => ipcRenderer.invoke('registrar-entrada-insumo', datos),

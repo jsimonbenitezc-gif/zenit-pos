@@ -10,7 +10,7 @@
     "revisar": "node scripts/revisar-huerfanas.js",
     "build": "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --publish never",
     "build-publish": "set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --publish always",
-    "verificar": "npm run revisar && node scripts/smoke-cliente-por-telefono.js && node scripts/smoke-division-por-unidades.js && node scripts/smoke-kds-dispositivos.js && node scripts/smoke-rentabilidad.js && node scripts/smoke-hallazgos-exploracion.js && npm run probar:ui",
+    "verificar": "npm run revisar && node scripts/smoke-cliente-por-telefono.js && node scripts/smoke-division-por-unidades.js && node scripts/smoke-kds-dispositivos.js && node scripts/smoke-rentabilidad.js && node scripts/smoke-hallazgos-exploracion.js && node scripts/smoke-unidades-de-paquete.js && npm run probar:ui",
     "probar:ui": "node pruebas-ui/correr.js",
     "explorar": "node explorar/sesion.js",
     "z": "node explorar/z.js"

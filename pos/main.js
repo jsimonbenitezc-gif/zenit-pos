@@ -482,6 +482,9 @@ ipcMain.handle('guardar-items-preparacion', async (_, id, items) => {
 ipcMain.handle('obtener-receta-producto', async (_, id) => {
     return new Promise((res, rej) => db.obtenerRecetaProducto(id, (err, rows) => err ? rej(err) : res(rows)));
 });
+ipcMain.handle('recetas-que-usan-insumo', async (_, insumoId) => {
+    return new Promise((res, rej) => db.recetasQueUsanInsumo(insumoId, (err, filas) => err ? rej(err) : res(filas || [])));
+});
 ipcMain.handle('guardar-receta-producto', async (_, id, items) => {
     return new Promise((res, rej) => db.guardarRecetaProducto(id, items, (err) => err ? rej(err) : res(true)));
 });
