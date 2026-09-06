@@ -413,6 +413,42 @@ async function _movVerificarPinLocal(pin) {
     }
 }
 
+/**
+ * Avisa —NO bloquea— cuando el retiro o el gasto es mayor que lo que hay en el cajón.
+ *
+ * El backend rechaza montos ≤ 0 y topa en $1,000,000 (§28.8), pero nadie
+ * comparaba contra el efectivo REAL: un retiro de $999,999 con $974 en caja se
+ * aceptaba callando y el cierre pasaba a esperar −$999,024.50. Es el mismo dedo
+ * gordo de siempre —999999 por 999.99— y el corte de ese turno queda
+ * inservible. Encontrado explorando (BLOQUE 17, roce F-2).
+ *
+ * ⚠️ AVISA, NO PROHÍBE, y por dos razones: un negocio real puede tener motivos
+ * raros, y quedarse sin poder anotar el movimiento es peor que anotarlo raro
+ * (§19.19). Un DEPÓSITO nunca pregunta: mete dinero, no lo saca.
+ *
+ * Si los totales no se pueden leer, se sigue adelante sin preguntar: un aviso
+ * jamás puede impedir que se registre el dinero que ya salió del cajón.
+ */
+async function _confirmarSalidaMayorQueLaCaja(tipo, monto) {
+    if (tipo !== 'retiro' && tipo !== 'gasto') return true;
+    let esperado;
+    try {
+        const totales = await _turnoGetTotales(turnoActivo.apertura, turnoActivo.id);
+        esperado = _efectivoEsperado(turnoActivo.fondo_inicial || 0, totales);
+    } catch (_) {
+        return true;
+    }
+    if (!(monto > esperado)) return true;
+
+    return confirmarZenit(
+        `Vas a sacar ${fmt(monto)} y en la caja hay ${fmt(esperado)}.\n\n` +
+        `El corte de este turno quedará con un faltante de ${fmt(monto - esperado)}. ` +
+        `¿Es correcto?`,
+        'Más de lo que hay en la caja',
+        { textoOk: 'Sí, registrar', textoCancelar: 'Corregir', peligro: true }
+    );
+}
+
 async function confirmarMovimientoCaja() {
     if (!turnoActivo || _movGuardando) return;
 
@@ -438,6 +474,8 @@ async function confirmarMovimientoCaja() {
             return;
         }
     }
+
+    if (!(await _confirmarSalidaMayorQueLaCaja(tipo, monto))) return;
 
     _movGuardando = true;
     const btn = document.getElementById('mov-caja-confirmar');

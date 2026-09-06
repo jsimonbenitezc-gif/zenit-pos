@@ -101,8 +101,13 @@ Seguían con el mismo default `mermas.fecha`, `log_descuentos.fecha` y
 
 > Funciona; el problema es lo que le cuesta al negocio. **No se toca nada de
 > aquí sin decisión del dueño del producto.**
+>
+> Los cinco de abajo se arreglaron el 2026-09-05, con el visto bueno del dueño.
+> Los cinco **avisan, no bloquean**: es la regla del §37 y del §19.19 — un
+> candado que impide anotar lo que ya pasó hace más daño que el riesgo que evita.
 
-### F-1 · Una salida de inventario mayor que el stock se acepta callando
+### F-1 · Una salida de inventario mayor que el stock se aceptaba callando
+**Estado:** arreglado — 2026-09-05 · `pos/modulo-inventario.js`
 Inventario → Salidas → Registrar Salida, cantidad **5000** sobre un insumo con
 **11.84 kg**. Se acepta: el insumo queda en **0** (`MAX(0, …)`) y el historial
 dice "−5000 kg". Ni un aviso.
@@ -115,7 +120,8 @@ es la que ocurrió, así que la valoración del inventario sale mal.
 el insumo quedará en 0 — ¿seguro?"). Bloquear sería un candado, y este proyecto
 prefiere la señal (§37).
 
-### F-2 · Un retiro de caja puede superar lo que hay en el cajón
+### F-2 · Un retiro de caja podía superar lo que hay en el cajón
+**Estado:** arreglado — 2026-09-05 · `pos/modulo-turno.js`
 Turno → Registrar movimiento → Retiro **$999,999** con ~$974 en caja. Se
 acepta, y el efectivo esperado del cierre pasa a **−$999,024.50**.
 
@@ -127,7 +133,8 @@ diciendo los dos números. Igual que arriba: aviso, no candado — un negocio re
 puede tener motivos raros y quedarse sin poder anotar el movimiento es peor
 (§19.19).
 
-### F-3 · Cerrar una mesa vacía registra una venta de $0
+### F-3 · Cerrar una mesa vacía registraba una venta de $0
+**Estado:** arreglado — 2026-09-05 · `pos/modulo-mesas.js`
 Abrir una mesa, no ponerle nada y darle a "Cobrar y cerrar mesa": sale
 "¡Cobrado! $0.00" y queda un pedido `completado` de $0 que **cuenta como
 pedido** en el turno y en el ticket promedio.
@@ -135,7 +142,8 @@ pedido** en el turno y en el ticket promedio.
 Una mesa abierta por error es de lo más común en un turno. Debería **liberar la
 mesa**, no registrar una venta.
 
-### F-4 · En modo local, cancelar una venta no pide confirmación
+### F-4 · En modo local, cancelar una venta no pedía confirmación
+**Estado:** arreglado — 2026-09-05 · `pos/modulo-pedidos.js`
 En el historial basta con cambiar el selector de estado: no hay diálogo, no hay
 PIN, no hay deshacer explícito. Con cuenta sí lo pide (§19.19), y ahí la
 diferencia es defendible —el PIN es para auditar a un empleado—, pero un roce
@@ -144,7 +152,8 @@ del ratón sobre un `<select>` cancelando una venta cobrada es demasiado barato.
 **Propuesta:** una confirmación (`confirmarZenit`), sin PIN. Cuesta un clic y
 solo en el estado destructivo.
 
-### F-5 · "Total a cobrar" cambia de significado cuando hay propina
+### F-5 · "Total a cobrar" cambiaba de significado cuando hay propina
+**Estado:** arreglado — 2026-09-05 · `pos/modulo-venta.js` + `pos/index.html`
 En el modal de cobro, el rótulo **"Total a cobrar"** muestra la venta ($87.50)
 y, en cuanto se captura una propina, pasa a mostrar la suma ($92.50). Los dos
 números son correctos según el §30 —lo que el cliente entrega es

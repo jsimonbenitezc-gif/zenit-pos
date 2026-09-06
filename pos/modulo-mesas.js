@@ -886,6 +886,30 @@ function alCambiarMetodoPropinaMesa() {
 async function abrirModalCobrarMesa() {
     if (!_pedidoMesaActivo) return;
     const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
+
+    // ⚠️ UNA MESA VACÍA SE LIBERA, NO SE COBRA.
+    //
+    // Antes se abría el modal igual y confirmar dejaba un "¡Cobrado! $0.00": una
+    // venta `completado` de $0 que CUENTA como pedido en el turno y ensucia el
+    // ticket promedio. Y era el único modo de cerrar una mesa abierta por error,
+    // que es de lo más común en un turno. Encontrado explorando (BLOQUE 17,
+    // roce F-3).
+    if (items.length === 0) {
+        const liberar = await confirmarZenit(
+            'Esta mesa no tiene nada anotado, así que no hay nada que cobrar.\n\n' +
+            '¿Liberarla sin registrar ninguna venta?',
+            'Mesa vacía',
+            { textoOk: 'Liberar la mesa', textoCancelar: 'Volver' }
+        );
+        if (!liberar) return;
+        // Se reusa el camino de cancelación de siempre, que ya sabe distinguir
+        // los dos modos (con cuenta pide PIN y avisa al backend; sin cuenta
+        // escribe en la SQLite). `yaConfirmado` evita preguntar dos veces.
+        await cambiarEstadoPedido(_pedidoMesaActivo.id, 'cancelado', null, { yaConfirmado: true });
+        cerrarPanelMesa();
+        await cargarVistaMesas();
+        return;
+    }
     // Lo que se cobra ya trae el impuesto: el cajero debe pedir ese monto exacto.
     const total = _desgloseMesa(items).total;
     document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(total);

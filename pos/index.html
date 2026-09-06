@@ -2145,8 +2145,10 @@
         </div>
 </div>        
         <div style="text-align: center; margin: 15px 0; padding: 15px; background: #f3f4f6; border-radius: 10px;">
-            <span style="color: #6b7280; font-size: 0.9em;">Total a cobrar:</span>
+            <span id="pago-total-etiqueta" style="color: #6b7280; font-size: 0.9em;">Total a cobrar:</span>
             <h2 id="pago-total-display" style="margin: 5px 0; color: #2563eb;">$0.00</h2>
+            <!-- Solo aparece cuando hay propina: dice de qué se compone ese número. -->
+            <div id="pago-total-desglose" style="color:#6b7280;font-size:0.82em;display:none;"></div>
         </div>
 
 <!-- Información del Cliente -->

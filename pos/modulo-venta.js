@@ -482,10 +482,26 @@ function _actualizarDisplayPropina() {
         }
     }
 
-    // El cliente paga la venta MÁS la propina, así que el cambio y el "total a
-    // cobrar" del modal se calculan sobre ese número.
+    // El cliente paga la venta MÁS la propina, así que el cambio y el número
+    // grande del modal se calculan sobre ese total.
+    //
+    // ⚠️ Y EL RÓTULO CAMBIA CON ÉL. Decía siempre "Total a cobrar", así que el
+    // mismo letrero nombraba dos cosas distintas —la venta, y la venta más la
+    // propina— justo en el número que el cajero le canta al cliente. Ahora, en
+    // cuanto hay propina, se llama TOTAL PAGADO y se desglosa debajo, igual que
+    // en el ticket impreso del §30. Encontrado explorando (BLOQUE 17, roce F-5).
+    const venta = _totalACobrar();
+    const propina = propinaActual || 0;
     const totalDisplay = document.getElementById('pago-total-display');
     if (totalDisplay) totalDisplay.innerText = `$${_totalConPropina().toFixed(2)}`;
+
+    const etiqueta = document.getElementById('pago-total-etiqueta');
+    if (etiqueta) etiqueta.innerText = propina > 0 ? 'TOTAL PAGADO:' : 'Total a cobrar:';
+    const desglose = document.getElementById('pago-total-desglose');
+    if (desglose) {
+        desglose.style.display = propina > 0 ? '' : 'none';
+        if (propina > 0) desglose.innerText = `Venta $${venta.toFixed(2)}  ·  Propina $${propina.toFixed(2)}`;
+    }
     if (metodoSeleccionado === 'efectivo') calcularCambio();
 }
 

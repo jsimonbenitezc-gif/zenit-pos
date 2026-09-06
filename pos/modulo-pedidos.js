@@ -296,6 +296,7 @@ async function _cambiarEstadoPedidoBase(pedidoId, nuevoEstado, selectElement) {
         };
 
         const estado = estados[nuevoEstado];
+        if (!selectElement) return;
         selectElement.style.background = estado.bg;
         selectElement.style.color = estado.color;
         selectElement.style.borderColor = estado.color;
@@ -340,7 +341,7 @@ function cerrarModalDetalle() {
 }
 
 // --- Integración: Cancelar pedido con PIN ---
-async function cambiarEstadoPedido(pedidoId, nuevoEstado, selectElement) {
+async function cambiarEstadoPedido(pedidoId, nuevoEstado, selectElement, opciones = {}) {
     if (nuevoEstado === 'cancelado' && modoConectado && apiClient && tokenActual) {
         pedirPinEmpleado(
             `Cancelar pedido #${pedidoId}. Esta acción quedará registrada. Ingresa tu PIN para confirmar.`,
@@ -375,5 +376,29 @@ async function cambiarEstadoPedido(pedidoId, nuevoEstado, selectElement) {
         );
         return;
     }
+
+    // SIN cuenta no hay PIN de puesto que pedir (§19.19), pero cancelar sigue
+    // siendo destructivo: devuelve los insumos y saca la venta del corte. Sin
+    // esta confirmación bastaba con ROZAR el desplegable para cancelar una venta
+    // ya cobrada, sin diálogo, sin PIN y sin deshacer a la vista. Encontrado
+    // explorando (BLOQUE 17, roce F-4).
+    //
+    // Es una confirmación, no un candado: un clic más y solo en el estado que
+    // destruye algo.
+    if (nuevoEstado === 'cancelado' && !opciones.yaConfirmado) {
+        const seguro = await confirmarZenit(
+            `Se cancelará el pedido #${pedidoId}. Dejará de contar en la caja y sus ` +
+            `insumos volverán al inventario.`,
+            'Cancelar el pedido',
+            { textoOk: 'Sí, cancelar', textoCancelar: 'No', peligro: true }
+        );
+        if (!seguro) {
+            // Devolver el desplegable a lo que dice la base: si se quedara en
+            // "Cancelado" mostraría un estado que no ocurrió.
+            if (typeof cargarPedidos === 'function') cargarPedidos();
+            return;
+        }
+    }
+
     return _cambiarEstadoPedidoBase(pedidoId, nuevoEstado, selectElement);
 }

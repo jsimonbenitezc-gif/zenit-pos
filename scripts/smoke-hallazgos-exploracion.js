@@ -45,8 +45,11 @@ function extraer(archivo, nombres) {
     const src = fs.readFileSync(path.join(POS, archivo), 'utf8');
     let out = '';
     for (const n of nombres) {
-        const i = src.indexOf('function ' + n + '(');
+        let i = src.indexOf('function ' + n + '(');
         if (i < 0) throw new Error('No existe ' + n + '() en ' + archivo + ' (¿se renombró?)');
+        // Si viene declarada `async function`, hay que llevarse el `async`: sin él
+        // el cuerpo extraído usa `await` dentro de una función normal y revienta.
+        if (src.slice(Math.max(0, i - 6), i) === 'async ') i -= 6;
         let j = src.indexOf('{', i), prof = 0, fin = -1;
         for (let k = j; k < src.length; k++) {
             if (src[k] === '{') prof++;
@@ -128,6 +131,50 @@ comprobar('una fecha ISO del backend se sigue interpretando con su zona',
     cajaMesas._tiempoEnMesa(new Date(Date.now() - 45 * 60000).toISOString()), '45min');
 
 // ═══════════════════════════════════════════════════════════════════════════
+// F-1 y F-2 · Los dos guardas de dinero AVISAN, y solo cuando toca
+//
+// Los cinco roces de la sesión (explorar/HALLAZGOS.md) se arreglaron con avisos,
+// nunca con candados (§37, §19.19). Aquí se fijan los dos que tocan dinero: que
+// pregunten cuando el importe se pasa, que NO pregunten cuando cabe, y —lo más
+// importante— que un "no" DETENGA la operación.
+// ═══════════════════════════════════════════════════════════════════════════
+const codigoSalida = extraer('modulo-inventario.js', ['_confirmarSalidaMayorQueStock']);
+const codigoRetiro = extraer('modulo-turno.js', ['_efectivoEsperado', '_confirmarSalidaMayorQueLaCaja']);
+
+/** Monta el guarda REAL con un `confirmarZenit` que contesta lo que se le diga. */
+function montarGuarda(codigo, extras, respuestaDelUsuario) {
+    let preguntado = null;
+    const caja = Object.assign({
+        Math, JSON, parseFloat, isNaN, console,
+        confirmarZenit: async (mensaje) => { preguntado = mensaje; return respuestaDelUsuario; },
+        fmt: (n) => '$' + Number(n).toFixed(2),
+    }, extras);
+    vm.createContext(caja);
+    vm.runInContext(codigo, caja);
+    return { caja, pregunto: () => preguntado !== null, mensaje: () => preguntado || '' };
+}
+
+const INSUMOS = [{ id: 7, nombre: 'Carne al pastor', unidad: 'kg', stock_actual: 11.84 }];
+
+async function probarSalida(cantidad, respuesta) {
+    const g = montarGuarda(codigoSalida, { insumosCache: INSUMOS }, respuesta);
+    const sigue = await g.caja._confirmarSalidaMayorQueStock({ insumo_id: 7, cantidad });
+    return { sigue, pregunto: g.pregunto(), mensaje: g.mensaje() };
+}
+
+async function probarMovimiento(tipo, monto, respuesta, { totalesRotos = false } = {}) {
+    const g = montarGuarda(codigoRetiro, {
+        turnoActivo: { id: 1, apertura: 'x', fondo_inicial: 1000 },
+        _turnoGetTotales: async () => {
+            if (totalesRotos) throw new Error('sin conexión');
+            return { total_efectivo: 0 };
+        },
+    }, respuesta);
+    const sigue = await g.caja._confirmarSalidaMayorQueLaCaja(tipo, monto);
+    return { sigue, pregunto: g.pregunto() };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // E-2 y E-4 · Contra una SQLite de verdad, con el esquema de verdad
 // ═══════════════════════════════════════════════════════════════════════════
 const perfil = fs.mkdtempSync(path.join(os.tmpdir(), 'zenit-smoke-explora-'));
@@ -152,6 +199,41 @@ const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 const conCallback = (fn) => new Promise((res, rej) => fn((err, dato) => (err ? rej(err) : res(dato))));
 
 async function principal() {
+    console.log('\nF-1 y F-2 · los guardas avisan cuando el importe se pasa, y no cuando cabe');
+
+    // ── F-1 · salida de inventario mayor que el stock ──────────────────────
+    const salidaNormal = await probarSalida(3, true);
+    comprobar('una salida que cabe NO pregunta nada', [salidaNormal.pregunto, salidaNormal.sigue], [false, true]);
+
+    const salidaEnorme = await probarSalida(5000, true);
+    comprobar('una salida de 5000 sobre 11.84 sí pregunta', salidaEnorme.pregunto, true);
+    comprobar('y el aviso dice los DOS números',
+        /5000/.test(salidaEnorme.mensaje) && /11\.84/.test(salidaEnorme.mensaje), true);
+    comprobar('si la persona dice que sí, se registra igual (avisa, no prohíbe)', salidaEnorme.sigue, true);
+
+    const salidaCancelada = await probarSalida(5000, false);
+    comprobar('si dice que no, la salida NO se registra', salidaCancelada.sigue, false);
+
+    // ── F-2 · retiro mayor que el efectivo del cajón ───────────────────────
+    const retiroNormal = await probarMovimiento('retiro', 200, true);
+    comprobar('un retiro que cabe en la caja NO pregunta', [retiroNormal.pregunto, retiroNormal.sigue], [false, true]);
+
+    const retiroEnorme = await probarMovimiento('retiro', 999999, true);
+    comprobar('un retiro de $999,999 sobre $1,000 sí pregunta', retiroEnorme.pregunto, true);
+    comprobar('y se registra si la persona lo confirma', retiroEnorme.sigue, true);
+
+    const retiroCancelado = await probarMovimiento('retiro', 999999, false);
+    comprobar('si dice que no, el retiro NO se registra', retiroCancelado.sigue, false);
+
+    // Un DEPÓSITO mete dinero, no lo saca: preguntar ahí sería solo estorbo.
+    const depositoEnorme = await probarMovimiento('deposito', 999999, false);
+    comprobar('un depósito enorme nunca pregunta', [depositoEnorme.pregunto, depositoEnorme.sigue], [false, true]);
+
+    // Si los totales no se pueden leer, se sigue SIN preguntar: un aviso jamás
+    // puede impedir que se registre el dinero que ya salió del cajón.
+    const sinTotales = await probarMovimiento('retiro', 999999, false, { totalesRotos: true });
+    comprobar('si no se pueden leer los totales, no estorba', [sinTotales.pregunto, sinTotales.sigue], [false, true]);
+
     // `inicializarTablas` corre al importar; hay que darle su turno (crea las
     // tablas y siembra los datos de ejemplo con un setTimeout de 1 s).
     await esperar(2500);

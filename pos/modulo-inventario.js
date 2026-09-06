@@ -837,9 +837,41 @@ function _leerFormularioSalida() {
     return { insumo_id, cantidad, motivo, notas };
 }
 
+/**
+ * Avisa —NO bloquea— cuando la salida es mayor que el stock que hay.
+ *
+ * Es el escenario del dedo gordo, no el del ladrón: se teclea 5000 por 5.000 o
+ * se elige el insumo equivocado. Sin este aviso se aceptaba callando, el insumo
+ * quedaba en 0 (`MAX(0, …)` en database/db.js) y el historial se quedaba
+ * diciendo "−5000 kg" de un insumo del que solo salieron 11.84: la merma
+ * anotada no es la que ocurrió y la valoración del inventario sale mal.
+ * Encontrado explorando (BLOQUE 17, roce F-1).
+ *
+ * ⚠️ AVISA, NO PROHÍBE. Un candado aquí dejaría a un negocio sin poder anotar
+ * una merma por un stock mal capturado, y este proyecto prefiere la señal al
+ * candado (§37, §19.19). Devuelve `false` solo si la persona dice que no.
+ */
+async function _confirmarSalidaMayorQueStock(datos) {
+    const insumo = (insumosCache || []).find((i) => i.id === datos.insumo_id);
+    if (!insumo) return true;
+    const hay = parseFloat(insumo.stock_actual) || 0;
+    if (!(datos.cantidad > hay)) return true;
+
+    const u = insumo.unidad || '';
+    return confirmarZenit(
+        `Vas a descontar ${datos.cantidad} ${u} de "${insumo.nombre}", ` +
+        `y solo hay ${hay} ${u}.\n\n` +
+        `El insumo quedará en 0 y el historial registrará la salida completa. ` +
+        `¿Es correcto?`,
+        'Más de lo que hay en existencia',
+        { textoOk: 'Sí, registrar', textoCancelar: 'Corregir', peligro: true }
+    );
+}
+
 async function _guardarSalidaBase() {
     const datos = _leerFormularioSalida();
     if (!datos) return;
+    if (!(await _confirmarSalidaMayorQueStock(datos))) return;
     try {
         await _registrarSalidaYSincronizar(datos);
         cerrarModalSalida();
@@ -858,6 +890,9 @@ async function guardarSalida() {
     if (motivo === 'ajuste' && modoConectado && apiClient && tokenActual) {
         const datos = _leerFormularioSalida();
         if (!datos) return;
+        // El mismo aviso que la salida normal: el camino con PIN no puede
+        // saltárselo, o el roce F-1 seguiría abierto justo en el flujo auditado.
+        if (!(await _confirmarSalidaMayorQueStock(datos))) return;
 
         pedirPinEmpleado(
             'Ajuste manual de inventario. Esta acción quedará registrada. Ingresa tu PIN para confirmar.',
