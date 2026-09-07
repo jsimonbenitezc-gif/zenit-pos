@@ -1343,10 +1343,16 @@
             <div class="input-group">
                 <label>Símbolo de Moneda</label>
                 <select id="adj-moneda">
+                    <!-- MISMA LISTA que MONEDAS en el móvil
+                         (zenit-pos-mobile/src/screens/main/ajustes/shared.js).
+                         Si agregas una aquí, agrégala allá. -->
                     <option value="$">$ (Peso/Dólar)</option>
+                    <option value="MX$">MX$ (Peso mexicano)</option>
+                    <option value="US$">US$ (Dólar)</option>
                     <option value="€">€ (Euro)</option>
                     <option value="Q">Q (Quetzal)</option>
                     <option value="S/">S/ (Sol)</option>
+                    <option value="₡">₡ (Colón)</option>
                 </select>
             </div>
             <div class="input-group">

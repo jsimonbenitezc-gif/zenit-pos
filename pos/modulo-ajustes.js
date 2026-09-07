@@ -1216,8 +1216,24 @@ async function cargarAjustesInstalados() {
         _chk('adj-show-rfc',       ajustes.show_rfc);
 
         // Moneda
-        if(ajustes.currency_symbol && document.getElementById('adj-moneda'))
-            document.getElementById('adj-moneda').value = ajustes.currency_symbol;
+        // ⚠️ Un <select> al que se le asigna un valor que NO tiene <option> no
+        // avisa: se queda en selectedIndex -1 y su .value pasa a ser "". El
+        // usuario ve el campo EN BLANCO y no entiende por qué, aunque su moneda
+        // esté bien guardada. Pasó de verdad: el móvil ofrecía 'MX$' y aquí la
+        // lista solo tenía cuatro símbolos. Las listas ya están alineadas; esto
+        // es el cerrojo por si vuelven a separarse.
+        const _selMoneda = document.getElementById('adj-moneda');
+        if (_selMoneda && ajustes.currency_symbol) {
+            const _simbolo = ajustes.currency_symbol;
+            const _existe = [..._selMoneda.options].some(o => o.value === _simbolo);
+            if (!_existe) {
+                const _opt = document.createElement('option');
+                _opt.value = _simbolo;
+                _opt.textContent = _simbolo;
+                _selMoneda.appendChild(_opt);
+            }
+            _selMoneda.value = _simbolo;
+        }
 
         // Zona horaria del negocio (la nube manda; si nunca se configuró, la del equipo)
         poblarSelectZonaHoraria(ajustes.tz || zonaHorariaDelEquipo());
