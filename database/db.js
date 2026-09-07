@@ -492,26 +492,36 @@ function crearDatosEjemplo() {
             if (!err && row.total === 0) {
                 console.log('✨ Creando datos de ejemplo...');
                 
-                // Categorías
-                const stmtCat = db.prepare('INSERT INTO clasificaciones (nombre, emoji) VALUES (?, ?)');
-                stmtCat.run('Alimentos', '🍔'); 
-                stmtCat.run('Bebidas', '🥤');  
-                stmtCat.run('Extras', '🥓'); // Nueva categoría sugerida
-                stmtCat.finalize();
+                // ⚠️ ESTE db.serialize NO SOBRA, aunque ya haya uno arriba.
+                // `db.serialize()` cambia el modo MIENTRAS corre su callback y
+                // luego lo restaura; para cuando este `db.get` responde, ya
+                // volvimos al modo PARALELO. Sin esto, los productos podían
+                // insertarse antes que sus categorías y perder la referencia.
+                //
+                // Aquí había un `setTimeout(..., 1000)` para "darle tiempo" a
+                // las categorías. Dormir no ordena nada: dejaba una instalación
+                // NUEVA con categorías y CERO productos durante un segundo
+                // entero —la pantalla de venta vacía justo al estrenar— y hacía
+                // que el smoke test de exploración fallara de forma aleatoria
+                // según qué ganara la carrera. Es la lección del §46.1: el
+                // orden se declara, no se espera.
+                db.serialize(() => {
+                    const stmtCat = db.prepare('INSERT INTO clasificaciones (nombre, emoji) VALUES (?, ?)');
+                    stmtCat.run('Alimentos', '🍔');
+                    stmtCat.run('Bebidas', '🥤');
+                    stmtCat.run('Extras', '🥓');
+                    stmtCat.finalize();
 
-                // Promociones ejemplo
-                db.run("INSERT INTO promociones (nombre, tipo, valor) VALUES ('Descuento 10%', 'porcentaje', 10)");
-                db.run("INSERT INTO promociones (nombre, tipo, valor) VALUES ('Cortesía $50', 'monto_fijo', 50)");
+                    db.run("INSERT INTO promociones (nombre, tipo, valor) VALUES ('Descuento 10%', 'porcentaje', 10)");
+                    db.run("INSERT INTO promociones (nombre, tipo, valor) VALUES ('Cortesía $50', 'monto_fijo', 50)");
 
-                // Productos
-                setTimeout(() => {
                     const stmtProd = db.prepare('INSERT INTO productos (nombre, precio, stock, clasificacion_id, emoji, descripcion) VALUES (?, ?, ?, ?, ?, ?)');
                     stmtProd.run('Hamburguesa Clásica', 85.00, 50, 1, '🍔', 'Carne, queso, lechuga');
                     stmtProd.run('Pizza Pepperoni', 120.00, 20, 1, '🍕', '8 rebanadas');
                     stmtProd.run('Coca Cola', 25.00, 100, 2, '🥤', 'Lata 355ml');
                     stmtProd.run('Tocino Extra', 15.00, 50, 3, '🥓', 'Porción de 50g');
                     stmtProd.finalize();
-                }, 1000);
+                });
             }
         });
     });
