@@ -76,7 +76,7 @@ function inicializarTablas() {
         nombre TEXT NOT NULL,
         descripcion TEXT,
         precio REAL NOT NULL,
-        stock INTEGER DEFAULT 0,
+        stock INTEGER,                 -- NULL = SIN CONTROL de existencias (§19.38)
         clasificacion_id INTEGER,
         emoji TEXT, 
         imagen TEXT,
@@ -483,6 +483,26 @@ function inicializarTablas() {
     // emparejar esos equipos. Es una molestia de una sola vez.
     db.run("UPDATE kds_trusted_devices SET estado = 'legacy' WHERE secret_hash IS NULL AND (estado IS NULL OR estado != 'legacy')", () => {});
     db.run('CREATE INDEX IF NOT EXISTS idx_kds_secret ON kds_trusted_devices(secret_hash)', () => {});
+
+    // ── EXISTENCIAS POR UNIDADES: NULL ES "SIN CONTROL" (§19.38) ────────────
+    //
+    // `productos.stock` se capturaba y no hacía nada. Ahora descuenta, pero solo
+    // en productos SIN receta: los que tienen receta los mandan sus insumos.
+    //
+    // 🔴 Y los CEROS heredados hay que limpiarlos UNA VEZ. La columna nacía con
+    // DEFAULT 0 y nadie mantenía ese número, así que todo producto dado de alta
+    // sin tocar el campo tiene 0. Tomarlo ahora como "se acabó" haría que el
+    // cajero viera el aviso de faltante en cada venta. La marca en `ajustes`
+    // impide repetirlo: después de esto, un 0 sí significa que se acabó, y un
+    // producto que se agota de verdad no puede perder su control solo.
+    db.get("SELECT valor FROM ajustes WHERE clave = 'migracion_stock_unidades'", (err, fila) => {
+        if (err || (fila && fila.valor === 'ok')) return;
+        db.serialize(() => {
+            db.run('UPDATE productos SET stock = NULL WHERE stock = 0 OR stock < 0', () => {});
+            db.run("UPDATE productos SET stock = NULL WHERE EXISTS (SELECT 1 FROM receta_items ri WHERE ri.producto_id = productos.id)", () => {});
+            db.run("INSERT OR REPLACE INTO ajustes (clave, valor) VALUES ('migracion_stock_unidades', 'ok')", () => {});
+        });
+    });
     }); // fin de db.serialize
 }
 
@@ -693,6 +713,39 @@ async function descontarInsumosDeVenta(productoId, cantidadVendida) {
 /** Deshacer: devuelve al inventario los insumos que la venta descontó. */
 async function restaurarInsumosDeVenta(productoId, cantidadVendida) {
     return aplicarRecetaDeVentaLocal(productoId, cantidadVendida, +1);
+}
+
+/**
+ * EXISTENCIAS POR UNIDADES — el espejo local de `utils/stockProducto.js` (§19.38).
+ *
+ *     signo = -1 vender  ·  +1 devolver
+ *
+ * La regla entera vive en el SQL, y por eso quien llama no tiene que saberla:
+ *   · `stock IS NOT NULL` → NULL es SIN CONTROL, y es lo normal;
+ *   · `NOT EXISTS (receta)` → un producto con receta lo mandan sus insumos, que
+ *     es lo que las dos líneas de arriba acaban de mover. Descontar las dos
+ *     cosas sería contar la misma venta dos veces.
+ *   · `MAX(0, …)` → nunca negativo. En la base de producción quedaron productos
+ *     en −20 de cuando esto se descontaba sin piso.
+ *
+ * ⚠️ El SQL SUMA y el signo viene aplicado, igual que la receta de los
+ * modificadores (§32.6): restar ADEMÁS invertiría el sentido y vender
+ * aumentaría las existencias.
+ */
+function moverUnidadesDeProducto(productoId, cantidad, signo) {
+    return new Promise((resolve) => {
+        const delta = (parseFloat(cantidad) || 0) * signo;
+        if (!delta) return resolve();
+        db.run(
+            `UPDATE productos
+                SET stock = MAX(0, stock + ?)
+              WHERE id = ?
+                AND stock IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM receta_items ri WHERE ri.producto_id = productos.id)`,
+            [delta, productoId],
+            () => resolve()      // el inventario nunca puede impedir una venta
+        );
+    });
 }
 
 /**
@@ -940,6 +993,8 @@ async function crearPedido(datos, items, callback, opciones) {
                 // …y el ajuste de los extras: el queso adicional sale del
                 // inventario, y la cebolla que no se puso vuelve a él.
                 await aplicarRecetaModificadoresLocal(item.modificadores, item.cantidad, -1);
+                // Y las existencias por unidades de lo que no tiene receta (§19.38).
+                await moverUnidadesDeProducto(item.id, item.cantidad, -1);
             }
         }
 
@@ -1132,6 +1187,8 @@ function actualizarEstadoPedido(pedidoId, nuevoEstado, callback) {
                             await restaurarInsumosDeVenta(item.producto_id, item.cantidad);
                             // Y el ajuste de los extras con el signo invertido (§32.6).
                             await aplicarRecetaModificadoresLocal(item.modificadores, item.cantidad, +1);
+                            // Y las unidades, con el signo al revés (§19.38).
+                            await moverUnidadesDeProducto(item.producto_id, item.cantidad, +1);
                         } catch (_) { /* el inventario no puede impedir la cancelación */ }
                     }
                     callback(null);
@@ -2664,6 +2721,7 @@ function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb, mod
             // Descontar insumos según la receta del producto (igual que en Nueva Venta)
             descontarInsumosDeVenta(producto_id, cantidad).catch(() => { /* ignorar: mantiene comportamiento fire-and-forget */ });
             aplicarRecetaModificadoresLocal(modificadores, cantidad, -1).catch(() => { /* ignorar, igual que arriba */ });
+            moverUnidadesDeProducto(producto_id, cantidad, -1);
             _recalcularTotalesMesa(pedido_id, cb);
         }
     );
@@ -2692,6 +2750,7 @@ function eliminarItemMesa(item_id, pedido_id, cb) {
                     restaurarInsumosDeVenta(item.producto_id, item.cantidad).catch(() => {});
                     // Y el ajuste de los extras (§32.6) con el signo invertido.
                     aplicarRecetaModificadoresLocal(item.modificadores, item.cantidad, +1).catch(() => {});
+                    moverUnidadesDeProducto(item.producto_id, item.cantidad, +1);
                 }
 
                 _recalcularTotalesMesa(pedido_id, cb);
@@ -2894,6 +2953,7 @@ module.exports = {
     aplicarRecetaModificadoresLocal,
     // Inventario: la pareja descontar/restaurar de una receta (mismo signo que §32.6)
     restaurarInsumosDeVenta,
+    moverUnidadesDeProducto,
     marcarPedidoSincronizado,
     obtenerRentabilidad,
     calcularAlertas,

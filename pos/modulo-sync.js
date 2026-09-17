@@ -145,7 +145,9 @@ async function syncLocalToCloud() {
                         name: prod.nombre,
                         description: prod.descripcion || '',
                         price: prod.precio,
-                        stock: prod.stock || 0,
+                        // NULL viaja como NULL: un "|| 0" aquí le diría al
+                        // servidor "se acabó" de todo lo que no se configuró (§19.38).
+                        stock: prod.stock === undefined ? null : prod.stock,
                         category_id: prod.clasificacion_id ? (catIdMap[prod.clasificacion_id] || null) : null,
                         emoji: prod.emoji || '📦'
                     });

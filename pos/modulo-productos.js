@@ -94,7 +94,9 @@ async function abrirModalProducto(p = null) {
     document.getElementById('prodNombre').value = p ? p.nombre : '';
     document.getElementById('prodDescripcion').value = p ? p.descripcion : '';
     document.getElementById('prodPrecio').value = p ? p.precio : '';
-    document.getElementById('prodStock').value = p ? p.stock : '';
+    // Sin control de existencias, el campo se ve VACÍO, no "null" ni "0": el
+    // vacío es lo que significa (§19.38).
+    document.getElementById('prodStock').value = (p && p.stock !== null && p.stock !== undefined) ? p.stock : '';
     document.getElementById('prodEmojiDisplay').innerHTML = renderIcono(emojiSeleccionado, 30);
 
     const cats = await window.api.obtenerClasificacionesRaw();
@@ -138,7 +140,9 @@ async function guardarProducto() {
         nombre: document.getElementById('prodNombre').value,
         descripcion: document.getElementById('prodDescripcion').value,
         precio: parseFloat(document.getElementById('prodPrecio').value),
-        stock: parseInt(document.getElementById('prodStock').value),
+        // Vacío = SIN CONTROL de existencias, y se manda como null explícito
+        // (§19.38). parseInt("") da NaN, que es un null por accidente.
+        stock: (function(){ const v = document.getElementById('prodStock').value.trim(); return v === '' ? null : parseInt(v, 10); })(),
         clasificacion_id: parseInt(document.getElementById('prodCategoria').value) || null,
         emoji: imagenRuta ? '' : emojiSeleccionado,  // Si hay imagen, no guardar emoji
         imagen: imagenRuta || rutaImagenTemporal
