@@ -780,7 +780,7 @@ let _mesasAutoRefreshInterval = null;
 
 // ─── Sync de Inventario y Ajustes en tiempo real (modo conectado) ─────────────
   let _invSyncInterval  = null;
-  let _eventSource      = null;   // UNA para los cinco canales (§56.7)
+  let _eventSource      = null;   // UNA para los cinco canales (§56.6)
   let _backendProdIdCache = null; // nombre_normalizado -> id_backend
   let _backendProdIdCacheAt = 0;
 
