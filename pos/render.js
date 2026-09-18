@@ -780,11 +780,7 @@ let _mesasAutoRefreshInterval = null;
 
 // ─── Sync de Inventario y Ajustes en tiempo real (modo conectado) ─────────────
   let _invSyncInterval  = null;
-  let _invEventSource   = null;
-  let _settingsEventSource = null;
-  let _turnoEventSource = null;
-  let _auditEventSource = null;
-  let _ordersEventSource = null;
+  let _eventSource      = null;   // UNA para los cinco canales (§56.7)
   let _backendProdIdCache = null; // nombre_normalizado -> id_backend
   let _backendProdIdCacheAt = 0;
 
@@ -821,17 +817,62 @@ let _inventarioSyncEnCurso = false;
       }
   }
 
-function _conectarSSEInventario() {
-    if (_invEventSource) { _invEventSource.close(); _invEventSource = null; }
+// ─── UNA sola conexión en vivo para los cinco canales ───────────────────────
+//
+// Antes esto eran CINCO funciones casi idénticas y cinco EventSource abiertos
+// —cinco sockets y cinco latidos cada 25 s por caja—. El backend ahora ofrece
+// `GET /api/events?channels=…`, que manda los eventos CON NOMBRE, así que una
+// conexión basta y cada canal se atiende con su propio listener.
+//
+// ⚠️ Con `addEventListener(canal, …)`, NO con `onmessage`: onmessage solo
+// recibe los eventos sin nombre, que son los que siguen mandando los cinco
+// endpoints viejos por compatibilidad. Si alguien cambia esto a onmessage, la
+// app deja de enterarse de todo sin que falle nada a la vista.
+function _conectarSSE() {
+    if (_eventSource) { _eventSource.close(); _eventSource = null; }
     if (!modoConectado || !tokenActual) return;
-    const sseUrl = `${apiClient.baseURL}/inventory/events?token=${tokenActual}`;
-    _invEventSource = new EventSource(sseUrl);
-    _invEventSource.onmessage = () => _actualizarInventarioDesdeBackend();
-    _invEventSource.onerror = () => {
-        _invEventSource?.close();
-        _invEventSource = null;
-        // Reconectar SSE tras 10s sin tocar el intervalo de polling
-        setTimeout(() => { if (modoConectado && tokenActual) _conectarSSEInventario(); }, 10000);
+
+    const canales = 'orders,inventory,settings,audit,turnos';
+    _eventSource = new EventSource(`${apiClient.baseURL}/events?channels=${canales}&token=${tokenActual}`);
+
+    _eventSource.addEventListener('inventory', () => _actualizarInventarioDesdeBackend());
+
+    _eventSource.addEventListener('settings', () => _sincronizarAjustesDesdeCloud());
+
+    _eventSource.addEventListener('turnos', async () => {
+        turnoActivo = await apiClient.getTurnoActivo().catch(() => null);
+        actualizarIndicadorTurnoSidebar();
+        // Si el usuario está viendo la pantalla de turno, refrescar
+        if (document.getElementById('turno-activo')?.closest('.vista-activa')) {
+            cargarVistaTurno();
+        }
+    });
+
+    _eventSource.addEventListener('orders', () => {
+        // Refrescar sólo la vista visible para no hacer trabajo innecesario
+        if (document.getElementById('view-mesas')?.classList.contains('active')) {
+            cargarVistaMesas?.();
+        }
+        if (document.getElementById('view-pedidos')?.classList.contains('active')) {
+            cargarPedidos?.();
+        }
+    });
+
+    _eventSource.addEventListener('audit', async () => {
+        // Recargar audit log si el dashboard está activo
+        if (document.getElementById('view-dashboard')?.classList.contains('active')) {
+            cargarAuditLog().catch(() => {});
+        }
+        // Mostrar notificación toast
+        mostrarNotificacionExito('Se registró una nueva acción autorizada', '🔒 Acción sensible');
+    });
+
+    _eventSource.onerror = () => {
+        _eventSource?.close();
+        _eventSource = null;
+        // Reconectar tras 10s sin tocar los intervalos de polling, que son el
+        // respaldo: si el tiempo real se cae, la app sigue actualizándose sola.
+        setTimeout(() => { if (modoConectado && tokenActual) _conectarSSE(); }, 10000);
     };
 }
 
@@ -954,108 +995,24 @@ async function _sincronizarAjustesDesdeCloud() {
     } catch { /* sin conexión */ }
 }
 
-function _conectarSSESettings() {
-    if (_settingsEventSource) { _settingsEventSource.close(); _settingsEventSource = null; }
-    if (!modoConectado || !tokenActual) return;
-    const sseUrl = `${apiClient.baseURL}/settings/events?token=${tokenActual}`;
-    _settingsEventSource = new EventSource(sseUrl);
-    _settingsEventSource.onmessage = () => _sincronizarAjustesDesdeCloud();
-    _settingsEventSource.onerror = () => {
-        _settingsEventSource?.close();
-        _settingsEventSource = null;
-        setTimeout(() => { if (modoConectado && tokenActual) _conectarSSESettings(); }, 10000);
-    };
-}
-
-function _conectarSSETurno() {
-    if (_turnoEventSource) { _turnoEventSource.close(); _turnoEventSource = null; }
-    if (!modoConectado || !tokenActual) return;
-    const sseUrl = `${apiClient.baseURL}/turnos/events?token=${tokenActual}`;
-    _turnoEventSource = new EventSource(sseUrl);
-    _turnoEventSource.onmessage = async () => {
-        turnoActivo = await apiClient.getTurnoActivo().catch(() => null);
-        actualizarIndicadorTurnoSidebar();
-        // Si el usuario está viendo la pantalla de turno, refrescar
-        if (document.getElementById('turno-activo')?.closest('.vista-activa')) {
-            cargarVistaTurno();
-        }
-    };
-    _turnoEventSource.onerror = () => {
-        _turnoEventSource?.close();
-        _turnoEventSource = null;
-        setTimeout(() => { if (modoConectado && tokenActual) _conectarSSETurno(); }, 10000);
-    };
-}
-
 // SSE de pedidos/mesas: refresca las vistas al instante cuando otra terminal
 // crea o modifica un pedido (el polling de 20s queda sólo como respaldo).
-function _conectarSSEOrders() {
-    if (_ordersEventSource) { _ordersEventSource.close(); _ordersEventSource = null; }
-    if (!modoConectado || !tokenActual) return;
-    const sseUrl = `${apiClient.baseURL}/orders/events?token=${tokenActual}`;
-    _ordersEventSource = new EventSource(sseUrl);
-    _ordersEventSource.onmessage = () => {
-        // Refrescar sólo la vista visible para no hacer trabajo innecesario
-        if (document.getElementById('view-mesas')?.classList.contains('active')) {
-            cargarVistaMesas?.();
-        }
-        if (document.getElementById('view-pedidos')?.classList.contains('active')) {
-            cargarPedidos?.();
-        }
-    };
-    _ordersEventSource.onerror = () => {
-        _ordersEventSource?.close();
-        _ordersEventSource = null;
-        setTimeout(() => { if (modoConectado && tokenActual) _conectarSSEOrders(); }, 10000);
-    };
-}
-
-function _conectarSSEAudit() {
-    if (_auditEventSource) { _auditEventSource.close(); _auditEventSource = null; }
-    if (!modoConectado || !tokenActual) return;
-    const sseUrl = `${apiClient.baseURL}/audit/events?token=${tokenActual}`;
-    _auditEventSource = new EventSource(sseUrl);
-    _auditEventSource.onmessage = async () => {
-        // Recargar audit log si el dashboard está activo
-        if (document.getElementById('view-dashboard')?.classList.contains('active')) {
-            cargarAuditLog().catch(() => {});
-        }
-        // Mostrar notificación toast
-        mostrarNotificacionExito('Se registró una nueva acción autorizada', '🔒 Acción sensible');
-    };
-    _auditEventSource.onerror = () => {
-        _auditEventSource?.close();
-        _auditEventSource = null;
-        setTimeout(() => { if (modoConectado && tokenActual) _conectarSSEAudit(); }, 10000);
-    };
-}
 
 function iniciarSyncInventario() {
     detenerSyncInventario();
     if (!modoConectado || !tokenActual) return;
     // Polling cada 15s garantizado (independiente del SSE)
     _invSyncInterval = setInterval(_actualizarInventarioDesdeBackend, 15000);
-    // SSE para actualizaciones inmediatas (complementa el polling)
-    _conectarSSEInventario();
-    // SSE para ajustes del negocio en tiempo real
-    _conectarSSESettings();
-    // SSE para turno en tiempo real
-    _conectarSSETurno();
-    // SSE para auditoría de acciones sensibles en tiempo real
-    _conectarSSEAudit();
-    // SSE para pedidos y mesas en tiempo real
-    _conectarSSEOrders();
+    // UNA conexión en vivo para inventario, ajustes, turno, pedidos y auditoría.
+    // El polling de arriba sigue siendo el respaldo.
+    _conectarSSE();
     // Primera actualización inmediata al conectar
     _actualizarInventarioDesdeBackend();
 }
 
   function detenerSyncInventario() {
       clearInterval(_invSyncInterval); _invSyncInterval = null;
-      _invEventSource?.close();        _invEventSource  = null;
-      _settingsEventSource?.close();   _settingsEventSource = null;
-      _turnoEventSource?.close();      _turnoEventSource = null;
-      _auditEventSource?.close();      _auditEventSource = null;
-      _ordersEventSource?.close();     _ordersEventSource = null;
+      _eventSource?.close();           _eventSource = null;
   }
 
   function _normalizarNombreProducto(nombre) {
