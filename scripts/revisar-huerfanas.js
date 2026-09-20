@@ -185,6 +185,9 @@ const GLOBALES = new Set([
     'AbortController', 'TextEncoder', 'TextDecoder', 'btoa', 'atob', 'crypto', 'performance',
     'getComputedStyle', 'MutationObserver', 'IntersectionObserver', 'ResizeObserver', 'Element',
     'HTMLElement', 'Node', 'DOMParser', 'Audio', 'Uint8Array', 'Chart',
+    // Se agrega uno a uno y a propósito: una lista que crece sola acaba tapando
+    // justo el fantasma que este revisor existe para encontrar.
+    'createImageBitmap',
     // Palabras que la expresión de abajo confunde con llamadas.
     'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function', 'super', 'this',
     'new', 'do', 'else', 'try', 'await', 'of', 'in', 'not', 'var', 'async', 'constructor',

@@ -646,6 +646,15 @@
                         </svg>
                         Modificadores
                     </button>
+                    <!-- EL MENÚ DESDE UNA FOTO (§57). Vive junto a "Nuevo Producto"
+                         porque es la otra forma de hacer lo mismo: dar de alta el
+                         catálogo. La de 60 productos a mano, y la de dos minutos. -->
+                    <button class="btn-secondary" onclick="abrirImportarMenu()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 5px;">
+                            <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>
+                        </svg>
+                        Importar menú
+                    </button>
                     <button class="btn-primary" id="btnNuevaCategoria">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus" style="display: inline-block; vertical-align: middle; margin-right: 5px;">
                             <path d="M5 12h14"/>
@@ -2069,6 +2078,85 @@
 
 <!-- Biblioteca de modificadores (BLOQUE 11). Solo el DUEÑO puede editarla: cambia
      lo que se le cobra al cliente, igual que el impuesto y las propinas. -->
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     EL MENÚ DESDE UNA FOTO (§57)
+
+     Cuatro pasos en un solo modal: elegir → leyendo → REVISAR → listo.
+     El del medio es el que importa: el modelo propone y aquí el dueño decide,
+     con todo editable y lo dudoso arriba.
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div class="modal hidden" id="modalMenuFoto">
+    <div class="modal-content" style="max-width:760px;">
+        <div class="modal-header">
+            <h3>Importar menú</h3>
+            <button class="close-btn" onclick="cerrarImportarMenu()">×</button>
+        </div>
+
+        <!-- PASO 1: elegir -->
+        <div id="menufoto-paso-elegir">
+            <p style="color:#6b7280;font-size:0.9em;margin-bottom:12px;">
+                Elige la foto de tu menú o su PDF, y Zenit da de alta los productos solos.
+                Después los revisas uno por uno antes de crear nada.
+            </p>
+
+            <input type="file" id="menufoto-input" accept="image/jpeg,image/png,image/webp,application/pdf"
+                   multiple class="hidden" onchange="menuFotoArchivosElegidos(this)">
+
+            <div onclick="menuFotoElegirArchivos()"
+                 style="border:2px dashed #d1d5db;border-radius:12px;padding:26px;text-align:center;cursor:pointer;margin-bottom:12px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>
+                </svg>
+                <div style="margin-top:8px;font-weight:600;">Elegir fotos o PDF</div>
+                <div style="color:#9ca3af;font-size:0.85em;margin-top:2px;">Hasta 6 páginas por vez</div>
+            </div>
+
+            <div id="menufoto-lista-archivos"></div>
+
+            <details style="margin-top:6px;">
+                <summary style="cursor:pointer;color:#6b7280;font-size:0.88em;">O pega el texto del menú</summary>
+                <textarea id="menufoto-texto" rows="5" oninput="_menuFotoPintarArchivos()"
+                          placeholder="Tacos de pastor 24.50&#10;Quesadilla 38&#10;Agua de horchata 25"
+                          style="width:100%;margin-top:8px;padding:8px;border:1px solid #d1d5db;border-radius:8px;font-family:inherit;"></textarea>
+            </details>
+
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="cerrarImportarMenu()">Cancelar</button>
+                <button class="btn-primary" id="menufoto-btn-leer" disabled onclick="menuFotoLeer()">Leer menú</button>
+            </div>
+        </div>
+
+        <!-- PASO 2: leyendo -->
+        <div id="menufoto-paso-leyendo" class="hidden" style="text-align:center;padding:36px 0;">
+            <div class="zenit-spinner grande" style="margin:0 auto 14px;"></div>
+            <div style="font-weight:600;">Leyendo tu menú…</div>
+            <div id="menufoto-leyendo-detalle" style="color:#6b7280;font-size:0.88em;margin-top:4px;"></div>
+        </div>
+
+        <!-- PASO 3: revisar -->
+        <div id="menufoto-paso-revisar" class="hidden">
+            <div id="menufoto-resumen" style="font-size:0.92em;margin-bottom:10px;"></div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+                <button class="btn-secondary small" onclick="menuFotoMarcarTodos(true)">Marcar todos</button>
+                <button class="btn-secondary small" onclick="menuFotoMarcarTodos(false)">Desmarcar todos</button>
+            </div>
+            <div id="menufoto-lista" style="max-height:46vh;overflow-y:auto;"></div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="cerrarImportarMenu()">Cancelar</button>
+                <button class="btn-primary" id="menufoto-btn-crear" onclick="menuFotoConfirmar()">Crear productos</button>
+            </div>
+        </div>
+
+        <!-- PASO 4: listo -->
+        <div id="menufoto-paso-listo" class="hidden">
+            <div id="menufoto-resultado"></div>
+            <div class="modal-actions">
+                <button class="btn-primary" onclick="cerrarImportarMenu()">Listo</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal hidden" id="modalBibliotecaMods">
     <div class="modal-content" style="max-width:640px;">
         <div class="modal-header">
@@ -2691,6 +2779,7 @@
 <script src="modulo-modificadores.js"></script>
 <script src="modulo-dashboard.js"></script>
 <script src="modulo-productos.js"></script>
+<script src="modulo-menu-foto.js"></script>
 <script src="modulo-venta.js"></script>
 <script src="modulo-pedidos.js"></script>
 <script src="modulo-clientes.js"></script>

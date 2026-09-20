@@ -126,7 +126,15 @@ async function principal() {
         try {
             if (recorrido.necesitaBackend && !backend) {
                 process.stdout.write('  · Levantando PostgreSQL y el backend de pruebas... ');
-                backend = await arrancarBackendDePruebas({ verboso: VERBOSO });
+                // El lector de menús del backend se sustituye por uno de mentira
+                // (§57): llamar a Gemini en cada corrida costaría dinero y
+                // devolvería algo distinto cada vez. Solo se sustituye ESA
+                // llamada; la ruta, la propuesta y el alta de productos son reales.
+                const { MENU_DE_PRUEBA } = require('./lib/menu-de-prueba');
+                backend = await arrancarBackendDePruebas({
+                    verboso: VERBOSO,
+                    envExtra: { MENU_LECTOR_FALSO: JSON.stringify(MENU_DE_PRUEBA) },
+                });
                 console.log('listo (' + backend.url + ', ' + backend.motor + ')');
             }
             app = await abrirApp({ etiqueta: recorrido.etiqueta, verboso: VERBOSO });

@@ -47,7 +47,7 @@ function hayBackendDisponible() {
  * Levanta Postgres + backend y devuelve su URL. Tarda entre 20 y 40 segundos:
  * casi todo es el arranque del PostgreSQL desechable.
  */
-async function arrancarBackendDePruebas({ puertoApi = 3098, puertoDb = 55433, verboso = false } = {}) {
+async function arrancarBackendDePruebas({ puertoApi = 3098, puertoDb = 55433, verboso = false, envExtra = {} } = {}) {
     const raiz = rutaDelBanco();
     if (!raiz) throw new Error('No encontré el repo zenit-pos-backend al lado de éste.');
 
@@ -57,7 +57,7 @@ async function arrancarBackendDePruebas({ puertoApi = 3098, puertoDb = 55433, ve
     const pg = await levantarPostgres({ puerto: puertoDb, verboso });
     let servidor = null;
     try {
-        servidor = await arrancarServidor({ db: pg.conf, puerto: puertoApi, verboso });
+        servidor = await arrancarServidor({ db: pg.conf, puerto: puertoApi, verboso, envExtra });
     } catch (err) {
         await pg.detener().catch(() => {});
         throw err;

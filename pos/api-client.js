@@ -79,8 +79,13 @@ class APIClient {
             headers['Authorization'] = `Bearer ${this.token}`;
         }
 
+        // La espera es de 30 s para todo… salvo donde eso no alcanza. Leer un menú
+        // son varias llamadas a un modelo de IA, una por foto, y ahí 30 s es poco:
+        // el usuario vería "el servidor tardó demasiado" sobre un trabajo que SÍ
+        // se está haciendo y que además ya se está pagando.
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+        const msEspera = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : API_REQUEST_TIMEOUT_MS;
+        const timeout = setTimeout(() => controller.abort(), msEspera);
 
         const config = {
             ...options,
@@ -88,6 +93,7 @@ class APIClient {
             cache: 'no-store',
             signal: controller.signal
         };
+        delete config.timeoutMs;
 
         if (options.body && typeof options.body === 'object') {
             config.body = JSON.stringify(options.body);
@@ -412,6 +418,27 @@ class APIClient {
     // MODIFICADORES (BLOQUE 11) — la biblioteca del negocio.
     // El catálogo entero viene en UNA llamada: es lo que el desktop guarda en su
     // SQLite para poder armar un carrito con extras sin internet.
+    // EL MENÚ DESDE UNA FOTO (§57)
+    // `leer` NO escribe nada: devuelve una propuesta que el dueño revisa y corrige.
+    // Solo `confirmar` toca el catálogo, y vuelve a validar cada renglón.
+    async leerMenuDeFoto({ archivos = [], texto = '' } = {}) {
+        return await this.request('/importar-menu/leer', {
+            method: 'POST',
+            body: { archivos, texto },
+            // Una llamada al modelo por archivo, en fila. Seis fotos pueden pasar
+            // del minuto sin que nada esté fallando.
+            timeoutMs: 180000
+        });
+    }
+
+    async confirmarMenuLeido(productos) {
+        return await this.request('/importar-menu/confirmar', {
+            method: 'POST',
+            body: { productos },
+            timeoutMs: 60000
+        });
+    }
+
     async getModifiers() {
         return await this.request('/modifiers', { method: 'GET' });
     }
