@@ -7,6 +7,10 @@
    ============================================ */
 
 async function cargarDashboard() {
+    // La vista inicial no pasa por cambiarVista(): la invitación a importar el
+    // menú (§57.7) se pinta también desde aquí. Sin await: no retrasa el tablero.
+    if (typeof pintarEntradasMenuFoto === 'function') pintarEntradasMenuFoto();
+
     try {
         const stats = await obtenerEstadisticasWrapper(sucursalVistaActual);
         console.log('📊 Stats completos:', stats); // ⬅️ LÍNEA TEMPORAL DE DEBUG

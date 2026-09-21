@@ -211,6 +211,9 @@
                 <div id="branch-tabs-container" style="display:none;margin-bottom:16px;gap:8px;flex-wrap:wrap;"></div>
                 <!-- Aviso: estás MIRANDO otra sucursal; los registros siguen yendo a la tuya -->
                 <div id="branch-readonly-aviso" style="display:none;margin-bottom:16px;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;color:#92400e;font-size:0.88em;"></div>
+                <!-- Invitación a importar el menú (modulo-menu-foto.js): solo
+                     mientras el catálogo es chico, y se puede ocultar. -->
+                <div class="menufoto-aviso hidden" id="menufoto-aviso-dashboard" role="region" aria-label="Importar menú desde una foto"></div>
                 <!-- KPIs Principales -->
                 <div class="dashboard-kpis">
                     <div class="kpi-card">
@@ -637,6 +640,16 @@
 
             <section id="view-productos" class="view">
                 <div class="header-actions" style="margin-bottom: 20px; justify-content: flex-end;">
+                    <!-- EL MENÚ DESDE UNA FOTO (§57). El PRIMERO y en azul: para un
+                         negocio que empieza es la forma principal de dar de alta el
+                         catálogo — la de dos minutos frente a la de dos horas. Era
+                         gris y el dueño del producto no lo encontró (2026-09-19). -->
+                    <button class="btn-primary btn-importar-menu" onclick="abrirImportarMenu()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 5px;" aria-hidden="true">
+                            <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>
+                        </svg>
+                        Importar menú
+                    </button>
                     <!-- Biblioteca de modificadores (BLOQUE 11). Vive aquí y no en
                          Ajustes porque es parte del MENÚ: se configura junto a los
                          productos que la usan. -->
@@ -645,15 +658,6 @@
                             <path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/>
                         </svg>
                         Modificadores
-                    </button>
-                    <!-- EL MENÚ DESDE UNA FOTO (§57). Vive junto a "Nuevo Producto"
-                         porque es la otra forma de hacer lo mismo: dar de alta el
-                         catálogo. La de 60 productos a mano, y la de dos minutos. -->
-                    <button class="btn-secondary" onclick="abrirImportarMenu()">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 5px;">
-                            <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>
-                        </svg>
-                        Importar menú
                     </button>
                     <button class="btn-primary" id="btnNuevaCategoria">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus" style="display: inline-block; vertical-align: middle; margin-right: 5px;">
@@ -1371,6 +1375,21 @@
                     Define a qué hora corta el día en el dashboard, los reportes y los resúmenes automáticos.
                 </p>
             </div>
+        </div>
+
+        <!-- Tu menú (§57): la entrada FIJA al importador, para quien lo busca
+             después de haber ocultado la invitación. Solo el dueño. -->
+        <div class="ajustes-card" id="card-menu-foto">
+            <h3>Tu menú</h3>
+            <div class="menufoto-tarjeta">
+                <div class="menufoto-aviso-icono">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>
+                    </svg>
+                </div>
+                <p>Sube la foto o el PDF de tu menú y Zenit da de alta tus productos. Revisas cada uno antes de guardar.</p>
+            </div>
+            <button class="btn-primary btn-importar-menu" style="width:100%;" onclick="abrirImportarMenu()">Importar menú</button>
         </div>
 
         <!-- Impuestos (BLOQUE 8) — configuración de la CUENTA, solo el dueño -->

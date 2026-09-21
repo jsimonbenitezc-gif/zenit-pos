@@ -29,6 +29,94 @@ const MENUFOTO_MAX_BYTES = 6 * 1024 * 1024;
 let menuFotoArchivos = [];    // [{nombre, mime, datos(base64), bytes}]
 let menuFotoPropuesta = null; // lo que devolvió el servidor, ya editable
 
+// ── Por dónde se llega (2026-09-19) ──────────────────────────────────────────
+//
+// El dueño del producto abrió la app y NO encontró el botón: era gris, pesaba lo
+// mismo que "Modificadores" y vivía solo en Productos. Para un negocio que
+// empieza es la forma PRINCIPAL de cargar el menú, así que ahora hay tres
+// entradas, y cada una tiene su motivo:
+//
+//   · Productos → el botón, destacado y el PRIMERO de la fila. Es donde se
+//     busca. Aquí NO va el aviso: la primera versión lo ponía y quedaban dos
+//     botones idénticos a 80 px uno del otro, que es ruido, no ayuda.
+//   · Dashboard → un aviso que EXPLICA qué hace, SOLO mientras el catálogo es
+//     chico. Una instalación nueva ya trae 4 productos de ejemplo, así que
+//     "catálogo vacío" no ocurre nunca: por eso se mira el tamaño, no el cero.
+//   · Ajustes → una tarjeta fija, para quien lo busca después de haber ocultado
+//     el aviso.
+//
+// ⚠️ El aviso se puede OCULTAR y se queda oculto. Un aviso que no se puede
+// quitar deja de leerse a la tercera vez (§41.4d): la gracia es que aparezca
+// cuando ahorra dos horas, no que acompañe al negocio para siempre.
+
+const MENUFOTO_CATALOGO_CHICO = 12;                     // hasta aquí, casi seguro no ha cargado su menú
+const MENUFOTO_AVISO_OCULTO = 'zenit_menufoto_aviso_oculto';
+
+function _menuFotoAvisoOculto() {
+    try { return localStorage.getItem(MENUFOTO_AVISO_OCULTO) === '1'; } catch { return false; }
+}
+
+function ocultarAvisoMenuFoto() {
+    try { localStorage.setItem(MENUFOTO_AVISO_OCULTO, '1'); } catch { /* sin almacenamiento: se oculta solo esta vez */ }
+    document.querySelectorAll('.menufoto-aviso').forEach(el => el.classList.add('hidden'));
+}
+
+/** Cuántos productos tiene el equipo. Lo LOCAL, que es instantáneo (§19.36). */
+async function _menuFotoCuantosProductos() {
+    try {
+        const cats = await window.api.obtenerProductosAgrupados();
+        return (cats || []).reduce((n, c) => n + ((c && c.productos) || []).length, 0);
+    } catch {
+        return Infinity; // si no se puede saber, no se molesta a nadie
+    }
+}
+
+const _MENUFOTO_ICONO = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>
+    </svg>`;
+
+/**
+ * Pinta las entradas al importador en la vista que se esté viendo.
+ * No lanza nunca: una invitación que falla no puede estorbar a nadie.
+ */
+async function pintarEntradasMenuFoto() {
+    try {
+        const esDueno = (typeof rolActivo === 'undefined') || rolActivo === 'dueno';
+
+        // La tarjeta de Ajustes: siempre para el dueño. En modo local el botón
+        // explica que hace falta la cuenta, que es justo lo que hay que saber.
+        const tarjeta = document.getElementById('card-menu-foto');
+        if (tarjeta) tarjeta.classList.toggle('hidden', !esDueno);
+
+        const avisos = document.querySelectorAll('.menufoto-aviso');
+        if (!avisos.length) return;
+
+        const mostrar = esDueno
+            && _menuFotoDisponible()
+            && !_menuFotoAvisoOculto()
+            && (await _menuFotoCuantosProductos()) <= MENUFOTO_CATALOGO_CHICO;
+
+        avisos.forEach(el => {
+            if (mostrar && !el.dataset.pintado) {
+                el.innerHTML = `
+                    <div class="menufoto-aviso-icono">${_MENUFOTO_ICONO}</div>
+                    <div class="menufoto-aviso-texto">
+                        <strong>Carga tu menú desde una foto</strong>
+                        <span>Zenit lee la foto o el PDF de tu menú y da de alta tus productos. Tú revisas todo antes de guardar.</span>
+                    </div>
+                    <button class="btn-primary" onclick="abrirImportarMenu()">Importar menú</button>
+                    <button class="menufoto-aviso-cerrar" onclick="ocultarAvisoMenuFoto()"
+                            aria-label="Ocultar este aviso" title="Ocultar este aviso">×</button>`;
+                el.dataset.pintado = '1';
+            }
+            el.classList.toggle('hidden', !mostrar);
+        });
+    } catch (e) {
+        console.warn('No se pudo pintar la invitación a importar el menú:', e && e.message);
+    }
+}
+
 // ── Entrar ───────────────────────────────────────────────────────────────────
 
 function _menuFotoDisponible() {
@@ -416,6 +504,9 @@ async function menuFotoConfirmar() {
         // Se bajan al SQLite local para poder venderlos sin internet.
         await sincronizarDesdeBackend().catch(() => {});
         await cargarProductosAdmin().catch(() => {});
+        // Con el menú ya cargado, el catálogo deja de ser "chico" y la
+        // invitación se retira sola: ya cumplió.
+        pintarEntradasMenuFoto();
         _menuFotoResultado(r);
         _menuFotoPaso('listo');
     } catch (e) {

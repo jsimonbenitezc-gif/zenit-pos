@@ -2563,3 +2563,108 @@ body.dark .receta-linea { background: #020617; border-color: #1e293b; }
     font-size: 0.9em;
     text-align: center;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   EL MENÚ DESDE UNA FOTO — las entradas (§57.7)
+
+   El botón lleva un degradado azul → violeta: los dos colores que la app ya usa
+   (el azul de las acciones y el violeta de las pestañas de sucursal), así que se
+   distingue de "Nuevo Producto" sin parecer de otra aplicación.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.btn-importar-menu {
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+}
+.btn-importar-menu:hover {
+    background: linear-gradient(135deg, #1d4ed8 0%, #6d28d9 100%);
+}
+.btn-importar-menu:focus-visible,
+.menufoto-aviso-cerrar:focus-visible {
+    outline: 3px solid #a5b4fc;
+    outline-offset: 2px;
+}
+
+/* La invitación: una tarjeta más, de la misma familia que los KPIs. */
+.menufoto-aviso {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    padding: 16px 18px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%);
+    border: 1px solid #dbeafe;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+.menufoto-aviso.hidden { display: none; }
+
+.menufoto-aviso-icono {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+}
+
+.menufoto-aviso-texto {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.menufoto-aviso-texto strong { color: #1e293b; font-size: 1em; }
+.menufoto-aviso-texto span   { color: #475569; font-size: 0.88em; line-height: 1.4; }
+
+.menufoto-aviso .btn-primary {
+    flex: none;
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+}
+
+.menufoto-aviso-cerrar {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    font-size: 1.3em;
+    line-height: 1;
+    cursor: pointer;
+}
+.menufoto-aviso-cerrar:hover { background: rgba(100, 116, 139, 0.12); color: #334155; }
+
+/* La tarjeta fija de Ajustes */
+.menufoto-tarjeta {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    margin: 4px 0 16px;
+}
+.menufoto-tarjeta p {
+    margin: 0;
+    color: #6b7280;
+    font-size: 0.88em;
+    line-height: 1.45;
+}
+
+/* Modo oscuro */
+body.dark .menufoto-aviso {
+    background: linear-gradient(135deg, #0f1e3d 0%, #1e1537 100%);
+    border-color: #1e3a8a;
+}
+body.dark .menufoto-aviso-texto strong { color: #f1f5f9; }
+body.dark .menufoto-aviso-texto span,
+body.dark .menufoto-tarjeta p          { color: #94a3b8; }
+body.dark .menufoto-aviso-cerrar       { color: #94a3b8; }
+body.dark .menufoto-aviso-cerrar:hover { background: rgba(148, 163, 184, 0.15); color: #e2e8f0; }
+
+/* Ventana angosta: el botón baja y la tarjeta no se aplasta */
+@media (max-width: 900px) {
+    .menufoto-aviso { flex-wrap: wrap; }
+    .menufoto-aviso-texto { flex-basis: calc(100% - 110px); }
+}

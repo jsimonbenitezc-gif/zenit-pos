@@ -1197,6 +1197,13 @@ function cambiarVista(vista) {
         v.classList.toggle('active', v.id === `view-${vista}`);
     });
 
+    // Cada vista empieza ARRIBA. Todas comparten el mismo contenedor con scroll
+    // (#main-container), así que sin esto una vista se abría a media página,
+    // heredando lo que se había bajado en la anterior — y lo que vive arriba
+    // (la invitación a importar el menú, los avisos de sucursal) no se veía.
+    const principal = document.getElementById('main-container');
+    if (principal) principal.scrollTop = 0;
+
     // 3. ACTUALIZACIÓN: Lógica específica por vista
     if (vista === 'dashboard') {
         cargarDashboard();
@@ -1256,6 +1263,10 @@ setTimeout(() => {
         }
     }
 
+
+    // Las entradas al importador de menú (§57.7) dependen de la vista y del
+    // tamaño del catálogo; se repintan al cambiar de vista, sin bloquear nada.
+    if (typeof pintarEntradasMenuFoto === 'function') pintarEntradasMenuFoto();
 
     // Actualizar el título de la cabecera
     const titulos = {

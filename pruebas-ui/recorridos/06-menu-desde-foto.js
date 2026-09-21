@@ -109,9 +109,58 @@ module.exports = {
         });
         const api = await backend.comoNegocio(correo, contrasena);
 
+        // ── Que se ENCUENTRE (2026-09-19) ────────────────────────────────────
+        // El dueño del producto abrió la app y no dio con el botón. Una función
+        // que nadie encuentra no existe, así que esto se afirma igual que el resto.
+        // Una cuenta nueva trae 4 productos de ejemplo: catálogo chico, invitación.
+        // Se llega DESDE Ajustes, que es larga y quedó bajada al crear la cuenta:
+        // así era como el tablero se abría a media página y el aviso, que vive
+        // arriba, quedaba fuera de la vista.
+        await irA(app, 'dashboard');
+        await w.waitForTimeout(800);
+        af.cierto('el DASHBOARD invita a importar el menú',
+            await w.locator('#menufoto-aviso-dashboard').isVisible(),
+            'un negocio con 4 productos de ejemplo no ve ninguna invitación en el tablero');
+        // "Visible" en Playwright es "pintado", no "a la vista": hay que mirar dónde cae.
+        const caja = await w.locator('#menufoto-aviso-dashboard').boundingBox();
+        const alto = await w.evaluate(() => window.innerHeight);
+        af.cierto('y se ve AL ENTRAR, sin tener que subir', Boolean(caja) && caja.y >= 0 && caja.y < alto,
+            'el aviso quedó en y=' + (caja && Math.round(caja.y)) + ' de una ventana de ' + alto +
+            ' px: el tablero se abrió a media página');
+        await app.foto('menu-aviso-dashboard');
+
+        await irA(app, 'productos');
+        const primerBoton = await w.locator('#view-productos .header-actions button').first().innerText();
+        af.cierto('en PRODUCTOS el botón es el PRIMERO de la fila', /Importar men/.test(primerBoton),
+            'el primer botón de Productos es "' + primerBoton.trim() + '"');
+        af.igual('y hay UNO solo, no dos iguales a la vista',
+            await w.locator('#view-productos button:visible:has-text("Importar menú")').count(), 1);
+
+        // Se oculta, y se queda oculto: es una decisión del dueño, no un capricho.
+        await irA(app, 'dashboard');
+        await w.click('#menufoto-aviso-dashboard .menufoto-aviso-cerrar');
+        af.cierto('el aviso se puede OCULTAR', !(await w.locator('#menufoto-aviso-dashboard').isVisible()),
+            'tocar la × no quitó el aviso');
+        await irA(app, 'productos');
+        await irA(app, 'dashboard');
+        af.cierto('y sigue oculto al volver al tablero',
+            !(await w.locator('#menufoto-aviso-dashboard').isVisible()),
+            'el dueño dijo que no y el tablero se lo vuelve a ofrecer');
+
+        // Ajustes: la entrada FIJA, para quien lo busca después de haberlo ocultado.
+        await irA(app, 'ajustes');
+        af.cierto('AJUSTES tiene su tarjeta, aunque el aviso esté oculto',
+            await w.locator('#card-menu-foto').isVisible(),
+            'con el aviso oculto ya no habría forma de encontrarlo fuera de Productos');
+        await w.click('#card-menu-foto .btn-importar-menu');
+        await w.waitForSelector('#modalMenuFoto:not(.hidden)');
+        af.cierto('y su botón abre el importador', true);
+        await w.click('#menufoto-paso-elegir button:has-text("Cancelar")');
+        await w.waitForSelector('#modalMenuFoto', { state: 'hidden' });
+
         // ── Elegir la foto ──────────────────────────────────────────────────
         await irA(app, 'productos');
-        await w.click('button:has-text("Importar menú")');
+        await w.click('#view-productos .header-actions .btn-importar-menu');
         await w.waitForSelector('#modalMenuFoto:not(.hidden)');
 
         const foto = fotoGrandePng();
