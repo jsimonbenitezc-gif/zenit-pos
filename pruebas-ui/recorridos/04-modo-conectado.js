@@ -17,7 +17,7 @@
 
 const {
     irA, crearCuenta, estaConectado, venderEnMostrador, cancelarPedido,
-    leerBase,
+    leerBase, crearMesas, abrirMesa, agregarProductosAMesa,
 } = require('../lib/cajero');
 
 const HAMBURGUESA = 85.00;
@@ -121,6 +121,36 @@ module.exports = {
         const cancelaciones = (auditoria.data || auditoria).filter((l) => l.action_type === 'cancel_order');
         af.cierto('la cancelación quedó AUDITADA en el servidor', cancelaciones.length === 1,
             'el registro de acciones sensibles tiene ' + cancelaciones.length + ' cancelaciones');
+
+        // ── Quitar un producto de una cuenta abierta deja RASTRO ─────────────
+        // PLAN_OFERTAS_V1, Bloque 0. Es el robo clásico de restaurante: el
+        // cliente paga lo que pidió, se borra un producto antes de cerrar y la
+        // diferencia se queda en la bolsa. La caja y el inventario cuadran, así
+        // que lo único que lo delata es la auditoría — y antes no había ninguna.
+        // Solo existe CONECTADO: en modo local la mesa vive en la SQLite.
+        await crearMesas(app, [{ nombre: 'Mesa Banco', zona: 'Interior', capacidad: 4 }]);
+        await abrirMesa(app, 'Mesa Banco', 2);
+        await agregarProductosAMesa(app, 'Mesa Banco', [
+            { nombre: 'Hamburguesa Clásica' }, { nombre: 'Coca Cola' },
+        ]);
+        const renglones = w.locator('#mesa-panel-items button[title="Eliminar"]');
+        af.igual('la mesa tiene los dos productos', await renglones.count(), 2);
+        await w.locator('#mesa-panel-items > div', { hasText: 'Coca Cola' })
+            .locator('button[title="Eliminar"]').click();
+        await w.waitForTimeout(2000);
+        af.igual('la mesa se quedó con un producto', await renglones.count(), 1);
+
+        const trasQuitar = await api.exigir('GET', '/api/audit');
+        const quitados = (trasQuitar.data || trasQuitar).filter((l) => l.action_type === 'remove_item');
+        af.cierto('quitar el refresco quedó AUDITADO en el servidor', quitados.length === 1,
+            'el registro de acciones sensibles tiene ' + quitados.length + ' productos quitados');
+        if (quitados.length === 1) {
+            const antes = JSON.parse(quitados[0].before_data || '{}');
+            af.igual('la auditoría dice QUÉ se quitó', antes.producto, 'Coca Cola');
+            af.dinero('y cuánto valía', antes.importe, COCA);
+            af.cierto('y a nombre de quién', Boolean(quitados[0].employee_name),
+                'el renglón de auditoría no tiene nombre');
+        }
 
         await base.cerrar();
     },

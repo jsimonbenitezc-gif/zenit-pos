@@ -110,6 +110,27 @@ function cancelarPinEmpleado() {
 // AUDITORÍA — Cargar logs en dashboard
 // ============================================
 
+// Cómo se llama cada acción auditada. Una sola tabla para la lista y para el
+// reporte (antes eran dos copias). Lo que no esté aquí sale con su nombre
+// técnico, así que cada action_type nuevo del backend se agrega aquí también.
+function _tiposAuditoria() {
+    return {
+        cancel_order:         { icon: '🔴', label: 'Pedido cancelado' },
+        return_order:         { icon: '↩️', label: 'Devolución' },
+        edit_customer:        { icon: svgIconHTML('document-text', 16), label: 'Cliente editado' },
+        inventory_adjustment: { icon: svgIconHTML('package', 16), label: 'Ajuste de inventario' },
+        apply_discount:       { icon: svgIconHTML('tag', 16), label: 'Descuento aplicado' },
+        // PLAN_OFERTAS_V1, Bloque 0
+        discount_mismatch:    { icon: svgIconHTML('triangle-alert', 16), label: 'Descuento mayor al configurado' },
+        remove_item:          { icon: '➖', label: 'Producto quitado de una cuenta' },
+        offline_price:        { icon: svgIconHTML('triangle-alert', 16), label: 'Precio distinto al del catálogo' },
+        cash_movement:        { icon: '💵', label: 'Movimiento de caja' },
+        cash_movement_void:   { icon: '💵', label: 'Movimiento de caja anulado' },
+        approve_kds_device:   { icon: '🖥️', label: 'Pantalla de cocina autorizada' },
+        revoke_kds_device:    { icon: '🖥️', label: 'Pantalla de cocina revocada' },
+    };
+}
+
 async function cargarAuditLog() {
     const lista = document.getElementById('alertas-audit-list');
     if (!lista) return;
@@ -128,12 +149,7 @@ async function cargarAuditLog() {
             return;
         }
 
-        const TIPOS = {
-            cancel_order:         { icon: '🔴', label: 'Pedido cancelado' },
-            edit_customer:        { icon: svgIconHTML('document-text', 16), label: 'Cliente editado' },
-            inventory_adjustment: { icon: svgIconHTML('package', 16), label: 'Ajuste de inventario' },
-            apply_discount:       { icon: svgIconHTML('tag', 16), label: 'Descuento aplicado' }
-        };
+        const TIPOS = _tiposAuditoria();
 
         // Guardar logs en cache para modal de reporte
         window._auditLogsCache = logs;
@@ -177,12 +193,7 @@ function abrirReporteAudit(idx) {
     const log = window._auditLogsCache?.[idx];
     if (!log) return;
 
-    const TIPOS = {
-        cancel_order:         { icon: '🔴', label: 'Pedido cancelado' },
-        edit_customer:        { icon: svgIconHTML('document-text', 16), label: 'Cliente editado' },
-        inventory_adjustment: { icon: svgIconHTML('package', 16), label: 'Ajuste de inventario' },
-        apply_discount:       { icon: svgIconHTML('tag', 16), label: 'Descuento aplicado' }
-    };
+    const TIPOS = _tiposAuditoria();
     const tipo    = TIPOS[log.action_type] || { icon: '🔒', label: log.action_type };
     const sucursal = log.branch?.name || 'Sucursal principal';
     const fecha   = new Date(log.createdAt).toLocaleString('es-MX', {

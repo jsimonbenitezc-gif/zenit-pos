@@ -532,8 +532,14 @@ class APIClient {
         });
     }
 
-    async removeOrderItem(orderId, itemId) {
-        return await this.request(`/orders/${orderId}/items/${itemId}`, { method: 'DELETE' });
+    // `nombreEnPuesto` va a la auditoría (PLAN_OFERTAS_V1, Bloque 0): quitar un
+    // producto de una cuenta ya deja rastro, y sin él quedaría a nombre de la
+    // cuenta del negocio, no de quien estaba en la caja.
+    async removeOrderItem(orderId, itemId, nombreEnPuesto = '') {
+        return await this.request(`/orders/${orderId}/items/${itemId}`, {
+            method: 'DELETE',
+            body: nombreEnPuesto ? { employee_name: nombreEnPuesto } : undefined,
+        });
     }
 
     // Cobrar una mesa. El método de pago y la propina se deciden AQUÍ, al cobrar,

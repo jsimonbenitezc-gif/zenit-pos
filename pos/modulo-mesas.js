@@ -439,7 +439,7 @@ async function eliminarItemDeMesa(item_id) {
     if (!_pedidoMesaActivo) return;
     try {
         if (modoConectado && apiClient && tokenActual) {
-            const updated = await apiClient.removeOrderItem(_pedidoMesaActivo.id, item_id);
+            const updated = await apiClient.removeOrderItem(_pedidoMesaActivo.id, item_id, nombreActivo || '');
             _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(updated);
         } else {
             await window.api.eliminarItemMesa(item_id, _pedidoMesaActivo.id);
