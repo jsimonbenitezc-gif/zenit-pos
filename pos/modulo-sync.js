@@ -257,6 +257,8 @@ async function sincronizarDesdeBackend() {
             if (descuentos) await window.api.syncDescuentos(descuentos);
             await _reconciliarDescuentosLocales(descuentos);
             if (combos) await window.api.syncCombos(combos);
+            // Las promos que la caja ofrece salen de ese espejo (PLAN_OFERTAS_V1).
+            if (typeof cargarPromosLocales === 'function') await cargarPromosLocales().catch(() => {});
         }
 
         // El catálogo de modificadores se guarda ENTERO en la SQLite: sin él, la
@@ -322,6 +324,12 @@ async function sincronizarDesdeBackend() {
                 await window.api.guardarAjuste('horario_operacion', r.horario ? JSON.stringify(r.horario) : '');
             }
             if (typeof cargarHorarioDesdeAjustes === 'function') await cargarHorarioDesdeAjustes();
+
+            // Juntar ofertas (PLAN_OFERTAS_V1 §3.4): el descuento de la cuenta y la
+            // promo tienen que calcularse igual sin internet que con él.
+            if (ajustesNegocio.ofertas_acumulables !== undefined) {
+                await window.api.guardarAjuste('ofertas_acumulables', ajustesNegocio.ofertas_acumulables === true || ajustesNegocio.ofertas_acumulables === 'true' ? 'true' : 'false');
+            }
         }
 
         if (pedidosBackend) {
@@ -468,7 +476,12 @@ async function subirPedidosPendientes() {
                     // sincronizada sin haberse creado en el backend).
                     skip_stock_check: true
                 };
-                const itemsAPI = items.map(i => ({
+                // PROMOS (PLAN_OFERTAS_V1): los renglones de una promo vendida se
+                // vuelven a juntar en UNO de promo, con lo que de verdad se cobró
+                // (`promo_price`) y el precio de lista de cada producto. Como la
+                // venta es diferida, el servidor respeta ese precio y lo audita si
+                // no cuadra — nunca la rechaza (§26, §60.1).
+                const itemsAPI = renglonesParaSubir(items, i => ({
                     product_id: i.producto_id,
                     quantity: i.cantidad,
                     // ⚠️ `unit_price` es el precio BASE, sin los extras (BLOQUE 11):

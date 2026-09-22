@@ -24,8 +24,14 @@ async function cargarCatalogoVenta() {
         });
         renderizarFiltrosCategorias();
         renderizarGridVenta(productosGlobales);
+        // Las promos dependen del catálogo (un hueco sin productos no se ofrece).
+        if (typeof renderizarPromosVenta === 'function') renderizarPromosVenta();
         renderizarCarrito();
     };
+
+    // Promos (PLAN_OFERTAS_V1): de la SQLite, igual que el catálogo, para que la
+    // caja las tenga aunque el servidor esté dormido.
+    if (typeof cargarPromosLocales === 'function') await cargarPromosLocales();
 
     // ⚠️ LA PANTALLA DE VENTA SE PINTA CON LO LOCAL Y NO ESPERA AL SERVIDOR.
     //
@@ -336,7 +342,7 @@ function agregarAlCarrito(productoId) {
 /** Reabre el selector para cambiar los extras de un renglón ya en el carrito. */
 function editarModificadoresCarrito(index) {
     const item = carrito[index];
-    if (!item) return;
+    if (!item || item.tipo === 'promo') return;
     const producto = productosGlobales.find(p => p.id === item.id);
     if (!producto) return;
 
@@ -378,7 +384,12 @@ function _baseGravableCarrito() {
 function _descuentosDelCarrito() {
     const suma = carrito.reduce((sum, i) => sum + i.precio, 0);
     const puntos = Math.min(Math.max(descuentoPuntosVenta || 0, 0), suma);
-    const promocion = Math.min(Math.max(descuentoActual || 0, 0), suma - puntos);
+    // JUNTAR OFERTAS (PLAN_OFERTAS_V1 §3.4): con el interruptor apagado, el
+    // descuento no alcanza a lo que ya está en promo. El tope es la MISMA base
+    // del servidor (`montoMaximo` sobre `baseDescuento`): un "Cortesía $50" sobre
+    // una promo de $35 y un refresco de $20 descuenta $20, no $50.
+    const baseDesc = typeof baseDescuentoDe === 'function' ? baseDescuentoDe(carrito) : suma;
+    const promocion = Math.min(Math.max(descuentoActual || 0, 0), suma - puntos, baseDesc);
     return {
         suma,
         puntos,
@@ -549,12 +560,36 @@ function renderizarCarrito() {
         if (descuentoEl) descuentoEl.innerText = '-$0.00';
         if (filaImpuestoEl) filaImpuestoEl.classList.add('hidden');
         totalEl.innerText = '$0.00';
+        if (typeof pintarSugerenciaPromo === 'function') pintarSugerenciaPromo();
         return;
     }
 
     let subtotal = 0;
     contenedor.innerHTML = carrito.map((item, index) => {
         subtotal += item.precio;
+        // PROMO (PLAN_OFERTAS_V1): UN renglón en la pantalla, con sus productos
+        // debajo. Quitarlo quita la promo entera; no hay "medio 2x1".
+        if (item.tipo === 'promo') {
+            const lineas = item.productos.map(p => {
+                const extras = resumenModificadores(p.modificadores);
+                return `<div class="cart-promo-producto">· ${esc(p.nombre)}${extras ? ` <span style="color:#b45309;">(${esc(extras)})</span>` : ''}</div>`;
+            }).join('');
+            return `
+        <div class="cart-item cart-promo" data-promo-group="${esc(item.promo_group)}">
+            <div class="cart-qty">🎁</div>
+            <div class="cart-info">
+                <h5>${esc(item.nombre)}</h5>
+                ${lineas}
+                <div class="cart-price">$${item.precio.toFixed(2)}</div>
+                ${item.ahorro > 0 ? `<div class="cart-promo-ahorro">Ahorra $${item.ahorro.toFixed(2)}</div>` : ''}
+            </div>
+            <div class="cart-actions">
+    <button class="btn-ticket-action" onclick="eliminarDelCarrito(${index})" title="Quitar la promo" style="display:flex; align-items:center; justify-content:center; color:#ef4444;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+    </button>
+</div>
+        </div>`;
+        }
         // Los extras se listan bajo el nombre y el renglón es clicable para
         // cambiarlos: corregir un "extra queso" mal marcado no debería obligar a
         // borrar el producto y volver a agregarlo.
@@ -603,6 +638,9 @@ function renderizarCarrito() {
         }
     }
     totalEl.innerText = `$${totalFinal.toFixed(2)}`;
+
+    // "¿Convertir a 2x1?" — solo si hay productos sueltos que llenan una promo.
+    if (typeof pintarSugerenciaPromo === 'function') pintarSugerenciaPromo();
 
     // Actualizar panel de puntos si hay cliente inscrito
     if (clienteSeleccionadoVenta?.enFidelidad) actualizarPanelPuntosVenta();
@@ -681,6 +719,24 @@ async function procesarVenta() {
     // Sin sucursal la venta quedaría huérfana (y el backend la rechazaría al subirla,
     // incluso si se registró offline). Se avisa ANTES de cobrar. Ver CLAUDE.md §24.
     if (!(await verificarSucursalParaRegistrar())) return;
+
+    // Una promo que se armó a las 7:59 y se cobra a las 8:01 ya terminó. Se AVISA
+    // y decide la cajera (§37: un POS que se niega a cobrar hace más daño): el
+    // servidor la registra igual, porque la venta del desktop es diferida, y la
+    // deja en la auditoría (§60.1).
+    if (typeof promosActivasAhora === 'function') {
+        const vivas = new Set(promosActivasAhora().map(p => p.id));
+        const vencidas = carrito.filter(i => i.tipo === 'promo' && !vivas.has(i.promo_id)).map(i => i.nombre);
+        if (vencidas.length) {
+            const seguir = await confirmarZenit(
+                'La promo "' + vencidas.join('", "') + '" ya no está disponible a esta hora.\n\n' +
+                'Puedes quitarla del ticket y cobrar los productos sueltos, o cobrarla así y quedará registrada en Auditoría.',
+                'Promo fuera de horario',
+                { textoOk: 'Cobrar así', textoCancelar: 'Volver al ticket' }
+            );
+            if (!seguir) return;
+        }
+    }
 
     const total = _totalACobrar();
     document.getElementById('pago-total-display').innerText = `$${total.toFixed(2)}`;
@@ -1033,17 +1089,10 @@ async function ejecutarVenta() {
             cajero: nombreActivo || null
         };
 
-        const itemsParaDB = carrito.map(i => ({
-            id: i.id,
-            cantidad: 1,
-            // `precio` ya trae los extras sumados; `precio_base` es el del
-            // catálogo, y el par permite desglosarlo en el ticket (BLOQUE 11).
-            precio: i.precio,
-            precio_base: i.precio_base != null ? i.precio_base : i.precio,
-            modificadores: i.modificadores || [],
-            subtotal: i.precio,
-            nota: i.nota || ''
-        }));
+        // `precio` ya trae los extras sumados; `precio_base` es el del catálogo, y
+        // el par permite desglosarlo en el ticket (BLOQUE 11). Una promo se vuelve
+        // UN renglón por producto con su parte del precio (PLAN_OFERTAS_V1 §3.1).
+        const itemsParaDB = aplanarCarrito(carrito);
 
         const pedidoResultado = await crearPedidoWrapper(datosPedido, itemsParaDB);
         // crearPedidoWrapper ahora guarda LOCAL de inmediato y sincroniza con el
@@ -1063,7 +1112,8 @@ async function ejecutarVenta() {
             notas: datosPedido.notas_generales || null,
             // La cocina necesita ver los extras MÁS que nadie: un "sin cebolla"
             // que no llega al pasador se convierte en un plato devuelto.
-            items: carrito.map(i => ({
+            // Una promo son varios productos para la cocina: se cocinan dos tacos.
+            items: itemsParaDB.map(i => ({
                 nombre: i.nombre,
                 cantidad: 1,
                 modificadores: resumenModificadores(i.modificadores),
@@ -1138,13 +1188,18 @@ async function abrirModalDescuento() {
     // Cargar descuentos predefinidos (solo pre-creados en Ofertas)
     const contenedor = document.getElementById('descuentos-rapidos');
     try {
-        const descuentos = await window.api.obtenerDescuentos();
+        // Solo los vigentes AHORA: el "10% los lunes" no aparece el martes (§3.3).
+        const descuentos = (await window.api.obtenerDescuentos() || [])
+            .filter(d => typeof descuentoVigenteLocal !== 'function' || descuentoVigenteLocal(d));
         if (!descuentos || !descuentos.length) {
             contenedor.innerHTML = `<div style="color:#9ca3af;font-size:0.85em;padding:8px;">
                 No tienes descuentos creados. Ve a <strong>Ofertas → Descuentos</strong> para crearlos.
             </div>`;
         } else {
-            const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
+            // La MISMA base que el cobro y el servidor (§3.4 del plan).
+            const subtotal = typeof baseDescuentoDe === 'function'
+                ? baseDescuentoDe(carrito)
+                : carrito.reduce((sum, i) => sum + i.precio, 0);
             contenedor.innerHTML = descuentos.map(d => {
                 const montoCalc = d.tipo === 'porcentaje'
                     ? (subtotal * d.valor / 100).toFixed(2)
@@ -1191,7 +1246,11 @@ async function aplicarDescuentoRapido(pct, monto, nombre, requiresPin, descuento
 }
 
 async function _aplicarDescuentoFinal(pct, monto, nombre, autorizado, descuentoId = null) {
-    const subtotal = carrito.reduce((sum, i) => sum + i.precio, 0);
+    // El porcentaje se calcula sobre la MISMA base que usa el servidor: sin lo
+    // que ya está en promo, salvo que el dueño junte ofertas (§3.4 del plan).
+    const subtotal = typeof baseDescuentoDe === 'function'
+        ? baseDescuentoDe(carrito)
+        : carrito.reduce((sum, i) => sum + i.precio, 0);
     descuentoActual = pct > 0 ? (subtotal * pct / 100) : monto;
     // Guardar el id del descuento: es la autorización que el backend exige para
     // aceptar el monto (evita tener que guardar el PIN en la cola offline).
@@ -1271,7 +1330,7 @@ async function mostrarModalImpresion(pedidoId) {
     try {
         const ajustes = await window.api.obtenerAjustes();
         if (ajustes && ajustes.impresora_auto === 'true') {
-            imprimirTicket(pedidoId);
+            imprimirTicket(pedidoId, { local: true });
             return;
         }
     } catch (e) {
@@ -1296,7 +1355,7 @@ async function mostrarModalImpresion(pedidoId) {
         btnNo.onclick = null;
     };
 
-    btnSi.onclick = () => { cerrar(); imprimirTicket(pedidoId); };
+    btnSi.onclick = () => { cerrar(); imprimirTicket(pedidoId, { local: true }); };
     btnNo.onclick = () => cerrar();
 }
 

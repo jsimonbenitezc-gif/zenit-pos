@@ -969,9 +969,15 @@ async function _sincronizarAjustesDesdeCloud() {
             tax_included: s.tax_included, tax_name: s.tax_name,
             propinas_activas: s.propinas_activas,
             propina_sugerencias: s.propina_sugerencias === undefined ? undefined : JSON.stringify(s.propina_sugerencias),
+            // Juntar ofertas (PLAN_OFERTAS_V1 §3.4): el dueño lo cambia y la caja
+            // tiene que descontar con la regla nueva desde la siguiente venta.
+            ofertas_acumulables: s.ofertas_acumulables,
         };
         for (const [k, v] of Object.entries(guardables)) {
             if (v !== undefined) window.api.guardarAjuste(k, String(v)).catch(() => {});
+        }
+        if (s.ofertas_acumulables !== undefined && typeof ofertasAcumulables !== 'undefined') {
+            ofertasAcumulables = s.ofertas_acumulables === true || s.ofertas_acumulables === 'true';
         }
         // Releer la config de impuesto ya guardada y repintar el carrito abierto:
         // el cajero no debe cobrar con la tasa vieja el resto del turno.

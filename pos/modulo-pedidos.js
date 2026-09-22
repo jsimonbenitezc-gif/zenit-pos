@@ -319,7 +319,17 @@ async function verDetallePedido(id, cliente, total, metodo) {
 
     try {
         const productos = await obtenerDetallePedidoWrapper(id);
-        lista.innerHTML = productos.map(item => `
+        // Una promo se enseña JUNTA (PLAN_OFERTAS_V1): dos tacos de $14.58 y
+        // $20.42 sueltos confunden más de lo que explican.
+        const promos = agruparRenglones(productos).filter(g => g.promo).map(g => `
+            <div class="item-detalle">
+                <div class="info-prod">
+                    <span><strong>1x</strong> 🎁 ${esc(g.promo.nombre)}</span>
+                    <span class="nota-prod">${g.items.map(it => esc(it.nombre)).join(' + ')}${g.promo.ahorro > 0 ? ' · ahorró $' + g.promo.ahorro.toFixed(2) : ''}</span>
+                </div>
+                <span>$${g.promo.total.toFixed(2)}</span>
+            </div>`).join('');
+        lista.innerHTML = promos + productos.filter(item => !item.promo_group).map(item => `
             <div class="item-detalle">
                 <div class="info-prod">
                     <span><strong>${item.cantidad || 1}x</strong> ${esc(item.nombre)}</span>

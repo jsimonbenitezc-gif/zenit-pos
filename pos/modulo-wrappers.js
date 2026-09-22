@@ -22,6 +22,11 @@ async function obtenerProductosAgrupadosWrapper() {
                     descripcion: p.descripcion || p.description,
                     precio: parseFloat(p.precio || p.price),
                     stock: p.stock,
+                    // La categoría del producto: sin ella, una promo "2 de
+                    // [Tacos]" no encontraría ningún taco en cuanto el catálogo
+                    // se repinta desde la nube (PLAN_OFERTAS_V1).
+                    clasificacion_id: p.clasificacion_id != null ? p.clasificacion_id
+                        : (p.category_id != null ? p.category_id : (cat.id != null ? cat.id : null)),
                     emoji: p.emoji,
                     imagen: p.imagen || p.image,
                     activo: p.activo !== undefined ? p.activo : p.active
@@ -263,7 +268,13 @@ async function obtenerDetallePedidoWrapper(id) {
                 // cual (TEXT JSON): `leerModificadores` los interpreta al pintar.
                 modificadores: item.modifiers || null,
                 precio_base: item.base_unit_price != null ? parseFloat(item.base_unit_price) : null,
-                subtotal: parseFloat(item.subtotal)
+                subtotal: parseFloat(item.subtotal),
+                // Promo con la que se vendió (PLAN_OFERTAS_V1): el ticket y el
+                // historial la agrupan y calculan el "Ahorraste".
+                promo_id: item.promo_id || null,
+                promo_group: item.promo_group || null,
+                promo_name: item.promo_name || null,
+                precio_lista: item.list_price != null ? parseFloat(item.list_price) : null,
             }));
         } catch (error) {
             console.error('Error al obtener detalle pedido del backend:', error);

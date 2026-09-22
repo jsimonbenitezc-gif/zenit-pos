@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld('api', {
     eliminarDescuentoDefinitivo: (id) => ipcRenderer.invoke('eliminar-descuento-definitivo', id),
     // OFERTAS — COMBOS
     obtenerCombos: () => ipcRenderer.invoke('obtener-combos'),
+    obtenerPromosVenta: () => ipcRenderer.invoke('obtener-promos-venta'),
     agregarCombo: (d) => ipcRenderer.invoke('agregar-combo', d),
     actualizarCombo: (id, d) => ipcRenderer.invoke('actualizar-combo', id, d),
     eliminarCombo: (id) => ipcRenderer.invoke('eliminar-combo', id),
@@ -176,7 +177,7 @@ contextBridge.exposeInMainWorld('api', {
     eliminarMesa:        (id)                    => ipcRenderer.invoke('eliminar-mesa', id),
     obtenerPedidoMesa:   (mesa_id)               => ipcRenderer.invoke('obtener-pedido-mesa', mesa_id),
     abrirPedidoMesa:     (m, nom, caj, com, not, imp) => ipcRenderer.invoke('abrir-pedido-mesa', m, nom, caj, com, not, imp),
-    agregarItemMesa:     (ped, prod, cant, px, n, mods, pxBase) => ipcRenderer.invoke('agregar-item-mesa', ped, prod, cant, px, n, mods, pxBase),
+    agregarItemMesa:     (ped, prod, cant, px, n, mods, pxBase, promo) => ipcRenderer.invoke('agregar-item-mesa', ped, prod, cant, px, n, mods, pxBase, promo),
     eliminarItemMesa:    (item, ped)              => ipcRenderer.invoke('eliminar-item-mesa', item, ped),
     cerrarPedidoMesa:    (ped, metodo, propina, propinaMetodo, pagos) => ipcRenderer.invoke('cerrar-pedido-mesa', ped, metodo, propina, propinaMetodo, pagos),
     transferirMesa:      (ped, nueva)             => ipcRenderer.invoke('transferir-mesa', ped, nueva),

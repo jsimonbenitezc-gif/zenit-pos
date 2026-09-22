@@ -528,6 +528,10 @@ ipcMain.handle('eliminar-descuento', async (_, id) => {
 ipcMain.handle('eliminar-descuento-definitivo', async (_, id) => {
     return new Promise((res, rej) => db.eliminarDescuentoDefinitivo(id, (err) => err ? rej(err) : res(true)));
 });
+// Promos de la venta (PLAN_OFERTAS_V1): combos activos con sus productos fijos.
+ipcMain.handle('obtener-promos-venta', async () => {
+    return new Promise((res, rej) => db.obtenerPromosVenta((err, rows) => err ? rej(err) : res(rows)));
+});
 ipcMain.handle('obtener-combos', async () => {
     return new Promise((res, rej) => db.obtenerCombos((err, rows) => err ? rej(err) : res(rows)));
 });
@@ -1004,8 +1008,8 @@ ipcMain.handle('abrir-pedido-mesa', (_, mesa_id, mesa_nombre, cajero, comensales
     new Promise((res, rej) => db.abrirPedidoMesa(mesa_id, mesa_nombre, cajero, comensales, notas, impuesto, (e, id) => e ? rej(e) : res(id))));
 // `precio` llega YA con los modificadores sumados (BLOQUE 11); `modificadores`
 // es la selección congelada y `precioBase` el precio del catálogo.
-ipcMain.handle('agregar-item-mesa', (_, pedido_id, producto_id, cantidad, precio, nota, modificadores, precioBase) =>
-    new Promise((res, rej) => db.agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, (e) => e ? rej(e) : res(true), modificadores, precioBase)));
+ipcMain.handle('agregar-item-mesa', (_, pedido_id, producto_id, cantidad, precio, nota, modificadores, precioBase, promo) =>
+    new Promise((res, rej) => db.agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, (e) => e ? rej(e) : res(true), modificadores, precioBase, promo)));
 ipcMain.handle('eliminar-item-mesa', (_, item_id, pedido_id) =>
     new Promise((res, rej) => db.eliminarItemMesa(item_id, pedido_id, (e) => e ? rej(e) : res(true))));
 ipcMain.handle('cerrar-pedido-mesa', (_, pedido_id, metodo, propina, propinaMetodo, pagos) =>

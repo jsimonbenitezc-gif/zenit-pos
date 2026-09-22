@@ -71,6 +71,9 @@ const sandbox = {
     asignacionItems: {},
 };
 vm.createContext(sandbox);
+// `_unidadesDeLaCuenta` junta las promos en una sola unidad (PLAN_OFERTAS_V1)
+// con `agruparRenglones`, que vive en modulo-promos.js: se carga el archivo real.
+vm.runInContext(fs.readFileSync(path.join(RAIZ, 'modulo-promos.js'), 'utf8'), sandbox);
 vm.runInContext(codigoPagos + codigoMesas, sandbox);
 
 console.log('\n── Las unidades ──');

@@ -685,6 +685,10 @@
                         
                         <div id="filtros-categorias" class="cat-filters"></div>
 
+                        <!-- Promos activas AHORA (PLAN_OFERTAS_V1). Fuera de su
+                             horario no existen en la pantalla. -->
+                        <div id="promos-venta" class="promos-venta hidden"></div>
+
                         <div id="grid-venta" class="productos-grid compact"></div>
                     </div>
 
@@ -722,6 +726,9 @@
                         <div id="carrito-items" class="ticket-items">
                             <div class="empty-cart-msg">El carrito está vacío</div>
                         </div>
+
+                        <!-- "¿Convertir a 2x1?": solo sugiere; la cajera decide. -->
+                        <div id="promo-sugerencia" class="promo-sugerencia hidden"></div>
 
                         <div class="cart-summary">
                             <div class="summary-row">
@@ -772,7 +779,7 @@
         </button>
         <button class="inv-tab" onclick="cambiarTabOfertas('combos', this)">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:6px;"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
-            Combos
+            Promos
         </button>
     </div>
 
@@ -800,23 +807,35 @@
         </div>
     </div>
 
-    <!-- TAB: COMBOS -->
+    <!-- TAB: PROMOS (PLAN_OFERTAS_V1) — sustituye a la de combos: un combo
+         es una promo de precio fijo. -->
     <div id="oferta-panel-combos" class="inv-panel" style="display:none;">
         <div class="table-card">
             <div class="table-header">
                 <div>
-                    <h3 style="margin:0; font-size:1.1em;">Combos y Paquetes</h3>
-                    <p style="margin:4px 0 0; color:#6b7280; font-size:0.85em;">Agrupa productos con un precio especial. Aparecen en Nueva Venta como un producto independiente</p>
+                    <h3 style="margin:0; font-size:1.1em;">Promos</h3>
+                    <p style="margin:4px 0 0; color:#6b7280; font-size:0.85em;">"Martes 2x1 en tacos": aparecen en Nueva Venta como un botón, solo en su día y su hora</p>
                 </div>
-                <button class="btn-primary" onclick="abrirModalNuevoCombo()">+ Nuevo Combo</button>
+                <button class="btn-primary" id="btn-nueva-promo" onclick="abrirModalPromo()">+ Nueva promo</button>
+            </div>
+            <div class="setting-item" style="margin:0 0 12px;">
+                <div>
+                    <span>¿Los descuentos también se aplican a los productos que ya están en promoción?</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Apagado: un "10%" de la cuenta solo descuenta lo que no está en promo. Los puntos se pueden usar siempre.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-ofertas-acumulables" onchange="guardarOfertasAcumulables(this.checked)">
+                    <span class="slider"></span>
+                </label>
             </div>
             <table class="zenit-table">
                 <thead>
                     <tr>
                         <th>Nombre</th>
-                        <th>Descripción</th>
-                        <th>Precio Especial</th>
-                        <th>Productos</th>
+                        <th>Qué lleva</th>
+                        <th>Cobro</th>
+                        <th>Cuándo</th>
+                        <th>Ahora</th>
                         <th>Acciones</th>
                     </tr>
                 </thead>
@@ -2796,6 +2815,7 @@
 <script src="modulo-horarios.js"></script>
 <script src="modulo-pagos.js"></script>
 <script src="modulo-modificadores.js"></script>
+<script src="modulo-promos.js"></script>
 <script src="modulo-dashboard.js"></script>
 <script src="modulo-productos.js"></script>
 <script src="modulo-menu-foto.js"></script>
@@ -3112,6 +3132,26 @@
                     <p style="color:#9ca3af;font-size:0.78em;margin:0;">Al aplicar este descuento, se pedirá el PIN de un empleado autorizado</p>
                 </div>
             </div>
+            <div class="cal-editor">
+                <label style="font-weight:600; font-size:0.9em;">¿Cuándo?</label>
+                <div style="display:flex; gap:16px; margin:6px 0;">
+                    <label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="radio" name="dcal-cuando" id="dcal-siempre" checked onchange="alternarEditorCalendario('dcal')"> Siempre</label>
+                    <label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="radio" name="dcal-cuando" id="dcal-con" onchange="alternarEditorCalendario('dcal')"> Solo algunos días u horas</label>
+                </div>
+                <div id="dcal-detalle" style="display:none; flex-direction:column; gap:8px;">
+                    <div class="cal-dias">
+                        <label class="cal-dia" title="Domingo"><input type="checkbox" id="dcal-dia-0" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>D</span></label><label class="cal-dia" title="Lunes"><input type="checkbox" id="dcal-dia-1" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>L</span></label><label class="cal-dia" title="Martes"><input type="checkbox" id="dcal-dia-2" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>M</span></label><label class="cal-dia" title="Miércoles"><input type="checkbox" id="dcal-dia-3" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>M</span></label><label class="cal-dia" title="Jueves"><input type="checkbox" id="dcal-dia-4" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>J</span></label><label class="cal-dia" title="Viernes"><input type="checkbox" id="dcal-dia-5" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>V</span></label><label class="cal-dia" title="Sábado"><input type="checkbox" id="dcal-dia-6" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>S</span></label>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center; font-size:0.88em; flex-wrap:wrap;">
+                        de <input type="time" id="dcal-desde" style="width:auto;"> a <input type="time" id="dcal-hasta" style="width:auto;">
+                        <span style="color:#9ca3af;">(vacío = todo el día; puede cruzar la medianoche)</span>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center; font-size:0.88em; flex-wrap:wrap;">
+                        entre <input type="date" id="dcal-inicio" style="width:auto;"> y <input type="date" id="dcal-fin" style="width:auto;">
+                        <span style="color:#9ca3af;">(opcional)</span>
+                    </div>
+                </div>
+            </div>
         </div>
         <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end; margin-top:15px;">
             <button class="btn-secondary" onclick="cerrarModalNuevoDescuento()">Cancelar</button>
@@ -3120,40 +3160,90 @@
     </div>
 </div>
 
-<!-- MODAL: Nuevo/Editar Combo -->
-<div id="modal-nuevo-combo" class="modal hidden">
-    <div class="modal-content" style="max-width:540px;">
+<!-- MODAL: Nueva/Editar Promo (PLAN_OFERTAS_V1 §3.5). Tres preguntas: qué
+     lleva, cuánto se cobra, cuándo. Las plantillas llenan todo lo de abajo. -->
+<div id="modal-promo" class="modal hidden">
+    <div class="modal-content" style="max-width:600px; max-height:90vh; overflow-y:auto;">
         <div class="modal-header">
-            <h3 id="modal-combo-titulo">Nuevo Combo</h3>
-            <button class="btn-close" onclick="cerrarModalNuevoCombo()">×</button>
+            <h3 id="modal-promo-titulo">Nueva promo</h3>
+            <button class="btn-close" onclick="cerrarModalPromo()">×</button>
         </div>
         <div class="modal-body" style="display:flex; flex-direction:column; gap:14px;">
-            <div style="display:flex; gap:12px;">
-                <div class="input-group" style="flex:2;">
-                    <label>Nombre del combo</label>
-                    <input type="text" id="ncombo-nombre" placeholder="Ej: Combo Familiar, Menú del Día...">
-                </div>
-                <div class="input-group" style="flex:1;">
-                    <label>Precio especial</label>
-                    <input type="number" id="ncombo-precio" placeholder="$" min="0" step="0.01">
-                </div>
+            <div class="promo-plantillas">
+                <button type="button" data-plantilla="2x1" onclick="aplicarPlantillaPromo('2x1')">2x1</button>
+                <button type="button" data-plantilla="3x2" onclick="aplicarPlantillaPromo('3x2')">3x2</button>
+                <button type="button" data-plantilla="combo" onclick="aplicarPlantillaPromo('combo')">Combo</button>
             </div>
             <div class="input-group">
-                <label>Descripción (opcional)</label>
-                <input type="text" id="ncombo-descripcion" placeholder="Breve descripción del combo">
+                <label>Nombre</label>
+                <input type="text" id="npromo-nombre" placeholder="Ej: Martes 2x1 en tacos">
             </div>
-            <div style="border-top:1px solid #f3f4f6; padding-top:12px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <label style="font-weight:600; font-size:0.9em;">Productos que incluye</label>
-                    <button class="btn-secondary small" onclick="agregarLineaCombo()">+ Agregar producto</button>
+            <div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <label style="font-weight:600; font-size:0.9em;">¿Qué lleva?</label>
+                    <button class="btn-secondary small" type="button" onclick="agregarHuecoPromo()">+ Agregar otro</button>
                 </div>
-                <div id="combo-items-lista" style="display:flex; flex-direction:column; gap:8px;"></div>
-                <div id="combo-precio-ref" style="margin-top:10px; font-size:0.85em; color:#6b7280; text-align:right;"></div>
+                <div id="npromo-huecos" style="display:flex; flex-direction:column; gap:8px;"></div>
             </div>
+            <div>
+                <label style="font-weight:600; font-size:0.9em;">¿Cuánto se cobra?</label>
+                <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
+                    <label style="display:flex;gap:8px;align-items:center;cursor:pointer;">
+                        <input type="radio" name="npromo-cobro" id="npromo-cobro-regalar" value="regalar" checked onchange="pintarVistaPreviaPromo()">
+                        Se regala el más barato — se cobran <input type="number" id="npromo-paga" min="1" step="1" value="1" style="width:64px;" oninput="pintarVistaPreviaPromo()"> de los que lleva
+                    </label>
+                    <label style="display:flex;gap:8px;align-items:center;cursor:pointer;">
+                        <input type="radio" name="npromo-cobro" id="npromo-cobro-fijo" value="fijo" onchange="pintarVistaPreviaPromo()">
+                        Precio fijo $<input type="number" id="npromo-precio" min="0" step="0.01" style="width:100px;" oninput="pintarVistaPreviaPromo()">
+                    </label>
+                </div>
+            </div>
+            <div class="cal-editor">
+                <label style="font-weight:600; font-size:0.9em;">¿Cuándo?</label>
+                <div style="display:flex; gap:16px; margin:6px 0;">
+                    <label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="radio" name="pcal-cuando" id="pcal-siempre" checked onchange="alternarEditorCalendario('pcal')"> Siempre</label>
+                    <label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="radio" name="pcal-cuando" id="pcal-con" onchange="alternarEditorCalendario('pcal')"> Solo algunos días u horas</label>
+                </div>
+                <div id="pcal-detalle" style="display:none; flex-direction:column; gap:8px;">
+                    <div class="cal-dias">
+                        <label class="cal-dia" title="Domingo"><input type="checkbox" id="pcal-dia-0" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>D</span></label><label class="cal-dia" title="Lunes"><input type="checkbox" id="pcal-dia-1" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>L</span></label><label class="cal-dia" title="Martes"><input type="checkbox" id="pcal-dia-2" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>M</span></label><label class="cal-dia" title="Miércoles"><input type="checkbox" id="pcal-dia-3" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>M</span></label><label class="cal-dia" title="Jueves"><input type="checkbox" id="pcal-dia-4" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>J</span></label><label class="cal-dia" title="Viernes"><input type="checkbox" id="pcal-dia-5" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>V</span></label><label class="cal-dia" title="Sábado"><input type="checkbox" id="pcal-dia-6" checked onchange="pintarVistaPreviaPromo && pintarVistaPreviaPromo()"><span>S</span></label>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center; font-size:0.88em; flex-wrap:wrap;">
+                        de <input type="time" id="pcal-desde" style="width:auto;"> a <input type="time" id="pcal-hasta" style="width:auto;">
+                        <span style="color:#9ca3af;">(vacío = todo el día; puede cruzar la medianoche)</span>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center; font-size:0.88em; flex-wrap:wrap;">
+                        entre <input type="date" id="pcal-inicio" style="width:auto;"> y <input type="date" id="pcal-fin" style="width:auto;">
+                        <span style="color:#9ca3af;">(opcional)</span>
+                    </div>
+                </div>
+            </div>
+            <div id="npromo-vista" class="promo-vista"></div>
         </div>
         <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end; margin-top:15px;">
-            <button class="btn-secondary" onclick="cerrarModalNuevoCombo()">Cancelar</button>
-            <button class="btn-primary" onclick="guardarCombo()">Guardar Combo</button>
+            <button class="btn-secondary" onclick="cerrarModalPromo()">Cancelar</button>
+            <button class="btn-primary" id="npromo-guardar" onclick="guardarPromo()">Guardar promo</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: La hoja de elección de una promo — "Elige 2 tacos · 1 de 2" -->
+<div id="modal-promo-eleccion" class="modal hidden">
+    <div class="modal-content" style="max-width:560px; max-height:88vh; display:flex; flex-direction:column;">
+        <div class="modal-header">
+            <h3 id="promo-eleccion-titulo">Promo</h3>
+            <button class="btn-close" onclick="cerrarEleccionPromo()">×</button>
+        </div>
+        <div class="modal-body" style="flex:1; overflow-y:auto;">
+            <div id="promo-eleccion-paso" style="font-weight:700; margin-bottom:6px;"></div>
+            <div style="font-size:0.8em; color:#b45309; margin-bottom:10px;">Los extras se cobran aparte, aunque el producto vaya de regalo.</div>
+            <div id="promo-eleccion-elegidos" class="promo-elegidos"></div>
+            <div id="promo-eleccion-grid" class="promo-eleccion-grid"></div>
+        </div>
+        <div class="modal-footer" style="display:flex; gap:10px; align-items:center; justify-content:flex-end;">
+            <span id="promo-eleccion-resumen" style="flex:1; font-size:0.9em; color:#374151;"></span>
+            <button class="btn-secondary" onclick="cerrarEleccionPromo()">Cancelar</button>
+            <button class="btn-primary disabled" id="promo-eleccion-listo" disabled onclick="confirmarEleccionPromo()">Agregar</button>
         </div>
     </div>
 </div>
@@ -3197,6 +3287,7 @@
             <input type="text" id="mesa-prod-busqueda" placeholder="Buscar producto..."
                 oninput="filtrarProductosMesa(this.value)"
                 style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:0.95em;box-sizing:border-box;margin-bottom:10px;">
+            <div id="mesa-promos" class="promos-venta hidden"></div>
             <div id="mesa-prod-categorias" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;"></div>
             <div id="mesa-prod-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;"></div>
         </div>

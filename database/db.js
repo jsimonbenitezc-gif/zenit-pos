@@ -234,7 +234,26 @@ function inicializarTablas() {
         FOREIGN KEY (combo_id) REFERENCES combos(id),
         FOREIGN KEY (producto_id) REFERENCES productos(id)
     )`);
-    
+
+    // PROMOS (PLAN_OFERTAS_V1, Bloque 2). La promo es un combo que se VENDE.
+    // ⚠️ La forma nueva ("2 de [Tacos]") va en `combos.slots` (JSON) y NO en
+    // `combo_items`, cuyo `producto_id` es NOT NULL y en SQLite no se puede
+    // relajar sin reconstruir la tabla. Es la trampa 1 del plan vista desde
+    // este lado: `combo_items` sigue guardando solo los productos fijos.
+    // Estos ALTER van DESPUÉS de los CREATE de sus tablas (§19.34).
+    db.run("ALTER TABLE combos ADD COLUMN tipo TEXT", () => {});
+    db.run("ALTER TABLE combos ADD COLUMN paga INTEGER", () => {});
+    db.run("ALTER TABLE combos ADD COLUMN calendario TEXT", () => {});
+    db.run("ALTER TABLE combos ADD COLUMN slots TEXT", () => {});
+    // "10% los lunes": los descuentos también tienen calendario (§3.3).
+    db.run("ALTER TABLE promociones ADD COLUMN calendario TEXT", () => {});
+    // Una promo vendida es un renglón por producto, unidos por su grupo; el
+    // nombre y el precio de lista van CONGELADOS, como los modificadores (§32.7).
+    db.run("ALTER TABLE pedido_items ADD COLUMN promo_id INTEGER", () => {});
+    db.run("ALTER TABLE pedido_items ADD COLUMN promo_group TEXT", () => {});
+    db.run("ALTER TABLE pedido_items ADD COLUMN promo_name TEXT", () => {});
+    db.run("ALTER TABLE pedido_items ADD COLUMN precio_lista REAL", () => {});
+
   // 9. MIGRACIÓN AUTOMÁTICA: 
     const columnasNuevas = [
         "ALTER TABLE pedidos ADD COLUMN tipo_pedido TEXT DEFAULT 'comer'",
@@ -977,14 +996,22 @@ async function crearPedido(datos, items, callback, opciones) {
             const modsJson = Array.isArray(item.modificadores) && item.modificadores.length
                 ? JSON.stringify(item.modificadores)
                 : null;
+            // PROMO (PLAN_OFERTAS_V1): el renglón de un producto de promo lleva
+            // su grupo, el nombre de la promo y su precio de lista, congelados.
+            // `precio` ya es su parte + extras; `precio_base`, solo la parte.
             await runAsync(
                 `INSERT INTO pedido_items
-                    (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item, modificadores, precio_base)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item, modificadores, precio_base,
+                     promo_id, promo_group, promo_name, precio_lista)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     pedidoId, item.id, item.cantidad, item.precio, item.subtotal, item.nota || '',
                     modsJson,
                     item.precio_base !== undefined && item.precio_base !== null ? item.precio_base : item.precio,
+                    item.promo_group ? (item.promo_id || null) : null,
+                    item.promo_group || null,
+                    item.promo_group ? (item.promo_name || null) : null,
+                    item.promo_group && item.precio_lista != null ? item.precio_lista : null,
                 ]
             );
             if (!skipStock) {
@@ -1130,6 +1157,11 @@ function obtenerDetallesPedido(pedidoId, callback) {
             -- Modificadores congelados del renglón (BLOQUE 11), para el ticket.
             pi.modificadores,
             pi.precio_base,
+            -- Promo (PLAN_OFERTAS_V1): el ticket y el historial la agrupan.
+            pi.promo_id,
+            pi.promo_group,
+            pi.promo_name,
+            pi.precio_lista,
             p.nombre,
             p.emoji
         FROM pedido_items pi
@@ -1749,13 +1781,19 @@ function obtenerSalidasInsumo(insumoId, callback) {
 function obtenerDescuentos(callback) {
     db.all("SELECT * FROM promociones WHERE activa = 1 ORDER BY nombre ASC", [], callback);
 }
+// El calendario ("10% los lunes", PLAN_OFERTAS_V1 §3.3) viaja como JSON. Un
+// valor que no se entregó queda NULL = siempre, como antes del bloque.
+function _calendarioTexto(c) {
+    if (c === undefined || c === null || c === '') return null;
+    return typeof c === 'string' ? c : JSON.stringify(c);
+}
 function agregarDescuento(d, cb) {
-    db.run("INSERT INTO promociones (nombre, tipo, valor, requires_pin) VALUES (?, ?, ?, ?)",
-        [d.nombre, d.tipo, d.valor, d.requires_pin ? 1 : 0], cb);
+    db.run("INSERT INTO promociones (nombre, tipo, valor, requires_pin, calendario) VALUES (?, ?, ?, ?, ?)",
+        [d.nombre, d.tipo, d.valor, d.requires_pin ? 1 : 0, _calendarioTexto(d.calendario)], cb);
 }
 function actualizarDescuento(id, d, cb) {
-    db.run("UPDATE promociones SET nombre=?, tipo=?, valor=?, requires_pin=? WHERE id=?",
-        [d.nombre, d.tipo, d.valor, d.requires_pin ? 1 : 0, id], cb);
+    db.run("UPDATE promociones SET nombre=?, tipo=?, valor=?, requires_pin=?, calendario=? WHERE id=?",
+        [d.nombre, d.tipo, d.valor, d.requires_pin ? 1 : 0, _calendarioTexto(d.calendario), id], cb);
 }
 function eliminarDescuento(id, cb) {
     db.run("UPDATE promociones SET activa = 0 WHERE id = ?", [id], cb);
@@ -1787,6 +1825,19 @@ function eliminarCombo(id, cb) {
     db.run("UPDATE combos SET activo = 0 WHERE id = ?", [id], (err) => {
         if (err) return cb(err);
         db.run("DELETE FROM combo_items WHERE combo_id = ?", [id], cb);
+    });
+}
+// Las promos que se pueden vender, con sus productos fijos (los combos de antes
+// del bloque no traen `slots` y se venden con eso). La regla (qué está activo,
+// qué cabe) la aplica modulo-promos.js: aquí solo se lee.
+function obtenerPromosVenta(callback) {
+    db.all("SELECT * FROM combos WHERE activo = 1 ORDER BY nombre ASC", [], (err, combos) => {
+        if (err) return callback(err);
+        db.all("SELECT combo_id, producto_id, cantidad FROM combo_items", [], (err2, items) => {
+            if (err2) return callback(err2);
+            (combos || []).forEach(c => { c.items = (items || []).filter(i => i.combo_id === c.id); });
+            callback(null, combos || []);
+        });
     });
 }
 function obtenerItemsCombo(comboId, callback) {
@@ -2388,7 +2439,12 @@ function syncProductos(datos, cb) {
             const stmt = db.prepare('INSERT OR REPLACE INTO productos (id, nombre, descripcion, precio, stock, clasificacion_id, emoji, imagen, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
             datos.forEach(d => stmt.run(
                 d.id, d.name, d.description || null, d.price,
-                d.stock || 0, d.category_id || null, d.emoji || null, d.image || null, d.active ? 1 : 0
+                // ⚠️ NULL es "sin control de existencias" (§19.38), NO cero. Aquí
+                // decía `d.stock || 0`, así que TODO producto bajado del servidor
+                // quedaba en el equipo como AGOTADO. Lo destapó la hoja de las
+                // promos, que no ofrece lo agotado (PLAN_OFERTAS_V1, trampa 8).
+                d.stock !== undefined && d.stock !== null ? d.stock : null,
+                d.category_id || null, d.emoji || null, d.image || null, d.active ? 1 : 0
             ));
             const placeholders = datos.map(() => '?').join(',');
             const ids = datos.map(d => d.id);
@@ -2512,10 +2568,10 @@ function syncDescuentos(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     syncConTransaccion((done) => {
         db.serialize(() => {
-            const stmt = db.prepare('INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa, requires_pin) VALUES (?, ?, ?, ?, ?, ?)');
+            const stmt = db.prepare('INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa, requires_pin, calendario) VALUES (?, ?, ?, ?, ?, ?, ?)');
             datos.forEach(d => {
                 const tipo = d.type === 'percentage' ? 'porcentaje' : 'monto_fijo';
-                stmt.run(d.id, d.name, tipo, d.value, d.active ? 1 : 0, d.requires_pin ? 1 : 0);
+                stmt.run(d.id, d.name, tipo, d.value, d.active ? 1 : 0, d.requires_pin ? 1 : 0, _calendarioTexto(d.calendario));
             });
             const placeholders = datos.map(() => '?').join(',');
             const ids = datos.map(d => d.id);
@@ -2528,8 +2584,17 @@ function syncCombos(datos, cb) {
     if (!datos || datos.length === 0) return cb(null); // Sin datos: no borrar nada
     syncConTransaccion((done) => {
         db.serialize(() => {
-            const stmtCombo = db.prepare('INSERT OR REPLACE INTO combos (id, nombre, descripcion, precio_especial, activo) VALUES (?, ?, ?, ?, ?)');
-            datos.forEach(d => stmtCombo.run(d.id, d.name, d.description || null, d.price, d.active ? 1 : 0));
+            // La forma nueva viaja en `slots` (PLAN_OFERTAS_V1, trampa 1) y se
+            // guarda en su columna; `items` trae SOLO los productos fijos, que
+            // son los únicos que caben en combo_items.producto_id (NOT NULL).
+            const stmtCombo = db.prepare('INSERT OR REPLACE INTO combos (id, nombre, descripcion, precio_especial, activo, tipo, paga, calendario, slots) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            datos.forEach(d => stmtCombo.run(
+                d.id, d.name, d.description || null, parseFloat(d.price) || 0, d.active ? 1 : 0,
+                d.tipo || 'precio_fijo',
+                d.paga !== undefined && d.paga !== null ? d.paga : null,
+                _calendarioTexto(d.calendario),
+                Array.isArray(d.slots) ? JSON.stringify(d.slots) : null
+            ));
             const placeholders = datos.map(() => '?').join(',');
             const ids = datos.map(d => d.id);
             stmtCombo.finalize(() => {
@@ -2538,7 +2603,8 @@ function syncCombos(datos, cb) {
                         db.run('DELETE FROM combo_items WHERE combo_id = ?', [d.id]);
                         if (d.items && d.items.length > 0) {
                             const stmtItems = db.prepare('INSERT INTO combo_items (combo_id, producto_id, cantidad) VALUES (?, ?, ?)');
-                            d.items.forEach(item => stmtItems.run(d.id, item.product_id, item.quantity || 1));
+                            d.items.filter(item => item.product_id !== null && item.product_id !== undefined)
+                                .forEach(item => stmtItems.run(d.id, item.product_id, item.quantity || 1));
                             stmtItems.finalize();
                         }
                     });
@@ -2569,8 +2635,8 @@ function agregarPreparacionConId(id, datos, cb) {
 
 function agregarDescuentoConId(id, datos, cb) {
     db.run(
-        `INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa, requires_pin) VALUES (?, ?, ?, ?, 1, ?)`,
-        [id, datos.nombre, datos.tipo, datos.valor, datos.requires_pin ? 1 : 0],
+        `INSERT OR REPLACE INTO promociones (id, nombre, tipo, valor, activa, requires_pin, calendario) VALUES (?, ?, ?, ?, 1, ?, ?)`,
+        [id, datos.nombre, datos.tipo, datos.valor, datos.requires_pin ? 1 : 0, _calendarioTexto(datos.calendario)],
         cb
     );
 }
@@ -2630,7 +2696,16 @@ function obtenerPedidoAbiertoPorMesa(mesa_id, cb) {
                 -- backend: mandarle el precio ya con extras le haría sumar los
                 -- deltas DOS veces. Un renglón anterior al bloque no lo tiene y
                 -- cae al precio_unitario, que ahí es el precio base.
-                '|' || COALESCE(pi.precio_base, pi.precio_unitario)
+                '|' || COALESCE(pi.precio_base, pi.precio_unitario) ||
+                -- PROMO (PLAN_OFERTAS_V1, trampa 3). El nombre es texto del dueño y
+                -- puede traer cualquier cosa, así que va con los MISMOS marcadores
+                -- que los modificadores. El grupo es un uuid y los números no llevan
+                -- separadores, pero pasan igual por COALESCE para no romper el orden.
+                '|' || COALESCE(pi.promo_group, '') ||
+                '|' || REPLACE(REPLACE(REPLACE(COALESCE(pi.promo_name, ''),
+                        '~', '~T~'), '|', '~P~'), ';', '~S~') ||
+                '|' || COALESCE(pi.precio_lista, '') ||
+                '|' || COALESCE(pi.promo_id, '')
             , ';;') as items_raw
          FROM pedidos p
          LEFT JOIN pedido_items pi ON pi.pedido_id = p.id
@@ -2703,18 +2778,26 @@ function _recalcularTotalesMesa(pedido_id, cb) {
 
 // `precio` llega YA con los extras sumados (BLOQUE 11), así que el recálculo de
 // la mesa —que suma los `subtotal` de los renglones— cuadra sin tocarlo.
-function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb, modificadores, precioBase) {
+// `promo` (PLAN_OFERTAS_V1) = { promo_id, promo_group, promo_name, precio_lista }
+// cuando el renglón es un producto de una promo; `precioBase` es entonces su parte.
+function agregarItemMesa(pedido_id, producto_id, cantidad, precio, nota, cb, modificadores, precioBase, promo) {
     const modsJson = Array.isArray(modificadores) && modificadores.length
         ? JSON.stringify(modificadores)
         : null;
+    const p = promo && promo.promo_group ? promo : null;
     db.run(
         `INSERT INTO pedido_items
-            (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item, modificadores, precio_base)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item, modificadores, precio_base,
+             promo_id, promo_group, promo_name, precio_lista)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
             pedido_id, producto_id, cantidad, precio, precio * cantidad, nota || null,
             modsJson,
             precioBase !== undefined && precioBase !== null ? precioBase : precio,
+            p ? (p.promo_id || null) : null,
+            p ? String(p.promo_group) : null,
+            p ? (p.promo_name || null) : null,
+            p && p.precio_lista != null ? p.precio_lista : null,
         ],
         function(err) {
             if (err) return cb(err);
@@ -2737,24 +2820,37 @@ function eliminarItemMesa(item_id, pedido_id, cb) {
     //
     // El renglón se lee ANTES de borrarlo — después ya no habría de dónde sacar
     // el producto, la cantidad ni los modificadores.
+    //
+    // 🔴 PROMO (PLAN_OFERTAS_V1, trampa 4): quitar un taco de un 2x1 quita la
+    // PROMO ENTERA, con los insumos de todos sus renglones de vuelta. Quedarse
+    // con "medio 2x1" cobraría un taco de $14.58 que nunca existió en el menú.
     db.get(
-        "SELECT producto_id, cantidad, modificadores FROM pedido_items WHERE id=?",
-        [item_id],
-        (errLectura, item) => {
-            db.run("DELETE FROM pedido_items WHERE id=?", [item_id], (err) => {
-                if (err) return cb(err);
+        "SELECT promo_group FROM pedido_items WHERE id=? AND pedido_id=?",
+        [item_id, pedido_id],
+        (errGrupo, fila) => {
+            const grupo = !errGrupo && fila && fila.promo_group ? fila.promo_group : null;
+            const where = grupo ? "pedido_id=? AND promo_group=?" : "id=?";
+            const params = grupo ? [pedido_id, grupo] : [item_id];
+            db.all(
+                "SELECT producto_id, cantidad, modificadores FROM pedido_items WHERE " + where,
+                params,
+                (errLectura, items) => {
+                    db.run("DELETE FROM pedido_items WHERE " + where, params, (err) => {
+                        if (err) return cb(err);
 
-                if (!errLectura && item) {
-                    // Fire-and-forget, igual que al agregar: el inventario no debe
-                    // impedir que la mesa se corrija.
-                    restaurarInsumosDeVenta(item.producto_id, item.cantidad).catch(() => {});
-                    // Y el ajuste de los extras (§32.6) con el signo invertido.
-                    aplicarRecetaModificadoresLocal(item.modificadores, item.cantidad, +1).catch(() => {});
-                    moverUnidadesDeProducto(item.producto_id, item.cantidad, +1);
+                        for (const item of (!errLectura && items) || []) {
+                            // Fire-and-forget, igual que al agregar: el inventario no
+                            // debe impedir que la mesa se corrija.
+                            restaurarInsumosDeVenta(item.producto_id, item.cantidad).catch(() => {});
+                            // Y el ajuste de los extras (§32.6) con el signo invertido.
+                            aplicarRecetaModificadoresLocal(item.modificadores, item.cantidad, +1).catch(() => {});
+                            moverUnidadesDeProducto(item.producto_id, item.cantidad, +1);
+                        }
+
+                        _recalcularTotalesMesa(pedido_id, cb);
+                    });
                 }
-
-                _recalcularTotalesMesa(pedido_id, cb);
-            });
+            );
         }
     );
 }
@@ -2916,6 +3012,7 @@ module.exports = {
     actualizarCombo,
     eliminarCombo,
     obtenerItemsCombo,
+    obtenerPromosVenta,
     guardarItemsCombo,     
     obtenerProductos: (cb) => db.all('SELECT * FROM productos WHERE activo = 1', cb),
     tienePasswordApp,
@@ -2999,8 +3096,9 @@ function syncPedidos(datos, cb) {
             );
             const stmtItem = db.prepare(
                 `INSERT OR IGNORE INTO pedido_items
-                 (id, pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`
+                 (id, pedido_id, producto_id, cantidad, precio_unitario, subtotal, nota_item,
+                  precio_base, promo_id, promo_group, promo_name, precio_lista)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             );
             datos.forEach(d => {
                 stmtPedido.run(
@@ -3014,7 +3112,12 @@ function syncPedidos(datos, cb) {
                     d.items.forEach(item => {
                         stmtItem.run(
                             item.id, item.order_id, item.product_id,
-                            item.quantity, item.unit_price, item.subtotal, item.notes || null
+                            item.quantity, item.unit_price, item.subtotal, item.notes || null,
+                            item.base_unit_price != null ? item.base_unit_price : null,
+                            // La promo con la que se vendió (PLAN_OFERTAS_V1), para que
+                            // el historial sin internet la siga enseñando junta.
+                            item.promo_id || null, item.promo_group || null,
+                            item.promo_name || null, item.list_price != null ? item.list_price : null
                         );
                     });
                 }

@@ -2668,3 +2668,79 @@ body.dark .menufoto-aviso-cerrar:hover { background: rgba(148, 163, 184, 0.15); 
     .menufoto-aviso { flex-wrap: wrap; }
     .menufoto-aviso-texto { flex-basis: calc(100% - 110px); }
 }
+
+/* ── PROMOS (PLAN_OFERTAS_V1, Bloque 2) ─────────────────────────────────── */
+/* La hoja de elección se abre encima del modal de mesa, y los extras encima de
+   ella: por eso los dos suben de la capa común de los modales. */
+#modal-promo-eleccion { z-index: 1050; }
+#modalModificadores { z-index: 1100; }
+
+.promos-venta { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 10px; }
+.promos-venta.hidden { display: none; }
+.promo-card {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 8px 14px; border-radius: 10px; cursor: pointer; text-align: left;
+    border: 2px solid #f59e0b; background: linear-gradient(135deg, #fff7ed, #fef3c7);
+    color: #92400e; font-weight: 700; min-width: 150px;
+}
+.promo-card:hover { box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35); }
+.promo-card small { font-weight: 500; color: #b45309; font-size: 0.78em; }
+.promo-card-icono { font-size: 1.1em; }
+
+.cart-item.cart-promo { border-left: 3px solid #f59e0b; background: #fffbeb; }
+.cart-promo-producto { font-size: 0.8em; color: #6b7280; }
+.cart-promo-ahorro { font-size: 0.78em; color: #16a34a; font-weight: 600; }
+
+.promo-sugerencia {
+    display: flex; align-items: center; gap: 8px; justify-content: space-between;
+    margin: 6px 0; padding: 8px 10px; border-radius: 8px;
+    background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: 0.85em;
+}
+.promo-sugerencia.hidden { display: none; }
+.promo-sugerencia button {
+    border: none; border-radius: 6px; padding: 6px 10px; cursor: pointer;
+    background: #059669; color: #fff; font-weight: 700;
+}
+
+.promo-eleccion-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.promo-eleccion-prod {
+    display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px;
+    border: 2px solid #e5e7eb; border-radius: 8px; background: #fff; cursor: pointer;
+}
+.promo-eleccion-prod:hover { border-color: #f59e0b; }
+.promo-eleccion-prod small { color: #6b7280; }
+.promo-elegidos { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.promo-elegido {
+    display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 14px;
+    background: #fef3c7; color: #92400e; font-size: 0.85em;
+}
+.promo-elegido em { color: #b45309; font-style: normal; font-size: 0.9em; }
+.promo-elegido button { border: none; background: none; cursor: pointer; color: #b91c1c; font-weight: 700; }
+
+.promo-plantillas { display: flex; gap: 8px; }
+.promo-plantillas button {
+    flex: 1; padding: 10px; border-radius: 10px; cursor: pointer; font-weight: 800; font-size: 1.05em;
+    border: 2px solid #fcd34d; background: #fffbeb; color: #92400e;
+}
+.promo-plantillas button.activa { background: #f59e0b; color: #fff; border-color: #f59e0b; }
+.promo-vista { padding: 10px 12px; border-radius: 8px; background: #f8fafc; border: 1px solid #e5e7eb; font-size: 0.9em; }
+.promo-vista.ambar { background: #fffbeb; border-color: #fcd34d; color: #92400e; }
+
+.cal-dias { display: flex; gap: 6px; }
+.cal-dia { position: relative; cursor: pointer; }
+.cal-dia input { position: absolute; opacity: 0; width: 0; height: 0; }
+.cal-dia span {
+    display: inline-flex; width: 32px; height: 32px; align-items: center; justify-content: center;
+    border-radius: 50%; border: 2px solid #d1d5db; font-weight: 700; color: #6b7280; background: #fff;
+}
+.cal-dia input:checked + span { background: #2563eb; border-color: #2563eb; color: #fff; }
+
+.promo-estado { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: 600; }
+.promo-estado.si { background: #dcfce7; color: #166534; }
+.promo-estado.no { background: #f3f4f6; color: #6b7280; }
+
+body.dark .promo-card { background: linear-gradient(135deg, #3b2a12, #422d0c); color: #fcd34d; }
+body.dark .cart-item.cart-promo { background: #2a2111; }
+body.dark .promo-eleccion-prod { background: #1f2937; border-color: #374151; color: #e5e7eb; }
+body.dark .promo-vista { background: #111827; border-color: #374151; }
+body.dark .cal-dia span { background: #1f2937; border-color: #4b5563; }

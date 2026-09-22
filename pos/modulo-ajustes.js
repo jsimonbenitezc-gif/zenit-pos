@@ -1941,11 +1941,22 @@ async function guardarConfigPropina(opciones = {}) {
     );
 }
 
-async function imprimirTicket(pedidoId) {
+// `opciones.local`: el pedido es el que ESTE equipo acaba de cobrar y el id es
+// el de su SQLite. ⚠️ Con cuenta, antes se le pedía al servidor con ese id LOCAL:
+// solo funcionaba si por casualidad coincidía con el del servidor, y si no daba
+// "no se pudo cargar" — o, peor, imprimía OTRA venta del negocio con ese número.
+// Lo destapó el recorrido `promos` del banco (PLAN_OFERTAS_V1, Bloque 2). La
+// venta recién hecha ya está completa en el equipo, así que se lee de ahí.
+async function imprimirTicket(pedidoId, opciones = {}) {
     try {
         // 1. Obtener datos del pedido
-        const detalles = await obtenerDetallePedidoWrapper(pedidoId);
-        const pedidosResult = await obtenerPedidosWrapper({ limit: 1000 });
+        const local = opciones.local === true;
+        const detalles = local
+            ? await window.api.obtenerDetallePedido(pedidoId)
+            : await obtenerDetallePedidoWrapper(pedidoId);
+        const pedidosResult = local
+            ? await (async () => { const r = await window.api.obtenerPedidos({ limit: 1000 }); return r && r.data ? r : { data: r || [] }; })()
+            : await obtenerPedidosWrapper({ limit: 1000 });
         const pedido = (pedidosResult.data || pedidosResult).find(p => p.id === pedidoId);
 
         if (!pedido || !detalles) {
@@ -2237,14 +2248,29 @@ async function imprimirTicket(pedidoId) {
                     </div>
 
                     <div class="items">
-                        ${detalles.map(item => {
+                        ${agruparRenglones(detalles).map(g => {
                             // Modificadores (BLOQUE 11). Van bajo el renglón, no
                             // como línea aparte: el precio del renglón YA los
                             // incluye, así que un renglón propio haría que el
                             // ticket pareciera cobrar dos veces.
-                            const extras = typeof resumenModificadores === 'function'
-                                ? resumenModificadores(leerModificadores(item.modificadores))
+                            const extrasDe = (it) => typeof resumenModificadores === 'function'
+                                ? resumenModificadores(leerModificadores(it.modificadores))
                                 : '';
+                            // PROMO (PLAN_OFERTAS_V1): el renglón agrupado con sus
+                            // productos debajo; lo que cobra es la suma de sus partes.
+                            if (g.promo) return `
+                            <div class="item">
+                                <span class="item-name">${esc(g.promo.nombre)}</span>
+                                <span class="item-qty">x1</span>
+                                <span class="item-price">${moneda}${g.promo.total.toFixed(2)}</span>
+                            </div>
+                            ${g.items.map(it => {
+                                const extras = extrasDe(it);
+                                return `<div class="nota">&nbsp;&nbsp;${esc(it.nombre)}${extras ? ' (' + esc(extras) + ')' : ''}</div>`
+                                    + (it.nota ? `<div class="nota">&nbsp;&nbsp;* ${esc(it.nota)}</div>` : '');
+                            }).join('')}`;
+                            const item = g.item;
+                            const extras = extrasDe(item);
                             return `
                             <div class="item">
                                 <span class="item-name">${esc(item.nombre)}</span>
@@ -2266,6 +2292,14 @@ async function imprimirTicket(pedidoId) {
                         </div>
                         ${propinaTicket}
                         ${pagosTicket}
+                        ${(() => {
+                            // "Ahorraste $25" (PLAN_OFERTAS_V1 §3.5): lo que el
+                            // cliente se ahorró en promos, a precio de lista.
+                            const ahorro = ahorroDePromos(detalles);
+                            return ahorro > 0
+                                ? `<div class="total-line" style="font-weight:bold;"><span>Ahorraste:</span><span>${moneda}${ahorro.toFixed(2)}</span></div>`
+                                : '';
+                        })()}
                         <div class="total-line">
                             <span>Método de pago:</span>
                             <span>${esc(pedido.metodo_pago || 'N/A')}</span>
@@ -2301,7 +2335,7 @@ async function imprimirTicket(pedidoId) {
 // Función auxiliar para imprimir el último pedido creado
 function imprimirUltimoTicket() {
     if (window.ultimoPedidoId) {
-        imprimirTicket(window.ultimoPedidoId);
+        imprimirTicket(window.ultimoPedidoId, { local: true });
     }
 }
 

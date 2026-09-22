@@ -65,6 +65,12 @@ function _parsearItemsMesa(items_raw) {
             modificadores:  leerModificadores(_desescaparMods(p[7])),
             // Precio del catálogo antes de los extras. Es el que sube al backend.
             precio_base:    p[8] !== undefined && p[8] !== '' ? parseFloat(p[8]) : parseFloat(p[3]),
+            // PROMO (PLAN_OFERTAS_V1). El nombre llega escapado igual que los
+            // modificadores (trampa 3); un renglón sin promo trae los campos vacíos.
+            promo_group:    p[9] || null,
+            promo_name:     p[9] ? (_desescaparMods(p[10]) || 'Promo') : null,
+            precio_lista:   p[11] !== undefined && p[11] !== '' ? parseFloat(p[11]) : null,
+            promo_id:       p[12] !== undefined && p[12] !== '' ? parseInt(p[12], 10) : null,
         };
     });
 }
@@ -167,6 +173,11 @@ function _normalizarPedidoApi(order) {
          _escaparMods(item.modifiers),
          parseFloat(item.base_unit_price != null ? item.base_unit_price
                                                  : (item.unit_price != null ? item.unit_price : 0)),
+         // Promo (PLAN_OFERTAS_V1), con el mismo escapado que hace SQL.
+         item.promo_group || '',
+         _escaparMods(item.promo_name),
+         item.list_price != null ? parseFloat(item.list_price) : '',
+         item.promo_id != null ? item.promo_id : '',
         ].join('|')
     ).join(';;');
     return {
@@ -382,7 +393,20 @@ function _renderizarPanelMesa() {
     // suma cruda: en modo AGREGADO son números distintos.
     const _d = _desgloseMesa(items);
     const total = _d.total;
-    el.innerHTML = items.map(it => `
+    // PROMO (PLAN_OFERTAS_V1): la promo se enseña JUNTA, con sus productos
+    // debajo, y el bote de basura quita la promo entera (trampa 4).
+    el.innerHTML = agruparRenglones(items).map(g => g.promo ? `
+        <div class="mesa-promo" data-promo-group="${esc(g.promo.grupo)}" style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid #f3f4f6;background:#fffbeb;border-left:3px solid #f59e0b;">
+            <div style="flex:1;min-width:0;">
+                <div style="font-size:0.9em;font-weight:600;">🎁 ${esc(g.promo.nombre)}</div>
+                ${g.items.map(it => `<div style="font-size:0.78em;color:#6b7280;">· ${esc(it.nombre)}${resumenModificadores(it.modificadores) ? ` <span style="color:#b45309;">(${esc(resumenModificadores(it.modificadores))})</span>` : ''}</div>`).join('')}
+            </div>
+            <div style="font-weight:600;font-size:0.9em;">${_fmtMesa(g.promo.total)}</div>
+            <button onclick="eliminarItemDeMesa(${g.items[0].id})" title="Quitar la promo"
+                style="background:none;border:none;cursor:pointer;color:#ef4444;padding:4px;flex-shrink:0;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            </button>
+        </div>` : ((it) => `
         <div style="display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid #f3f4f6;">
             <div style="flex:1;min-width:0;">
                 <div style="font-size:0.9em;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(it.nombre)}</div>
@@ -397,7 +421,7 @@ function _renderizarPanelMesa() {
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
             </button>
         </div>
-    `).join('') + `${_d.impuesto > 0 ? `<div style="padding:6px 16px 0;text-align:right;font-size:0.82em;color:#6b7280;">
+    `)(g.item)).join('') + `${_d.impuesto > 0 ? `<div style="padding:6px 16px 0;text-align:right;font-size:0.82em;color:#6b7280;">
         Subtotal: ${_fmtMesa(_d.cfg.incluido ? _d.total : _d.suma)} · ${esc(_d.cfg.nombre)} (${_d.cfg.tasa}%)${_d.cfg.incluido ? ' incl.' : ''}: ${_fmtMesa(_d.impuesto)}
     </div>` : ''}<div style="padding:8px 16px;text-align:right;font-weight:700;font-size:1em;border-top:2px solid #e5e7eb;margin-top:4px;">
         Total: ${_fmtMesa(total)}
@@ -437,6 +461,17 @@ async function enviarMesaACocina() {
 
 async function eliminarItemDeMesa(item_id) {
     if (!_pedidoMesaActivo) return;
+    // Un renglón de promo se lleva la promo ENTERA (trampa 4, y así lo hace
+    // también el servidor): se pregunta, porque desaparece más de lo que se tocó.
+    const renglon = _parsearItemsMesa(_pedidoMesaActivo.items_raw).find(it => it.id === item_id);
+    if (renglon && renglon.promo_group) {
+        const delGrupo = _parsearItemsMesa(_pedidoMesaActivo.items_raw).filter(it => it.promo_group === renglon.promo_group);
+        const ok = await confirmarZenit(
+            'Se quita la promo "' + renglon.promo_name + '" entera (' + delGrupo.map(it => it.nombre).join(', ') + '). Si solo querías cambiar un producto, vuelve a agregarla.',
+            '¿Quitar la promo?', { textoOk: 'Quitar la promo', peligro: true }
+        );
+        if (!ok) return;
+    }
     try {
         if (modoConectado && apiClient && tokenActual) {
             const updated = await apiClient.removeOrderItem(_pedidoMesaActivo.id, item_id, nombreActivo || '');
@@ -484,8 +519,43 @@ async function abrirModalAgregarProductosMesa() {
     }
     _renderizarProductoresMesa(productosGlobales);
     _renderizarCategoriasMesa();
+    // Las promos activas AHORA, igual que en el mostrador (PLAN_OFERTAS_V1).
+    if (!promosNegocio.length) await cargarPromosLocales();
+    _renderizarPromosMesa();
     _actualizarResumenCarritoMesa();
     document.getElementById('modal-agregar-productos-mesa').classList.remove('hidden');
+}
+
+function _renderizarPromosMesa() {
+    const cont = document.getElementById('mesa-promos');
+    if (!cont) return;
+    const activas = promosActivasAhora();
+    cont.classList.toggle('hidden', activas.length === 0);
+    cont.innerHTML = activas.map(p =>
+        '<button type="button" class="promo-card" data-promo-id="' + p.id + '" onclick="agregarPromoAMesa(' + p.id + ')">' +
+            '<span class="promo-card-nombre">🎁 ' + esc(p.name) + '</span>' +
+            '<small>' + esc(textoHuecos(p)) + ' · ' + esc(textoCobro(p)) + '</small>' +
+        '</button>'
+    ).join('');
+}
+
+/**
+ * Una promo en el carrito de la mesa. 🔴 TRAMPA 2 DEL PLAN: su clave lleva el
+ * grupo de la promo, así que NUNCA se funde con un taco suelto del mismo
+ * producto (que heredaría su precio de $14.58), ni con otra promo igual.
+ */
+function agregarPromoAMesa(id) {
+    const promo = promosNegocio.find(p => p.id === id);
+    if (!promo) return;
+    abrirEleccionPromo(promo, (renglon) => {
+        _carritoMesa[_claveCarritoPromoMesa(renglon)] = { ...renglon, cantidad: 1 };
+        _uuidEnvioMesa = null; // el envío cambió: ya no es el mismo lote
+        _actualizarResumenCarritoMesa();
+    });
+}
+
+function _claveCarritoPromoMesa(renglon) {
+    return 'promo:' + renglon.promo_group;
 }
 
 function cerrarModalAgregarProductosMesa() {
@@ -580,7 +650,7 @@ function _claveCarritoMesa(productoId, modificadores) {
 /** Cuántas unidades de un producto hay en el carrito, sumando todas sus variantes. */
 function _cantidadEnCarritoMesa(productoId) {
     return Object.values(_carritoMesa)
-        .filter(v => v.producto_id === productoId)
+        .filter(v => v.tipo !== 'promo' && v.producto_id === productoId)
         .reduce((s, v) => s + v.cantidad, 0);
 }
 
@@ -621,7 +691,7 @@ function _quitarProductoMesa(clave) {
  * modificadores — y eso convertiría "uno más de lo mismo" en un interrogatorio.
  */
 function _sumarUnoCarritoMesa(clave) {
-    if (!_carritoMesa[clave]) return;
+    if (!_carritoMesa[clave] || _carritoMesa[clave].tipo === 'promo') return;
     _carritoMesa[clave].cantidad++;
     _uuidEnvioMesa = null;
     _actualizarResumenCarritoMesa();
@@ -642,6 +712,13 @@ function _actualizarResumenCarritoMesa() {
             ${items.map(([clave, item]) => {
                 // Los extras se listan bajo el nombre: dos renglones del mismo
                 // producto solo se distinguen por ellos.
+                if (item.tipo === 'promo') return `
+                <div class="mesa-carrito-promo" style="display:flex;align-items:center;gap:5px;padding:3px 0;border-bottom:1px solid #f3f4f6;">
+                    <span style="flex:1;font-size:0.82em;">🎁 ${esc(item.nombre)}<br><span style="font-size:0.85em;color:#6b7280;">${item.productos.map(p => esc(p.nombre)).join(' + ')}</span></span>
+                    <button onclick="_quitarProductoMesa('${esc(clave)}')" title="Quitar la promo"
+                        style="width:22px;height:22px;border:1px solid #fca5a5;border-radius:4px;background:#fef2f2;cursor:pointer;font-size:14px;color:#ef4444;line-height:1;flex-shrink:0;">−</button>
+                    <span style="font-size:0.82em;color:#6b7280;min-width:52px;text-align:right;">${_fmtMesa(item.precio)}</span>
+                </div>`;
                 const textoMods = resumenModificadores(item.modificadores);
                 return `
                 <div style="display:flex;align-items:center;gap:5px;padding:3px 0;border-bottom:1px solid #f3f4f6;">
@@ -669,7 +746,20 @@ async function confirmarAgregarProductosMesa() {
         // `updated` declarado aquí (fuera del if) para que esté en scope al marcar el tracker
         let updated = null;
         if (modoConectado && apiClient && tokenActual) {
-            const apiItems = items.map(([, item]) => ({
+            const apiItems = items.map(([, item]) => item.tipo === 'promo'
+                // PROMO (PLAN_OFERTAS_V1): viaja QUÉ promo y QUÉ productos se
+                // eligieron, nunca cuánto cuesta. Agregar a una mesa ocurre en
+                // línea, así que el servidor exige que la promo esté activa AHORA.
+                ? {
+                    promo_id: item.promo_id,
+                    promo_group: item.promo_group,
+                    productos: item.productos.map(p => ({
+                        product_id: p.id,
+                        ...(p.modificadores && p.modificadores.length ? { modifiers: p.modificadores } : {}),
+                        ...(p.nota ? { notes: p.nota } : {}),
+                    })),
+                }
+                : {
                 product_id: item.producto_id,
                 quantity: item.cantidad,
                 // El backend resuelve el delta contra su propia base: aquí solo
@@ -677,7 +767,7 @@ async function confirmarAgregarProductosMesa() {
                 ...(item.modificadores && item.modificadores.length
                     ? { modifiers: item.modificadores }
                     : {}),
-            }));
+            });
             // Un uuid por LOTE, estable mientras el carrito no cambie: si el envío
             // se corta después de que el backend lo guardó, reintentar no duplica
             // los productos de la mesa ni descuenta los insumos dos veces.
@@ -688,6 +778,17 @@ async function confirmarAgregarProductosMesa() {
             _pedidosMesa[_mesaActivaId] = _normalizarPedidoApi(updated);
         } else {
             for (const [, item] of items) {
+                // Una promo: un renglón por producto, con su parte y su grupo.
+                if (item.tipo === 'promo') {
+                    for (const p of aplanarCarrito([item])) {
+                        await window.api.agregarItemMesa(
+                            _pedidoMesaActivo.id, p.id, 1, p.precio, p.nota || null,
+                            p.modificadores || [], p.precio_base,
+                            { promo_id: p.promo_id, promo_group: p.promo_group, promo_name: p.promo_name, precio_lista: p.precio_lista }
+                        );
+                    }
+                    continue;
+                }
                 // `item.precio` ya trae los extras sumados; `precio_base` es el
                 // del catálogo, para poder desglosarlo en la cuenta.
                 await window.api.agregarItemMesa(
@@ -708,12 +809,18 @@ async function confirmarAgregarProductosMesa() {
             tipo: 'mesa',
             mesa: mesaKds?.nombre || `Mesa ${_mesaActivaId}`,
             notas: null,
-            items: items.map(([, item]) => ({
+            // Una promo son varios productos para la cocina.
+            items: items.flatMap(([, item]) => item.tipo === 'promo'
+                ? aplanarCarrito([item]).map(p => ({
+                    nombre: p.nombre, cantidad: 1,
+                    modificadores: resumenModificadores(p.modificadores), notas: p.nota || '',
+                }))
+                : [{
                 nombre: item.nombre,
                 cantidad: item.cantidad,
                 modificadores: resumenModificadores(item.modificadores),
                 notas: '',
-            }))
+            }])
         }).catch(() => {});
         mostrarNotificacionExito('Comanda enviada a cocina', 'Enviado');
         // Refrescar badges de stock tras descontar insumos (local e inmediato, sin esperar SSE)
@@ -721,7 +828,10 @@ async function confirmarAgregarProductosMesa() {
         _uuidEnvioMesa = null; // lote cerrado: el próximo envío es otro
     } catch(e) {
         console.error('Error agregando productos a mesa:', e);
-        mostrarNotificacionExito('Error al agregar productos', 'Error');
+        // El servidor explica lo que la cajera puede resolver (una promo que ya
+        // terminó, una elección que no cabe): se le enseña tal cual.
+        if (e && e.message && /promo/i.test(e.message)) alertaZenit(e.message, 'No se agregó');
+        else mostrarNotificacionExito('Error al agregar productos', 'Error');
         // El uuid NO se limpia: si el envío sí llegó, el reintento lo deduplica.
     } finally {
         _enviandoItemsMesa = false;
@@ -729,6 +839,26 @@ async function confirmarAgregarProductosMesa() {
 }
 
 // ---- Imprimir cuenta ----
+
+/**
+ * Los renglones del ticket de la mesa. Una promo sale como UN renglón con sus
+ * productos debajo (PLAN_OFERTAS_V1 §3.5), igual que en el mostrador.
+ */
+function _filasTicketMesa(items, conNotas = false) {
+    const extras = (it) => resumenModificadores(it.modificadores)
+        ? `<br><span style="color:#555;font-size:0.92em">${esc(resumenModificadores(it.modificadores))}</span>` : '';
+    const nota = (it) => conNotas && it.nota_item ? ` <span style="color:#888">(${esc(it.nota_item)})</span>` : '';
+    return agruparRenglones(items).map(g => g.promo
+        ? `<tr><td>1× ${esc(g.promo.nombre)}${g.items.map(it => `<br><span style="color:#555;font-size:0.92em">&nbsp;&nbsp;${esc(it.nombre)}${resumenModificadores(it.modificadores) ? ' (' + esc(resumenModificadores(it.modificadores)) + ')' : ''}</span>`).join('')}</td><td style="text-align:right">${_fmtMesa(g.promo.total)}</td></tr>`
+        : `<tr><td>${g.item.cantidad}× ${esc(g.item.nombre)}${extras(g.item)}${nota(g.item)}</td><td style="text-align:right">${_fmtMesa(g.item.subtotal)}</td></tr>`
+    ).join('');
+}
+
+/** "Ahorraste $X" al pie, solo si hubo promo. */
+function _filaAhorroMesa(items) {
+    const ahorro = ahorroDePromos(items);
+    return ahorro > 0 ? `<tr><td><b>Ahorraste</b></td><td style="text-align:right"><b>${_fmtMesa(ahorro)}</b></td></tr>` : '';
+}
 
 async function imprimirCuentaMesa() {
     if (!_pedidoMesaActivo) return;
@@ -740,9 +870,7 @@ async function imprimirCuentaMesa() {
     const negocio = ajustes.nombre_negocio || 'Negocio';
     const impresora = ajustes.impresora || '';
     const ahora = new Date().toLocaleString('es-MX');
-    const itemsHtml = items.map(it =>
-        `<tr><td>${it.cantidad}× ${esc(it.nombre)}${resumenModificadores(it.modificadores) ? `<br><span style="color:#555;font-size:0.92em">${esc(resumenModificadores(it.modificadores))}</span>` : ''}</td><td style="text-align:right">${_fmtMesa(it.subtotal)}</td></tr>`
-    ).join('');
+    const itemsHtml = _filasTicketMesa(items);
     const html = `<html><head><style>
         body{font-family:monospace;font-size:12px;width:300px;margin:0;padding:8px;}
         h1{font-size:13px;text-align:center;margin:4px 0;}
@@ -763,7 +891,7 @@ async function imprimirCuentaMesa() {
             <tr><td>Subtotal</td><td style="text-align:right">${_fmtMesa(_d.cfg.incluido ? _d.total : _d.suma)}</td></tr>
             <tr><td>${esc(_d.cfg.nombre)} (${_d.cfg.tasa}%)${_d.cfg.incluido ? ' incl.' : ''}</td><td style="text-align:right">${_fmtMesa(_d.impuesto)}</td></tr>
         </table>` : ''}
-        <table><tr><td class="total">TOTAL</td><td style="text-align:right" class="total">${_fmtMesa(total)}</td></tr></table>
+        <table><tr><td class="total">TOTAL</td><td style="text-align:right" class="total">${_fmtMesa(total)}</td></tr>${_filaAhorroMesa(items)}</table>
         <div class="linea"></div>
         <div class="centro" style="font-size:11px;">Impreso: ${ahora}</div>
     </body></html>`;
@@ -1054,7 +1182,22 @@ function _totalDeLaCuenta() {
  */
 function _unidadesDeLaCuenta() {
     const unidades = [];
-    for (const it of _itemsDeLaCuenta()) {
+    // PROMO (PLAN_OFERTAS_V1, trampa 5): una promo es UNA unidad y va entera a
+    // un solo pago. Cada taco lleva su parte del precio, así que partirla sería
+    // aritméticamente correcto — y dos amigos peleándose por un taco de $14.58.
+    for (const g of agruparRenglones(_itemsDeLaCuenta())) {
+        if (!g.promo) continue;
+        unidades.push({
+            id: 'promo:' + g.promo.grupo,
+            item_id: g.items[0].id,
+            item_ids: g.items.map(it => it.id),
+            nombre: '🎁 ' + g.promo.nombre,
+            subtotal: g.promo.total,
+            pieza: 1,
+            de: 1,
+        });
+    }
+    for (const it of _itemsDeLaCuenta().filter(x => !x.promo_group)) {
         const cant = parseInt(it.cantidad, 10);
         const sub = parseFloat(it.subtotal) || 0;
         // Una cantidad rara (fraccionaria, 0, texto) se trata como un solo bloque:
@@ -1148,7 +1291,7 @@ function _recalcularPagosPorItems() {
         // Con un renglón partido entre dos pagos, su id aparece en los dos: eso
         // es la verdad — los dos pagaron parte de ese renglón. El cuadre lo hace
         // el amount, nunca esta lista (§31).
-        pagosMesa[i].item_ids = [...new Set(suyas.map(u => u.item_id))];
+        pagosMesa[i].item_ids = [...new Set(suyas.flatMap(u => u.item_ids || [u.item_id]))];
         pagosMesa[i].amount = montoDeItems(unidades, suyas.map(u => u.id), total);
     }
     // Las proporciones dejan centavos sueltos: se le cargan al último pago para
@@ -1337,7 +1480,7 @@ async function confirmarCobrarMesa() {
                     notes: pedidoSnap.notas_generales || null,
                     customer_temp_info: pedidoSnap.info_cliente_temp || null,
                     status: 'completado'
-                }, itemsSnap.map(it => ({
+                }, renglonesParaSubir(itemsSnap, it => ({
                     product_id: it.producto_id,
                     quantity: it.cantidad,
                     // El precio BASE, sin extras: el backend suma los
@@ -1455,9 +1598,7 @@ async function imprimirCuentaMesaFinal() {
     const impresora = ajustes.impresora || '';
     const ahora = new Date().toLocaleString('es-MX');
     const metodosLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia' };
-    const itemsHtml = items.map(it =>
-        `<tr><td>${it.cantidad}× ${esc(it.nombre)}${resumenModificadores(it.modificadores) ? `<br><span style="color:#555;font-size:0.92em">${esc(resumenModificadores(it.modificadores))}</span>` : ''}${it.nota_item ? ` <span style="color:#888">(${esc(it.nota_item)})</span>` : ''}</td><td style="text-align:right">${_fmtMesa(it.subtotal)}</td></tr>`
-    ).join('');
+    const itemsHtml = _filasTicketMesa(items, true);
     const html = `<html><head><style>
         body{font-family:monospace;font-size:12px;width:300px;margin:0;padding:8px;}
         h1{font-size:13px;text-align:center;margin:4px 0;}
@@ -1479,6 +1620,7 @@ async function imprimirCuentaMesaFinal() {
             ${(propina || 0) > 0 ? `<tr><td>Propina</td><td style="text-align:right">${_fmtMesa(propina)}</td></tr>
             <tr><td class="total">TOTAL PAGADO</td><td style="text-align:right" class="total">${_fmtMesa(total + propina)}</td></tr>` : ''}
             <tr><td style="color:#555;">Pago</td><td style="text-align:right;color:#555;">${metodosLabel[metodo] || metodo}</td></tr>
+            ${_filaAhorroMesa(items)}
         </table>
         <div class="linea"></div>
         <div class="centro" style="font-size:11px;">Impreso: ${ahora}</div>
