@@ -2598,7 +2598,12 @@ function syncCombos(datos, cb) {
             const placeholders = datos.map(() => '?').join(',');
             const ids = datos.map(d => d.id);
             stmtCombo.finalize(() => {
-                db.run(`DELETE FROM combo_items WHERE combo_id NOT IN (${placeholders})`, ids, () => {
+                // ⚠️ Dentro de un callback ya NO rige el db.serialize de arriba
+                // (§51.3): sin este segundo serialize, el DELETE de cada combo y
+                // sus INSERT corrían en paralelo, y si el DELETE llegaba último
+                // el combo se quedaba SIN sus productos en el equipo.
+                db.serialize(() => {
+                    db.run(`DELETE FROM combo_items WHERE combo_id NOT IN (${placeholders})`, ids);
                     datos.forEach(d => {
                         db.run('DELETE FROM combo_items WHERE combo_id = ?', [d.id]);
                         if (d.items && d.items.length > 0) {

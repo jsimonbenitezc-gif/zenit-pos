@@ -349,22 +349,36 @@ async function cargarMovimientosCaja() {
     }
 }
 
+// Una sola apertura a la vez. Antes, una segunda llamada (doble clic, o un
+// clic mientras la primera esperaba sus await) limpiaba el monto y el motivo
+// DESPUÉS de que el cajero ya los había escrito: "Ingresa un monto mayor a
+// cero" con el modal abierto y los campos vacíos (§51.4).
+let _movAbriendo = false;
+
 async function abrirModalMovimientoCaja() {
+    const modal = document.getElementById('modal-movimiento-caja');
+    if (_movAbriendo || (modal && !modal.classList.contains('hidden'))) return;
     if (!turnoActivo) {
         mostrarNotificacionExito('Abre un turno para registrar movimientos de caja', 'Sin turno');
         return;
     }
     // Registrar aquí un movimiento mientras se mira otra sucursal cruzaría las
     // cajas de ambas (ver CLAUDE.md §24).
-    if (typeof bloquearSiVistaAjena === 'function' && await bloquearSiVistaAjena()) return;
-
-    document.getElementById('mov-caja-monto').value  = '';
-    document.getElementById('mov-caja-motivo').value = '';
-    const pinEl = document.getElementById('mov-caja-pin');
-    if (pinEl) pinEl.value = '';
-    document.getElementById('mov-caja-error').style.display = 'none';
-    await seleccionarTipoMovimiento('retiro');
-    document.getElementById('modal-movimiento-caja').classList.remove('hidden');
+    _movAbriendo = true;
+    try {
+        if (typeof bloquearSiVistaAjena === 'function' && await bloquearSiVistaAjena()) return;
+        await seleccionarTipoMovimiento('retiro');
+        // Se limpia JUSTO antes de enseñarlo, sin ningún await de por medio:
+        // lo que se borre aquí nunca puede ser algo que el cajero ya escribió.
+        document.getElementById('mov-caja-monto').value  = '';
+        document.getElementById('mov-caja-motivo').value = '';
+        const pinEl = document.getElementById('mov-caja-pin');
+        if (pinEl) pinEl.value = '';
+        document.getElementById('mov-caja-error').style.display = 'none';
+        modal.classList.remove('hidden');
+    } finally {
+        _movAbriendo = false;
+    }
     setTimeout(() => document.getElementById('mov-caja-monto')?.focus(), 50);
 }
 

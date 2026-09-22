@@ -273,11 +273,22 @@ class APIClient {
         return await this.request(`/orders/${id}`, { method: 'GET' });
     }
 
+    // ⚠️ Si faltan existencias el servidor NO crea el pedido: responde 200 con
+    // { stock_warning, warnings }. Se vuelve un error para que nadie lo tome por
+    // un pedido creado y lo marque como subido (§56.3; en el celular se perdían
+    // ventas así). Quien sube una venta que YA OCURRIÓ manda skip_stock_check.
     async createOrder(orderData, items) {
-        return await this.request('/orders', {
+        const res = await this.request('/orders', {
             method: 'POST',
             body: { ...orderData, items }
         });
+        if (res && res.stock_warning === true) {
+            const e = new Error('El servidor pidió confirmar existencias y no creó el pedido');
+            e.code = 'STOCK_WARNING';
+            e.warnings = res.warnings || [];
+            throw e;
+        }
+        return res;
     }
 
     async updateOrderStatus(id, status) {

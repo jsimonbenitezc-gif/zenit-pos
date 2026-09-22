@@ -1479,7 +1479,11 @@ async function confirmarCobrarMesa() {
                     order_type: 'comer',
                     notes: pedidoSnap.notas_generales || null,
                     customer_temp_info: pedidoSnap.info_cliente_temp || null,
-                    status: 'completado'
+                    status: 'completado',
+                    // La mesa YA SE COBRÓ: faltar existencias no puede dejarla
+                    // fuera del servidor (sin esto, el aviso de stock se tomaba
+                    // por el pedido creado y se marcaba como sincronizado).
+                    skip_stock_check: true
                 }, renglonesParaSubir(itemsSnap, it => ({
                     product_id: it.producto_id,
                     quantity: it.cantidad,
