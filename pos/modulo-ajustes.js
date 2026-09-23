@@ -1738,27 +1738,37 @@ function _pintarConfigHorario(ajustes = {}) {
     if (grupo) grupo.querySelectorAll('input, button').forEach(el => { el.disabled = !esDueno; });
 }
 
-/** Dibuja las 7 filas del editor a partir de `_horarioEditor`. */
+// El último día que se tocó: debajo de él sale "Copiar a los demás días".
+let _horarioUltimo = null;
+
+/** Dibuja las 7 filas del editor a partir de `_horarioEditor`. Lunes primero. */
 function _renderizarEditorHorario() {
     const cont = document.getElementById('adj-horario-dias');
     if (!cont) return;
     if (!Array.isArray(_horarioEditor)) _horarioEditor = horarioPorDefecto();
 
     const esDueno = (rolActivo === 'dueno');
-    cont.innerHTML = _horarioEditor.map((dia, i) => `
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-            <span style="width:78px;font-size:0.85em;color:#6b7280;">${HORARIO_DIAS_CORTO[i]}</span>
-            <label style="display:flex;align-items:center;gap:4px;font-size:0.8em;color:#6b7280;cursor:pointer;">
+    const orden = [1, 2, 3, 4, 5, 6, 0];   // el índice guardado no cambia (0 = domingo)
+    cont.innerHTML = orden.map(i => {
+        const dia = _horarioEditor[i];
+        const nombre = HORARIO_DIAS_CORTO[i];
+        const copiar = (esDueno && _horarioUltimo === i && !dia.cerrado) ? `
+            <button type="button" class="btn-secondary" style="margin:0 0 8px 40px;padding:4px 12px;font-size:0.8em;"
+                    onclick="_copiarHorarioALosDemas(${i})">Copiar este horario a los demás días</button>` : '';
+        return `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+            <span style="width:34px;flex-shrink:0;font-size:0.85em;color:#6b7280;">${nombre}</span>
+            <label style="display:flex;align-items:center;gap:4px;flex-shrink:0;font-size:0.8em;color:#6b7280;cursor:pointer;">
                 <input type="checkbox" ${dia.cerrado ? 'checked' : ''} ${esDueno ? '' : 'disabled'}
                        onchange="_cambiarDiaHorario(${i}, 'cerrado', this.checked)"> cerrado
             </label>
             <input type="time" value="${esc(dia.abre || '09:00')}" ${dia.cerrado || !esDueno ? 'disabled' : ''}
-                   style="width:110px;" onchange="_cambiarDiaHorario(${i}, 'abre', this.value)">
+                   style="flex:1;min-width:0;" onchange="_cambiarDiaHorario(${i}, 'abre', this.value)">
             <span style="color:#9ca3af;">a</span>
             <input type="time" value="${esc(dia.cierra || '18:00')}" ${dia.cerrado || !esDueno ? 'disabled' : ''}
-                   style="width:110px;" onchange="_cambiarDiaHorario(${i}, 'cierra', this.value)">
-        </div>
-    `).join('');
+                   style="flex:1;min-width:0;" onchange="_cambiarDiaHorario(${i}, 'cierra', this.value)">
+        </div>${copiar}`;
+    }).join('');
 
     const resumen = document.getElementById('adj-horario-resumen');
     if (resumen) resumen.innerText = resumenHorario(_horarioEditor);
@@ -1777,6 +1787,23 @@ function _cambiarDiaHorario(indice, campo, valor) {
     } else {
         dia[campo] = valor;
     }
+    if (campo !== 'cerrado' || !valor) _horarioUltimo = indice;
+    _renderizarEditorHorario();
+}
+
+/**
+ * Copia las horas de un día a los otros seis. Los días CERRADOS se quedan
+ * cerrados (el domingo que no abres no se abre solo), pero reciben las horas,
+ * así que al abrirlos ya traen ese horario. Misma regla que el celular
+ * (src/utils/horarioEditor.js → copiarHorario).
+ */
+function _copiarHorarioALosDemas(indice) {
+    if (!Array.isArray(_horarioEditor)) return;
+    const origen = _horarioEditor[indice];
+    if (!origen || origen.cerrado) return;
+    _horarioEditor = _horarioEditor.map((d, i) =>
+        i === indice ? { ...d } : { ...d, abre: origen.abre, cierra: origen.cierra });
+    _horarioUltimo = null;
     _renderizarEditorHorario();
 }
 
