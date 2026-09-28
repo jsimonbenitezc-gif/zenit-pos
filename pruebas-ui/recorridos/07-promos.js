@@ -253,40 +253,47 @@ module.exports = {
         igual('en el servidor quedan 2 tacos de promo y 2 Cocas, sin "medio 2x1"',
             [itemsAbierta.filter((it) => it.promo_group).length, itemsAbierta.filter((it) => !it.promo_group).length], [2, 1]);
 
-        // Dividir POR ITEMS: la promo es UNA unidad que va entera a un pago.
-        await w.click('#mesa-panel button:has-text("Cobrar")');
+        // COBRAR UNA PARTE (PLAN_CUENTAS_V1): con internet, "cada quien lo suyo" ya
+        // no es la división por items sino "Cobrar una parte". La promo es UNA
+        // fila que se elige ENTERA (§61.4); nunca "medio 2x1".
+        await w.click('#btn-cobrar-parte-mesa');
+        await w.waitForSelector('#modal-parte-mesa:not(.hidden)');
+        igual('la promo aparece UNA vez al elegir la parte (más las Cocas)',
+            [await w.locator('#parte-mesa-lista .parte-fila.promo').count(), await w.locator('#parte-mesa-lista .parte-fila').count()], [1, 2]);
+        await w.click('#parte-mesa-lista .parte-fila.promo');
+        af.dinero('la parte es la promo entera', leerImporte(await w.locator('#parte-mesa-total').innerText()), 35);
+        af.dinero('y quedan las dos Cocas', leerImporte(await w.locator('#parte-mesa-queda').innerText()), 2 * COCA);
+        await w.click('#btn-cobrar-esta-parte');
         await w.waitForSelector('#modal-cobrar-mesa:not(.hidden)');
-        af.dinero('la cuenta es la promo + dos Cocas', leerImporte(await w.locator('#cobrar-mesa-total').innerText()), 35 + 2 * COCA);
-        await w.click('#btn-dividir-mesa');
-        await w.click('#tab-division-items');
-        await w.waitForTimeout(400);
-        const filasUnidad = await w.locator('#lista-items-division select').evaluateAll((s) => s.map((x) => x.dataset.uid));
-        igual('la promo aparece UNA vez en la división (más las dos Cocas)',
-            [filasUnidad.filter((u) => u.startsWith('promo:')).length, filasUnidad.length], [1, 3]);
-        for (const uid of filasUnidad.filter((u) => !u.startsWith('promo:'))) {
-            await w.selectOption('#lista-items-division select[data-uid="' + uid + '"]', '1');
-            await w.waitForTimeout(250);
-        }
-        await w.locator('#lista-pagos-mesa > div').nth(1).locator('select').selectOption('tarjeta');
-        await w.waitForTimeout(300);
-        const montos = await w.locator('#lista-pagos-mesa > div').allInnerTexts();
-        af.cierto('pago 1 = la promo ($35), pago 2 = las Cocas ($50)',
-            /\$35\.00/.test(montos[0]) && /\$50\.00/.test(montos[1]), 'los pagos dicen: ' + JSON.stringify(montos));
+        await w.selectOption('#cobrar-mesa-metodo', 'efectivo');
         await w.click('#btn-confirmar-cobrar-mesa');
         await w.waitForSelector('#modal-cobrar-mesa button:has-text("Imprimir ticket")', { timeout: 20000 });
         await w.click('#modal-cobrar-mesa button:has-text("Imprimir ticket")');
         const ticketMesa = textoDe(await ultimoTicket(app));
-        af.cierto('el ticket de la mesa lleva el nombre del negocio', ticketMesa.includes(NEGOCIO), 'el ticket dice: ' + ticketMesa.slice(0, 200));
-        af.cierto('el ticket de la mesa agrupa la promo y dice "Ahorraste $25.00"',
+        af.cierto('el ticket de la parte lleva el nombre del negocio', ticketMesa.includes(NEGOCIO), 'el ticket dice: ' + ticketMesa.slice(0, 200));
+        af.cierto('el ticket de la parte agrupa la promo y dice "Ahorraste $25.00"',
             /1× Martes 2x1 tacos/.test(ticketMesa) && /Ahorraste \$25\.00/.test(ticketMesa), 'el ticket dice: ' + ticketMesa.slice(0, 500));
+        af.cierto('y dice de qué mesa es la parte', ticketMesa.includes('Mesa Promo · parte 1'), 'el ticket dice: ' + ticketMesa.slice(0, 300));
+        await w.click('#modal-cobrar-mesa button:has-text("Cerrar")');
+        await w.waitForTimeout(500);
+
+        // El resto (las dos Cocas), con el cobro de siempre y con tarjeta.
+        await w.click('#mesa-panel button:has-text("Cobrar y cerrar")');
+        await w.waitForSelector('#modal-cobrar-mesa:not(.hidden)');
+        af.dinero('lo que queda es las dos Cocas', leerImporte(await w.locator('#cobrar-mesa-total').innerText()), 2 * COCA);
+        await w.selectOption('#cobrar-mesa-metodo', 'tarjeta');
+        await w.click('#btn-confirmar-cobrar-mesa');
+        await w.waitForSelector('#modal-cobrar-mesa button:has-text("Cerrar")', { timeout: 20000 });
         await w.click('#modal-cobrar-mesa button:has-text("Cerrar")');
         await aceptarDialogo(app);
 
-        const cobrada = await esperarEnServidor(w, api, (o) => o.table_id && o.paid_at);
-        af.cierto('la mesa quedó COBRADA en el servidor', Boolean(cobrada), 'no hay ninguna mesa cobrada');
-        if (cobrada) {
-            const pagos = (cobrada.payments || []).map((p) => [p.method, parseFloat(p.amount)]).sort();
-            igual('con el reparto de la división', pagos, [['efectivo', 35], ['tarjeta', 50]]);
+        const parte = await esperarEnServidor(w, api, (o) => o.table_id && o.parent_order_id && o.paid_at);
+        const resto = await esperarEnServidor(w, api, (o) => o.table_id && !o.parent_order_id && o.paid_at);
+        af.cierto('la mesa quedó COBRADA en el servidor', Boolean(parte && resto), 'faltan la parte o el resto');
+        if (parte && resto) {
+            igual('la promo en efectivo y las Cocas con tarjeta',
+                [[parte.payment_method, parseFloat(parte.total)], [resto.payment_method, parseFloat(resto.total)]],
+                [['efectivo', 35], ['tarjeta', 50]]);
         }
 
         // ── Al día siguiente la promo ya no existe ──────────────────────────

@@ -123,6 +123,7 @@ function _tiposAuditoria() {
         // PLAN_OFERTAS_V1, Bloque 0
         discount_mismatch:    { icon: svgIconHTML('triangle-alert', 16), label: 'Descuento mayor al configurado' },
         remove_item:          { icon: '➖', label: 'Producto quitado de una cuenta' },
+        separar_cuenta:       { icon: '🧾', label: 'Parte de una cuenta cobrada' },
         offline_price:        { icon: svgIconHTML('triangle-alert', 16), label: 'Precio distinto al del catálogo' },
         cash_movement:        { icon: '💵', label: 'Movimiento de caja' },
         cash_movement_void:   { icon: '💵', label: 'Movimiento de caja anulado' },

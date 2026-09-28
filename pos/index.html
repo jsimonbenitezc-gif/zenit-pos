@@ -500,6 +500,12 @@
                             </button>
                         </div>
                         <div id="mesa-panel-info" style="padding:8px 16px;font-size:0.85em;color:#6b7280;border-bottom:1px solid #f3f4f6;"></div>
+                        <!-- "Ya pagaron" (PLAN_CUENTAS_V1): las partes de esta mesa que ya se
+                             cobraron. Tocarlo muestra cada una y permite reimprimir su ticket. -->
+                        <div id="mesa-panel-partes" class="hidden mesa-partes">
+                            <button type="button" id="mesa-partes-resumen" class="mesa-partes-resumen" onclick="alternarPartesMesa()"></button>
+                            <div id="mesa-partes-lista" class="hidden mesa-partes-lista"></div>
+                        </div>
                         <div id="mesa-panel-items" style="flex:1;overflow-y:auto;padding:8px 0;"></div>
                         <div style="padding:8px 16px;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;">
                             <textarea id="mesa-notas-input" placeholder="Notas de la mesa..." rows="2"
@@ -520,6 +526,12 @@
                             <button class="btn-primary" onclick="abrirModalCobrarMesa()">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px;"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>
                                 Cobrar y cerrar mesa
+                            </button>
+                            <!-- Cobrar comensal por comensal (PLAN_CUENTAS_V1). Solo con
+                                 internet: sin red queda "Dividir la cuenta" de siempre. -->
+                            <button class="btn-secondary hidden" id="btn-cobrar-parte-mesa" onclick="abrirModalParteMesa()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                Cobrar una parte
                             </button>
                             <button class="btn-secondary" style="font-size:0.82em;" onclick="abrirModalAgregarProductosMesa()">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
@@ -3397,6 +3409,8 @@
                 <div style="font-size:0.9em;color:#6b7280;margin-bottom:4px;">Total a cobrar</div>
                 <div id="cobrar-mesa-total" style="font-size:2em;font-weight:700;color:#111827;">$0.00</div>
                 <div id="cobrar-mesa-puntos-info" style="display:none;font-size:0.82em;color:#7c3aed;margin-top:6px;font-weight:600;"></div>
+                <!-- Cobrando UNA PARTE: lo que sigue en la mesa después de este cobro. -->
+                <div id="cobrar-mesa-queda" class="hidden" style="font-size:0.85em;color:#6b7280;margin-top:6px;"></div>
             </div>
             <div class="form-group">
                 <label>Método de pago</label>
@@ -3489,6 +3503,29 @@
         <div class="modal-footer">
             <button class="btn-secondary" onclick="cerrarModalCobrarMesa()">Cancelar</button>
             <button class="btn-primary" id="btn-confirmar-cobrar-mesa" onclick="confirmarCobrarMesa()">Cobrar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Cobrar una parte (PLAN_CUENTAS_V1). El mesero va comensal por
+     comensal: toca lo que paga esta persona y lo cobra; la mesa sigue abierta. -->
+<div id="modal-parte-mesa" class="modal hidden">
+    <div class="modal-content" style="max-width:440px;">
+        <div class="modal-header">
+            <h2>¿Qué paga esta persona?</h2>
+            <button class="modal-close" onclick="cerrarModalParteMesa()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="parte-ayuda">Toca cada producto para pasarlo a esta cuenta.</p>
+            <div id="parte-mesa-lista" class="parte-lista"></div>
+            <div class="parte-resumen">
+                <div><span>Esta parte</span><strong id="parte-mesa-total">$0.00</strong></div>
+                <div><span>Queda en la mesa</span><strong id="parte-mesa-queda">$0.00</strong></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="cerrarModalParteMesa()">Cancelar</button>
+            <button class="btn-primary" id="btn-cobrar-esta-parte" onclick="continuarCobroParteMesa()" disabled>Cobrar esta parte</button>
         </div>
     </div>
 </div>

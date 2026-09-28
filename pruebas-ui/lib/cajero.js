@@ -340,7 +340,8 @@ async function agregarProductosAMesa(app, nombreMesa, productos) {
 async function cobrarMesa(app, { metodo = 'efectivo', propina = 0, propinaMetodo = null, division = null } = {}) {
     const w = app.ventana;
     app.consola.enPaso('cobrar mesa');
-    await w.click('#mesa-panel button:has-text("Cobrar")');
+    // "Cobrar y cerrar": desde PLAN_CUENTAS_V1 también está "Cobrar una parte".
+    await w.click('#mesa-panel button:has-text("Cobrar y cerrar")');
     await w.waitForSelector('#modal-cobrar-mesa:not(.hidden)', { timeout: 10000 });
     const total = leerImporte(await w.locator('#cobrar-mesa-total').innerText());
 
@@ -385,6 +386,55 @@ async function cobrarMesa(app, { metodo = 'efectivo', propina = 0, propinaMetodo
     await aceptarDialogo(app);
     await w.waitForTimeout(800);
     return { total, cobrado };
+}
+
+/**
+ * Cobra UNA PARTE de la mesa abierta en el panel (PLAN_CUENTAS_V1): toca los
+ * productos que paga esta persona (`veces` = cuántas piezas de ese renglón),
+ * sigue a "Cobrar esta parte" y cobra como una mesa (método, división, propina).
+ * Devuelve lo que la pantalla dijo ANTES de cobrar y si llegó al "¡Cobrado!".
+ */
+async function cobrarParteDeMesa(app, { productos, metodo = 'efectivo', division = null, foto = null }) {
+    const w = app.ventana;
+    app.consola.enPaso('cobrar una parte');
+    await w.click('#btn-cobrar-parte-mesa');
+    await w.waitForSelector('#modal-parte-mesa:not(.hidden)', { timeout: 10000 });
+    for (const p of productos) {
+        for (let i = 0; i < (p.veces || 1); i++) {
+            await w.click('#parte-mesa-lista .parte-fila:has(.parte-fila-nombre:has-text("' + p.nombre + '"))');
+            await w.waitForTimeout(150);
+        }
+    }
+    if (foto) await app.foto(foto);
+    const enPantalla = {
+        parte: leerImporte(await w.locator('#parte-mesa-total').innerText()),
+        queda: leerImporte(await w.locator('#parte-mesa-queda').innerText()),
+        boton: (await w.locator('#btn-cobrar-esta-parte').innerText()).trim(),
+    };
+    await w.click('#btn-cobrar-esta-parte');
+    await w.waitForSelector('#modal-cobrar-mesa:not(.hidden)', { timeout: 10000 });
+    enPantalla.titulo = (await w.locator('#modal-cobrar-mesa .modal-header h2').innerText()).trim();
+    enPantalla.total = leerImporte(await w.locator('#cobrar-mesa-total').innerText());
+    if (division) {
+        await w.click('#btn-dividir-mesa');
+        await w.waitForSelector('#seccion-division-mesa:not(.hidden)', { timeout: 5000 });
+        enPantalla.porItemsVisible = await w.locator('#tab-division-items').isVisible();
+        await w.click('#division-mesa-partes button:text-is("' + division.partes + '")');
+        await w.waitForTimeout(600);
+        for (let i = 0; i < (division.metodos || []).length; i++) {
+            await w.locator('#lista-pagos-mesa > div').nth(i).locator('select').selectOption(division.metodos[i]);
+            await w.waitForTimeout(250);
+        }
+    } else {
+        await w.selectOption('#cobrar-mesa-metodo', metodo);
+    }
+    await w.click('#btn-confirmar-cobrar-mesa');
+    await w.waitForSelector('#modal-cobrar-mesa button:has-text("Cerrar")', { timeout: 20000 });
+    enPantalla.cobrado = (await w.locator('#modal-cobrar-mesa .modal-body').innerText()).includes('Cobrado');
+    await w.click('#modal-cobrar-mesa button:has-text("Cerrar")');
+    await w.waitForSelector('#modal-cobrar-mesa', { state: 'hidden', timeout: 10000 });
+    await w.waitForTimeout(600);
+    return enPantalla;
 }
 
 // ── Pedidos ─────────────────────────────────────────────────────────────────
@@ -449,6 +499,7 @@ function leerBase(perfil) {
 }
 
 module.exports = {
+    cobrarParteDeMesa,
     irA, abrirTema, aceptarDialogo, moverInterruptor,
     venderEnMostrador,
     abrirTurno, leerTotalesTurno, registrarMovimiento, cerrarTurno,

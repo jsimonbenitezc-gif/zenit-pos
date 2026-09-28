@@ -153,6 +153,15 @@ function _desgloseMesa(items) {
         ((items || []).reduce((s, i) => s + (parseFloat(i.subtotal) || 0), 0)).toFixed(2)
     );
     const cfg = _cfgImpuestoMesa();
+    // MESA CON PARTES YA COBRADAS (PLAN_CUENTAS_V1): manda el total del SERVIDOR.
+    // Al separar, la mesa queda = antes − parte, así que las partes y el resto
+    // suman exacto lo que se le dijo a la mesa; recalcular aquí desde los
+    // renglones podría mover un centavo de impuesto y el cobro final no cuadraría.
+    const p = _pedidoMesaActivo;
+    if (p && p._isApiOrder && (p.partes || []).length && p.subtotal !== null && p.subtotal !== undefined) {
+        const total = parseFloat(p.total) || 0;
+        return { suma: cfg.incluido ? total : p.subtotal, subtotal: p.subtotal, impuesto: parseFloat(p.impuesto) || 0, total, cfg };
+    }
     const d = desglosarImpuesto(suma, cfg);
     return { suma, subtotal: d.subtotal, impuesto: d.impuesto, total: d.total, cfg };
 }
@@ -194,6 +203,8 @@ function _normalizarPedidoApi(order) {
         impuesto_incluido: order.tax_included,
         // Reparto por método de pago (BLOQUE 10), para el ticket de la cuenta.
         payments: Array.isArray(order.payments) ? order.payments : [],
+        // "Ya pagaron" (PLAN_CUENTAS_V1): las partes de esta mesa ya cobradas.
+        partes: Array.isArray(order.partes) ? order.partes : [],
         fecha_pedido: order.createdAt,
         comensales: order.guests || 0,
         notas_generales: order.notes || null,
@@ -383,6 +394,7 @@ function cerrarPanelMesa() {
 function _renderizarPanelMesa() {
     const el = document.getElementById('mesa-panel-items');
     if (!el || !_pedidoMesaActivo) return;
+    _renderizarPartesMesa();
     const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
     if (items.length === 0) {
         el.innerHTML = `<div style="text-align:center;padding:20px;color:#9ca3af;font-size:0.9em;">Sin productos aún</div>`;
@@ -923,6 +935,7 @@ function _resetearPropinaMesa() {
 
 /** Total de la mesa que se está cobrando, para calcular los porcentajes. */
 function _totalMesaEnCobro() {
+    if (_parteEnCobro) return _parteEnCobro.total;
     if (!_pedidoMesaActivo) return 0;
     return _desgloseMesa(_parsearItemsMesa(_pedidoMesaActivo.items_raw)).total;
 }
@@ -1012,8 +1025,11 @@ function alCambiarMetodoPropinaMesa() {
     if (sel) propinaMesaMetodo = sel.value;
 }
 
-async function abrirModalCobrarMesa() {
+async function abrirModalCobrarMesa(opciones = {}) {
     if (!_pedidoMesaActivo) return;
+    _guardarHtmlCobroMesa();
+    // Cobrando UNA PARTE (PLAN_CUENTAS_V1): { items, total, queda, uuid }.
+    _parteEnCobro = opciones.parte || null;
     const items = _parsearItemsMesa(_pedidoMesaActivo.items_raw);
 
     // ⚠️ UNA MESA VACÍA SE LIBERA, NO SE COBRA.
@@ -1040,8 +1056,15 @@ async function abrirModalCobrarMesa() {
         return;
     }
     // Lo que se cobra ya trae el impuesto: el cajero debe pedir ese monto exacto.
-    const total = _desgloseMesa(items).total;
+    const total = _parteEnCobro ? _parteEnCobro.total : _desgloseMesa(items).total;
     document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(total);
+    const h2Cobro = document.querySelector('#modal-cobrar-mesa .modal-header h2');
+    if (h2Cobro) h2Cobro.textContent = _parteEnCobro ? 'Cobrar una parte' : 'Cobrar mesa';
+    const queda = document.getElementById('cobrar-mesa-queda');
+    if (queda) {
+        queda.classList.toggle('hidden', !_parteEnCobro);
+        queda.textContent = _parteEnCobro ? 'Queda en la mesa: ' + _fmtMesa(_parteEnCobro.queda) : '';
+    }
     document.getElementById('cobrar-mesa-metodo').value = 'efectivo';
     // La propina y la división arrancan en cero en cada cobro: no se heredan de
     // la mesa anterior (un reparto viejo cobraría mal la cuenta nueva).
@@ -1070,6 +1093,7 @@ async function abrirModalCobrarMesa() {
 function cerrarModalCobrarMesa() {
     // Si el modal está en estado de "cobrado", restaurarlo antes de ocultar
     if (_cobroMesaSnap) { _cerrarCobrarMesaFinal(); return; }
+    _parteEnCobro = null;
     document.getElementById('modal-cobrar-mesa').classList.add('hidden');
 }
 
@@ -1097,7 +1121,12 @@ let asignacionItems = {};         // { itemId: indiceDePago }
 
 function _resetearDivisionMesa() {
     divisionMesaActiva = false;
-    modoDivisionMesa = 'items';
+    // PLAN_CUENTAS_V1: con internet, "cada quien lo suyo" es "Cobrar una parte";
+    // aquí queda solo partes iguales (lo que falta entre N). Sin red, lo de siempre.
+    const conPartes = _mesaEnLinea();
+    modoDivisionMesa = conPartes ? 'partes' : 'items';
+    const tabItems = document.getElementById('tab-division-items');
+    if (tabItems) tabItems.classList.toggle('hidden', conPartes);
     pagosMesa = [];
     asignacionItems = {};
     const seccion = document.getElementById('seccion-division-mesa');
@@ -1167,6 +1196,7 @@ function _itemsDeLaCuenta() {
 }
 
 function _totalDeLaCuenta() {
+    if (_parteEnCobro) return _parteEnCobro.total;
     return _desgloseMesa(_itemsDeLaCuenta()).total;
 }
 
@@ -1402,6 +1432,7 @@ function _actualizarBotonCobrarMesa() {
 
 async function confirmarCobrarMesa() {
     if (!_pedidoMesaActivo) return;
+    if (_parteEnCobro) return _confirmarCobroParteMesa();
 
     // Con la cuenta dividida el método sale del reparto ('multiple' si hay
     // varios); el selector de arriba deja de mandar. Se valida ANTES de cobrar
@@ -1515,6 +1546,12 @@ async function confirmarCobrarMesa() {
             }
         }
 
+        // Guardar snapshot para imprimir. ANTES de la impresión automática: estaba
+        // después, así que imprimirCuentaMesaFinal() lo encontraba vacío y el ticket
+        // automático de una mesa nunca salía.
+        // La propina entra al snapshot para poder imprimirla en el ticket (BLOQUE 9).
+        _cobroMesaSnap = { pedido: pedidoSnap, items: itemsSnap, total: totalSnap, metodo, propina: propinaSnap };
+
         // Impresión automática (Ajustes → "Imprimir el ticket automáticamente").
         // Mismo ajuste del equipo que usa la venta de mostrador: si esta caja
         // siempre imprime, la cuenta de la mesa sale sola. El modal de éxito se
@@ -1531,32 +1568,7 @@ async function confirmarCobrarMesa() {
         }
 
         // Mostrar estado de éxito con botón de imprimir
-        document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(totalSnap);
-        const footer = document.querySelector('#modal-cobrar-mesa .modal-footer');
-        if (footer) {
-            footer.innerHTML = `
-                <button class="btn-secondary" onclick="_cerrarCobrarMesaFinal()">Cerrar</button>
-                <button class="btn-primary" onclick="imprimirCuentaMesaFinal()">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>
-                    Imprimir ticket
-                </button>`;
-        }
-        const body = document.querySelector('#modal-cobrar-mesa .modal-body');
-        if (body) {
-            const metodosLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia' };
-            body.innerHTML = `
-                <div style="text-align:center;padding:8px 0;">
-                    <div style="font-size:2.5em;margin-bottom:6px;">✓</div>
-                    <div style="font-weight:700;font-size:1.1em;color:#16a34a;margin-bottom:4px;">¡Cobrado!</div>
-                    <div style="font-size:1.8em;font-weight:700;">${_fmtMesa(totalSnap)}</div>
-                    <div style="color:#6b7280;font-size:0.9em;margin-top:4px;">${metodosLabel[metodo] || metodo}</div>
-                </div>`;
-        }
-        document.querySelector('#modal-cobrar-mesa .modal-header h2').textContent = 'Pago completado';
-
-        // Guardar snapshot para imprimir
-        // La propina entra al snapshot para poder imprimirla en el ticket (BLOQUE 9).
-        _cobroMesaSnap = { pedido: pedidoSnap, items: itemsSnap, total: totalSnap, metodo, propina: propinaSnap };
+        _pintarCobradoMesa(totalSnap, metodo);
 
         cerrarPanelMesa();
         await cargarVistaMesas();
@@ -1568,27 +1580,59 @@ async function confirmarCobrarMesa() {
 
 let _cobroMesaSnap = null;
 
+// El HTML de la ventana de cobro tal como viene en index.html. El "¡Cobrado!"
+// reescribe su cuerpo y su pie; al cerrarlo se vuelve a ESTO. Antes se rearmaba
+// con una copia a mano que no traía la propina, "Dividir la cuenta", los puntos
+// ni el id del botón: la segunda mesa cobrada en el turno ya no podía dividirse
+// ni llevar propina. Con varias partes por mesa (PLAN_CUENTAS_V1) pasa en cada
+// cobro, así que se guarda el original la primera vez que se abre.
+let _htmlCobroMesa = null;
+
+function _guardarHtmlCobroMesa() {
+    if (_htmlCobroMesa || _cobroMesaSnap) return;
+    const body = document.querySelector('#modal-cobrar-mesa .modal-body');
+    const footer = document.querySelector('#modal-cobrar-mesa .modal-footer');
+    if (body && footer) _htmlCobroMesa = { body: body.innerHTML, footer: footer.innerHTML };
+}
+
+const _ETIQUETA_METODO_MESA = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', multiple: 'Varios métodos' };
+
+/** Convierte la ventana de cobro en el "¡Cobrado!" con el botón de imprimir. */
+function _pintarCobradoMesa(total, metodo, detalle = '') {
+    document.getElementById('cobrar-mesa-total').textContent = _fmtMesa(total);
+    const footer = document.querySelector('#modal-cobrar-mesa .modal-footer');
+    if (footer) {
+        footer.innerHTML = `
+            <button class="btn-secondary" onclick="_cerrarCobrarMesaFinal()">Cerrar</button>
+            <button class="btn-primary" onclick="imprimirCuentaMesaFinal()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>
+                Imprimir ticket
+            </button>`;
+    }
+    const body = document.querySelector('#modal-cobrar-mesa .modal-body');
+    if (body) {
+        body.innerHTML = `
+            <div style="text-align:center;padding:8px 0;">
+                <div style="font-size:2.5em;margin-bottom:6px;">✓</div>
+                <div style="font-weight:700;font-size:1.1em;color:#16a34a;margin-bottom:4px;">¡Cobrado!</div>
+                <div style="font-size:1.8em;font-weight:700;">${_fmtMesa(total)}</div>
+                <div style="color:#6b7280;font-size:0.9em;margin-top:4px;">${esc(_ETIQUETA_METODO_MESA[metodo] || metodo)}</div>
+                ${detalle ? `<div style="color:#6b7280;font-size:0.9em;margin-top:8px;">${esc(detalle)}</div>` : ''}
+            </div>`;
+    }
+    document.querySelector('#modal-cobrar-mesa .modal-header h2').textContent = 'Pago completado';
+}
+
 function _cerrarCobrarMesaFinal() {
     _cobroMesaSnap = null; // Limpiar PRIMERO para romper el ciclo de recursión
-    // Restaurar modal a su estado original
+    _parteEnCobro = null;
+    // Restaurar el modal a su estado original (ver _guardarHtmlCobroMesa).
     const footer = document.querySelector('#modal-cobrar-mesa .modal-footer');
-    if (footer) footer.innerHTML = `
-        <button class="btn-secondary" onclick="cerrarModalCobrarMesa()">Cancelar</button>
-        <button class="btn-primary" onclick="confirmarCobrarMesa()">Cobrar</button>`;
     const body = document.querySelector('#modal-cobrar-mesa .modal-body');
-    if (body) body.innerHTML = `
-        <div style="text-align:center;margin-bottom:16px;">
-            <div style="font-size:0.9em;color:#6b7280;margin-bottom:4px;">Total a cobrar</div>
-            <div id="cobrar-mesa-total" style="font-size:2em;font-weight:700;color:#111827;">$0.00</div>
-        </div>
-        <div class="form-group">
-            <label>Método de pago</label>
-            <select id="cobrar-mesa-metodo" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:1em;box-sizing:border-box;">
-                <option value="efectivo">Efectivo</option>
-                <option value="tarjeta">Tarjeta</option>
-                <option value="transferencia">Transferencia</option>
-            </select>
-        </div>`;
+    if (_htmlCobroMesa) {
+        if (footer) footer.innerHTML = _htmlCobroMesa.footer;
+        if (body) body.innerHTML = _htmlCobroMesa.body;
+    }
     const h2 = document.querySelector('#modal-cobrar-mesa .modal-header h2');
     if (h2) h2.textContent = 'Cobrar mesa';
     // Ocultar directamente sin llamar cerrarModalCobrarMesa() para evitar recursión
@@ -1597,13 +1641,20 @@ function _cerrarCobrarMesaFinal() {
 
 async function imprimirCuentaMesaFinal() {
     if (!_cobroMesaSnap) return;
-    const { pedido, items, total, metodo, propina } = _cobroMesaSnap;
+    return _imprimirTicketMesa(_cobroMesaSnap);
+}
+
+/**
+ * El ticket de una venta de mesa. `etiqueta` ("Mesa 4 · parte 2") solo la
+ * llevan las partes de una mesa cobrada por partes (PLAN_CUENTAS_V1).
+ */
+async function _imprimirTicketMesa({ pedido, items, total, metodo, propina, etiqueta }) {
     const ajustes = await window.api.obtenerAjustes();
     // La clave es `business_name`, la que guarda Ajustes (§68.3); `nombre_negocio` no lo escribe nadie.
     const negocio = ajustes.business_name || 'Mi Negocio';
     const impresora = ajustes.impresora || '';
     const ahora = new Date().toLocaleString('es-MX');
-    const metodosLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia' };
+    const metodosLabel = _ETIQUETA_METODO_MESA;
     const itemsHtml = _filasTicketMesa(items, true);
     const html = `<html><head><style>
         body{font-family:monospace;font-size:12px;width:300px;margin:0;padding:8px;}
@@ -1617,6 +1668,7 @@ async function imprimirCuentaMesaFinal() {
         <h1>${esc(negocio)}</h1>
         <div class="linea"></div>
         <div class="centro"><b>TICKET DE VENTA</b></div>
+        ${etiqueta ? `<div class="centro">${esc(etiqueta)}</div>` : ''}
         ${pedido.notas_generales ? `<div class="centro" style="font-size:11px;color:#666;">${esc(pedido.notas_generales)}</div>` : ''}
         <div class="linea"></div>
         <table>${itemsHtml}</table>
@@ -1635,6 +1687,317 @@ async function imprimirCuentaMesaFinal() {
         await window.api.imprimirTicket(html, impresora);
     } catch(e) {
         console.error('Error imprimiendo ticket:', e);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// COBRAR UNA PARTE (PLAN_CUENTAS_V1, §70)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// El mesero va comensal por comensal: "¿qué pagas tú?" → cobra → "¿y tú?".
+// Cada parte es una VENTA APARTE en el servidor (POST /orders/:id/separar): los
+// productos salen de la mesa a un pedido que nace cobrado, y la mesa sigue
+// abierta con lo que queda. La caja, el corte y los reportes no cambian.
+//
+// ⚠️ SOLO CON INTERNET. Sin red el botón no sale y queda "Dividir la cuenta" de
+// siempre (§31): separar pedidos sin red y sincronizarlo es otro plan.
+// ⚠️ El inventario no se toca: se descontó al agregar a la mesa.
+
+let _seleccionParte = {};   // { item_id: cantidad } · { 'promo:<grupo>': 1 }
+let _parteEnCobro = null;   // { items: [{item_id, quantity}], total, queda, uuid }
+let _partesMesaAbiertas = false;
+
+function _mesaEnLinea() {
+    return !!(modoConectado && apiClient && tokenActual);
+}
+
+// Cuántas piezas tiene un renglón. Una cantidad rara (0.75 kg) es UN bloque.
+function _piezasDeRenglon(it) {
+    const c = parseInt(it.cantidad, 10);
+    return Number.isFinite(c) && c > 1 && String(c) === String(it.cantidad).replace(/\.0+$/, '') ? c : 1;
+}
+
+/** Las unidades de la mesa: una promo es 1; un renglón de 3 cervezas, 3. */
+function _unidadesMesa(items) {
+    return agruparRenglones(items).reduce((n, g) => n + (g.promo ? 1 : _piezasDeRenglon(g.item)), 0);
+}
+
+const _r2Mesa = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+
+/**
+ * Lo elegido para la parte, con su dinero. Es la MISMA cuenta que hace el
+ * servidor (routes/orders.js, /separar): la porción de un renglón partido es
+ * proporcional a su subtotal, la parte se desglosa con la tasa CONGELADA de la
+ * mesa, y lo que queda es el total de la mesa MENOS la parte.
+ */
+function _calcularParteMesa() {
+    const items = _parsearItemsMesa(_pedidoMesaActivo?.items_raw);
+    const cuerpo = [];
+    let base = 0, unidades = 0;
+    for (const g of agruparRenglones(items)) {
+        if (g.promo) {
+            if (!_seleccionParte['promo:' + g.promo.grupo]) continue;
+            // Una promo sale ENTERA (§61.4): basta un renglón, el servidor arrastra el grupo.
+            cuerpo.push({ item_id: g.items[0].id });
+            base += g.items.reduce((s, it) => s + _r2Mesa(it.subtotal), 0);
+            unidades += 1;
+            continue;
+        }
+        const it = g.item;
+        const max = _piezasDeRenglon(it);
+        const q = Math.min(_seleccionParte[it.id] || 0, max);
+        if (q <= 0) continue;
+        cuerpo.push({ item_id: it.id, quantity: max === 1 ? undefined : q });
+        base += q === max ? _r2Mesa(it.subtotal) : _r2Mesa(parseFloat(it.subtotal) * q / max);
+        unidades += q;
+    }
+    base = _r2Mesa(base);
+    const total = desglosarImpuesto(base, _cfgImpuestoMesa()).total;
+    const totalMesa = _desgloseMesa(items).total;
+    return {
+        items: cuerpo,
+        total,
+        queda: _r2Mesa(totalMesa - total),
+        vacia: unidades === 0,
+        todo: unidades > 0 && unidades >= _unidadesMesa(items),
+    };
+}
+
+/** El renglón "Ya pagaron" y el botón "Cobrar una parte" del panel. */
+function _renderizarPartesMesa() {
+    const p = _pedidoMesaActivo;
+    const btn = document.getElementById('btn-cobrar-parte-mesa');
+    if (btn) {
+        const items = p ? _parsearItemsMesa(p.items_raw) : [];
+        btn.classList.toggle('hidden', !(p && p._isApiOrder && _mesaEnLinea() && _unidadesMesa(items) >= 2));
+    }
+    const cont = document.getElementById('mesa-panel-partes');
+    if (!cont) return;
+    const partes = (p && p.partes) || [];
+    cont.classList.toggle('hidden', partes.length === 0);
+    if (!partes.length) { _partesMesaAbiertas = false; return; }
+    const suma = partes.reduce((s, x) => s + Math.round((parseFloat(x.total) || 0) * 100), 0) / 100;
+    document.getElementById('mesa-partes-resumen').innerHTML =
+        '<span>Ya pagaron: ' + partes.length + ' parte' + (partes.length !== 1 ? 's' : '') + ' · ' + _fmtMesa(suma) + '</span>' +
+        '<span>' + (_partesMesaAbiertas ? '▴' : '▾') + '</span>';
+    const lista = document.getElementById('mesa-partes-lista');
+    lista.classList.toggle('hidden', !_partesMesaAbiertas);
+    lista.innerHTML = partes.map((x, i) =>
+        '<div class="mesa-parte-fila">' +
+            '<span>Parte ' + (i + 1) + ' · ' + esc(_ETIQUETA_METODO_MESA[x.payment_method] || x.payment_method || '') +
+            (x.status === 'devuelto' ? ' · devuelta' : '') + '</span>' +
+            '<strong>' + _fmtMesa(x.total) + '</strong>' +
+            '<button type="button" onclick="reimprimirParteMesa(' + parseInt(x.id, 10) + ', ' + (i + 1) + ')" title="Reimprimir su ticket">Ticket</button>' +
+        '</div>'
+    ).join('');
+}
+
+function alternarPartesMesa() {
+    _partesMesaAbiertas = !_partesMesaAbiertas;
+    _renderizarPartesMesa();
+}
+
+async function reimprimirParteMesa(orderId, numero) {
+    try {
+        const orden = await apiClient.getOrderDetails(orderId);
+        const n = _normalizarPedidoApi(orden);
+        const mesa = _mesasData.find(m => m.id === _mesaActivaId);
+        await _imprimirTicketMesa({
+            pedido: n,
+            items: _parsearItemsMesa(n.items_raw),
+            total: parseFloat(orden.total) || 0,
+            metodo: orden.payment_method,
+            propina: parseFloat(orden.tip_amount) || 0,
+            etiqueta: (mesa?.nombre || 'Mesa') + ' · parte ' + numero,
+        });
+    } catch (e) {
+        console.error('Error reimprimiendo la parte:', e);
+        alertaZenit(e.message || 'No se pudo leer esa parte.', 'No se imprimió');
+    }
+}
+
+function abrirModalParteMesa() {
+    if (!_pedidoMesaActivo) return;
+    if (!_mesaEnLinea()) {
+        alertaZenit('Cobrar por partes necesita internet. Usa "Dividir la cuenta" al cobrar.', 'Sin conexión');
+        return;
+    }
+    _seleccionParte = {};
+    _renderizarParteMesa();
+    document.getElementById('modal-parte-mesa').classList.remove('hidden');
+}
+
+function cerrarModalParteMesa() {
+    _seleccionParte = {};
+    document.getElementById('modal-parte-mesa').classList.add('hidden');
+}
+
+function _renderizarParteMesa() {
+    const modal = document.getElementById('modal-parte-mesa');
+    const lista = modal && modal.querySelector('#parte-mesa-lista');
+    if (!lista) return;
+    const items = _parsearItemsMesa(_pedidoMesaActivo?.items_raw);
+    lista.innerHTML = agruparRenglones(items).map(g => {
+        if (g.promo) {
+            const clave = 'promo:' + g.promo.grupo;
+            const elegida = !!_seleccionParte[clave];
+            return '<button type="button" class="parte-fila promo' + (elegida ? ' elegida' : '') + '"' +
+                ' data-clave="' + esc(clave) + '" onclick="tocarRenglonParte(this.dataset.clave)">' +
+                '<div class="parte-fila-texto"><div class="parte-fila-nombre">🎁 ' + esc(g.promo.nombre) + '</div>' +
+                '<div class="parte-fila-detalle">' + esc(g.items.map(it => it.nombre).join(', ')) + ' · ' + _fmtMesa(g.promo.total) + '</div></div>' +
+                (elegida ? '<span class="parte-fila-cuenta">✓</span>' : '') +
+            '</button>';
+        }
+        const it = g.item;
+        const max = _piezasDeRenglon(it);
+        const n = Math.min(_seleccionParte[it.id] || 0, max);
+        const extras = resumenModificadores(it.modificadores);
+        return '<button type="button" class="parte-fila' + (n > 0 ? ' elegida' : '') + '"' +
+            ' data-clave="' + it.id + '" onclick="tocarRenglonParte(this.dataset.clave)">' +
+            '<div class="parte-fila-texto"><div class="parte-fila-nombre">' + esc(it.nombre) + '</div>' +
+            '<div class="parte-fila-detalle">' + (extras ? esc(extras) + ' · ' : '') +
+                (max > 1 ? max + ' × ' + _fmtMesa(parseFloat(it.subtotal) / max) : _fmtMesa(it.subtotal)) + '</div></div>' +
+            (n > 0 ? '<span class="parte-fila-cuenta">' + (max > 1 ? n + ' de ' + max : '✓') + '</span>' : '') +
+            (n > 0 && max > 1
+                ? '<span class="parte-quitar" role="button" title="Uno menos" data-clave="' + it.id + '"' +
+                  ' onclick="event.stopPropagation(); quitarUnoParte(this.dataset.clave)">−</span>'
+                : '') +
+        '</button>';
+    }).join('');
+
+    const c = _calcularParteMesa();
+    modal.querySelector('#parte-mesa-total').textContent = _fmtMesa(c.vacia ? 0 : c.total);
+    modal.querySelector('#parte-mesa-queda').textContent = _fmtMesa(c.vacia ? _desgloseMesa(items).total : c.queda);
+    const btn = modal.querySelector('#btn-cobrar-esta-parte');
+    btn.disabled = c.vacia;
+    // Si esta persona se lleva TODO lo que queda, no se separa nada: es el cobro
+    // normal de la mesa (así no quedan pedidos vacíos).
+    btn.textContent = c.todo ? 'Es toda la cuenta: cobrar' : 'Cobrar esta parte';
+}
+
+/** Tocar un producto: pasa uno más a esta parte (una promo, entera). */
+function tocarRenglonParte(clave) {
+    if (String(clave).startsWith('promo:')) {
+        if (_seleccionParte[clave]) delete _seleccionParte[clave];
+        else _seleccionParte[clave] = 1;
+    } else {
+        const it = _parsearItemsMesa(_pedidoMesaActivo?.items_raw).find(x => String(x.id) === String(clave));
+        if (!it) return;
+        const max = _piezasDeRenglon(it);
+        const n = _seleccionParte[it.id] || 0;
+        // Con una sola pieza el toque alterna; con varias suma hasta el tope.
+        if (max === 1) {
+            if (n) delete _seleccionParte[it.id]; else _seleccionParte[it.id] = 1;
+        } else if (n < max) {
+            _seleccionParte[it.id] = n + 1;
+        }
+    }
+    _renderizarParteMesa();
+}
+
+function quitarUnoParte(clave) {
+    const n = (_seleccionParte[clave] || 0) - 1;
+    if (n > 0) _seleccionParte[clave] = n; else delete _seleccionParte[clave];
+    _renderizarParteMesa();
+}
+
+function continuarCobroParteMesa() {
+    const c = _calcularParteMesa();
+    if (c.vacia) return;
+    cerrarModalParteMesa();
+    if (c.todo) { abrirModalCobrarMesa(); return; }
+    abrirModalCobrarMesa({
+        parte: { items: c.items, total: c.total, queda: c.queda, uuid: _generarUuid() },
+    });
+}
+
+async function _confirmarCobroParteMesa() {
+    const parte = _parteEnCobro;
+    if (!parte || !_pedidoMesaActivo) return;
+    if (!_mesaEnLinea()) {
+        alertaZenit('Se perdió la conexión. Cobrar por partes necesita internet; intenta de nuevo o cobra la mesa completa.', 'Sin conexión');
+        return;
+    }
+    let pagos = null;
+    if (divisionMesaActiva) {
+        const v = validarPagos(pagosMesa, parte.total);
+        if (!v.ok) { alertaZenit(v.error); return; }
+        pagos = pagosMesa.map(pago => ({
+            method: pago.method, amount: pago.amount, tip_amount: pago.tip_amount || 0,
+        }));
+    }
+    const metodo = divisionMesaActiva
+        ? metodoResumenPagos(pagosMesa)
+        : document.getElementById('cobrar-mesa-metodo').value;
+    const propina = hayPropinas() ? (propinaMesaActual || 0) : 0;
+    const propinaMetodo = propina > 0 ? normalizarMetodoPropina(propinaMesaMetodo, metodo) : null;
+    const mesaId = _mesaActivaId;
+    const btn = document.getElementById('btn-confirmar-cobrar-mesa');
+    if (btn) btn.disabled = true;
+    try {
+        // Un solo uuid por INTENCIÓN (se creó al elegir la parte): si la
+        // respuesta se pierde, el reintento devuelve la misma parte, no cobra dos.
+        const r = await apiClient.separarCuenta(_pedidoMesaActivo.id, {
+            items: parte.items,
+            paymentMethod: metodo,
+            tipAmount: pagos ? 0 : propina,
+            tipMethod: pagos ? null : propinaMetodo,
+            payments: pagos,
+            nombreEnPuesto: nombreActivo || '',
+            clientUuid: parte.uuid,
+        });
+
+        const mesaNorm = _normalizarPedidoApi(r.mesa);
+        mesaNorm.partes = Array.isArray(r.partes) ? r.partes : [];
+        _pedidosMesa[mesaId] = mesaNorm;
+        if (_mesaActivaId === mesaId) _pedidoMesaActivo = mesaNorm;
+
+        const parteNorm = _normalizarPedidoApi(r.parte);
+        const mesa = _mesasData.find(m => m.id === mesaId);
+        const numero = mesaNorm.partes.findIndex(x => x.id === r.parte.id) + 1 || mesaNorm.partes.length;
+        const totalParte = parseFloat(r.parte.total) || 0;
+        const metodoParte = r.parte.payment_method || metodo;
+
+        // Puntos: los gana quien paga, sobre lo que pagó (igual que el cobro de la mesa).
+        if (_pedidoMesaActivo && _pedidoMesaActivo.cliente_id) {
+            const puntosGanados = await calcularPuntosGanados(totalParte);
+            if (puntosGanados > 0) {
+                syncLoyaltyBackend(_pedidoMesaActivo.cliente_id, { points_delta: puntosGanados });
+                mostrarNotificacionExito(`+${puntosGanados} puntos acumulados`, 'Puntos');
+            }
+        }
+
+        _cobroMesaSnap = {
+            pedido: parteNorm,
+            items: _parsearItemsMesa(parteNorm.items_raw),
+            total: totalParte,
+            metodo: metodoParte,
+            propina: parseFloat(r.parte.tip_amount) || 0,
+            etiqueta: (mesa?.nombre || 'Mesa') + ' · parte ' + numero,
+        };
+        try {
+            const ajustesEquipo = await window.api.obtenerAjustes();
+            if (ajustesEquipo && ajustesEquipo.impresora_auto === 'true') imprimirCuentaMesaFinal();
+        } catch (e) {
+            console.warn('No se pudo leer el ajuste de impresión automática:', e);
+        }
+
+        _pintarCobradoMesa(totalParte, metodoParte, 'Queda en la mesa: ' + _fmtMesa(mesaNorm.total));
+        // La mesa SIGUE abierta: el panel se queda, con lo que falta y "Ya pagaron".
+        if (_mesaActivaId === mesaId) _renderizarPanelMesa();
+        _renderizarTarjetasMesas();
+    } catch (e) {
+        console.error('Error cobrando la parte:', e);
+        // El servidor explica lo que pasó (la mesa cambió, ya se cobró, el reparto
+        // no cuadra…): se enseña tal cual. El uuid se conserva: si la parte SÍ se
+        // cobró y solo se perdió la respuesta, reintentar la devuelve.
+        await alertaZenit(e.message || 'No se pudo cobrar esta parte.', 'No se cobró');
+        if (/actualiza|ya no est|toda la cuenta|no cuadra|descuento/i.test(e.message || '')) {
+            _cerrarCobrarMesaFinal();
+            await cargarVistaMesas();
+        }
+    } finally {
+        if (btn) btn.disabled = false;
     }
 }
 

@@ -2828,3 +2828,58 @@ body.dark .ajustes-tema, body.dark .ajustes-lista { background: #0b1220; border-
 body.dark .ajustes-fila { color: #e5e7eb; border-color: #1e293b; }
 body.dark .ajustes-fila:hover { background: #111a2e; }
 body.dark .ajustes-tema-estado, body.dark .ajustes-fila-estado { color: #94a3b8; }
+
+/* ── Cobrar una mesa por partes (PLAN_CUENTAS_V1) ─────────────────────────── */
+.mesa-partes { padding: 8px 16px; border-bottom: 1px solid #f3f4f6; }
+.mesa-partes-resumen {
+    width: 100%; display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 10px; border: 1px solid #bbf7d0; border-radius: 8px; background: #f0fdf4;
+    color: #166534; font: inherit; font-size: 0.85em; font-weight: 600; cursor: pointer; text-align: left;
+}
+.mesa-partes-lista { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.mesa-parte-fila {
+    display: flex; align-items: center; gap: 8px; font-size: 0.82em; color: #374151;
+    padding: 4px 2px;
+}
+.mesa-parte-fila span:first-child { flex: 1; }
+.mesa-parte-fila button {
+    padding: 3px 8px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff;
+    font-size: 0.95em; cursor: pointer; color: #374151;
+}
+.parte-ayuda { margin: 0 0 10px; font-size: 0.88em; color: #6b7280; }
+.parte-lista { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; }
+.parte-fila {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 10px 12px; border: 2px solid #e5e7eb; border-radius: 10px; background: #fff;
+    cursor: pointer; text-align: left; font: inherit; color: #111827;
+}
+.parte-fila:hover { border-color: #93c5fd; }
+.parte-fila.elegida { border-color: #2563eb; background: #eff6ff; }
+.parte-fila.promo { border-left: 4px solid #f59e0b; }
+.parte-fila-texto { flex: 1; min-width: 0; }
+.parte-fila-nombre { font-weight: 600; font-size: 0.92em; }
+.parte-fila-detalle { font-size: 0.78em; color: #6b7280; }
+.parte-fila-cuenta { font-weight: 700; color: #1d4ed8; font-size: 0.9em; white-space: nowrap; }
+.parte-quitar {
+    width: 28px; height: 28px; border-radius: 50%; border: none; flex-shrink: 0;
+    background: #dbeafe; color: #1d4ed8; font-weight: 700; font-size: 1.1em; cursor: pointer; line-height: 1;
+}
+.parte-resumen {
+    margin-top: 12px; padding: 12px; border-radius: 10px; background: #f8fafc;
+    display: flex; flex-direction: column; gap: 4px; font-size: 0.92em;
+}
+.parte-resumen div { display: flex; justify-content: space-between; }
+.parte-resumen div:first-child strong { color: #1d4ed8; font-size: 1.15em; }
+.parte-resumen div:last-child { color: #6b7280; }
+#btn-cobrar-esta-parte:disabled { opacity: 0.5; cursor: not-allowed; }
+
+body.dark .mesa-partes { border-color: #1e293b; }
+body.dark .mesa-partes-resumen { background: #052e16; border-color: #14532d; color: #86efac; }
+body.dark .mesa-parte-fila { color: #e5e7eb; }
+body.dark .mesa-parte-fila button { background: #111a2e; border-color: #334155; color: #e5e7eb; }
+body.dark .parte-fila { background: #0b1220; border-color: #1e293b; color: #e5e7eb; }
+body.dark .parte-fila.elegida { background: #172554; border-color: #3b82f6; }
+body.dark .parte-fila-cuenta { color: #93c5fd; }
+body.dark .parte-quitar { background: #1e3a8a; color: #bfdbfe; }
+body.dark .parte-resumen { background: #111a2e; }
+body.dark .parte-resumen div:first-child strong { color: #93c5fd; }

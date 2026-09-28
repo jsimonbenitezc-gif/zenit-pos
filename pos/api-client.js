@@ -572,6 +572,26 @@ class APIClient {
         });
     }
 
+    // Cobrar UNA PARTE de una mesa (PLAN_CUENTAS_V1, §70). Los productos elegidos
+    // salen de la mesa a una venta nueva que nace cobrada; la mesa sigue abierta
+    // con lo que queda. `items` = [{ item_id, quantity }]. `clientUuid` es de la
+    // INTENCIÓN: un reintento por mala señal devuelve la misma parte, no cobra dos.
+    // Responde { mesa, parte, partes }.
+    async separarCuenta(orderId, { items, paymentMethod, tipAmount = 0, tipMethod = null, payments = null, nombreEnPuesto = '', clientUuid }) {
+        return await this.request(`/orders/${orderId}/separar`, {
+            method: 'POST',
+            body: {
+                items,
+                payment_method: paymentMethod || 'efectivo',
+                tip_amount: tipAmount || 0,
+                tip_method: tipMethod || null,
+                ...(payments ? { payments } : {}),
+                ...(nombreEnPuesto ? { employee_name: nombreEnPuesto } : {}),
+                client_uuid: clientUuid || null,
+            }
+        });
+    }
+
     // TURNOS
     async getTurnoActivo(branchId) {
         const q = branchId ? `?branch_id=${branchId}` : '';
