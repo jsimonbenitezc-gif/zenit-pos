@@ -17,11 +17,12 @@
 // ============================================================================
 
 const {
-    irA, crearCuenta, aceptarDialogo, leerBase, leerImporte,
+    irA, abrirTema, crearCuenta, aceptarDialogo, leerBase, leerImporte,
     crearMesas, abrirMesa, activarPremiumDePrueba,
 } = require('../lib/cajero');
 
 const PASTOR = 25, ARRACHERA = 35, COCA = 25;
+const NEGOCIO = 'Taquería Los Promos';
 
 /** El HTML del último ticket "impreso", capturado en el proceso principal. */
 async function capturarImpresora(app) {
@@ -91,6 +92,12 @@ module.exports = {
             local = await base.una("SELECT id FROM productos WHERE nombre = 'Arrachera'");
         }
         af.cierto('el menú de tacos bajó al equipo', Boolean(local), 'la SQLite local no tiene la arrachera');
+        // El nombre del negocio, escrito a clics en Ajustes: los DOS tickets (mostrador y
+        // mesa) tienen que decirlo. El de mesa leía otra clave y salía "Negocio" (§68.3).
+        await abrirTema(app, 'negocio');
+        await w.fill('#adj-nombre-negocio', NEGOCIO);
+        await w.locator('#adj-nombre-negocio').blur();   // se guarda al salir del campo
+        await w.waitForTimeout(800);
         await capturarImpresora(app);
         // Una venta hecha "desde otra caja": así el folio del servidor y el del
         // equipo ya NO coinciden. Con folios iguales, el ticket que se pedía al
@@ -176,6 +183,7 @@ module.exports = {
         af.cierto('el ticket agrupa la promo en UN renglón con sus tacos debajo',
             /Martes 2x1 tacos x1 \$35\.00 Pastor Arrachera/.test(ticket), 'el ticket dice: ' + ticket.slice(0, 400));
         af.cierto('y al pie dice "Ahorraste $25.00"', /Ahorraste: \$25\.00/.test(ticket), 'el ticket dice: ' + ticket.slice(0, 600));
+        af.cierto('el ticket de mostrador lleva el nombre del negocio', ticket.includes(NEGOCIO), 'el ticket dice: ' + ticket.slice(0, 200));
         await aceptarDialogo(app);
 
         const venta = await esperarEnServidor(w, api, (o) => (o.items || []).some((it) => it.promo_group));
@@ -268,6 +276,7 @@ module.exports = {
         await w.waitForSelector('#modal-cobrar-mesa button:has-text("Imprimir ticket")', { timeout: 20000 });
         await w.click('#modal-cobrar-mesa button:has-text("Imprimir ticket")');
         const ticketMesa = textoDe(await ultimoTicket(app));
+        af.cierto('el ticket de la mesa lleva el nombre del negocio', ticketMesa.includes(NEGOCIO), 'el ticket dice: ' + ticketMesa.slice(0, 200));
         af.cierto('el ticket de la mesa agrupa la promo y dice "Ahorraste $25.00"',
             /1× Martes 2x1 tacos/.test(ticketMesa) && /Ahorraste \$25\.00/.test(ticketMesa), 'el ticket dice: ' + ticketMesa.slice(0, 500));
         await w.click('#modal-cobrar-mesa button:has-text("Cerrar")');

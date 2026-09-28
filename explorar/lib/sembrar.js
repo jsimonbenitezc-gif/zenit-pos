@@ -101,7 +101,7 @@ async function sembrar(ventana, { nivel = 'completo' } = {}) {
     });
 
     await paso('nombre del negocio', () => ventana.evaluate(async () => {
-        await window.api.guardarAjuste('nombre_negocio', 'Taquería El Zenit');
+        await window.api.guardarAjuste('business_name', 'Taquería El Zenit');
         await window.api.guardarAjuste('currency_symbol', '$');
     }));
 

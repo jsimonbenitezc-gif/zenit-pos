@@ -867,7 +867,8 @@ async function imprimirCuentaMesa() {
     const _d = _desgloseMesa(items);
     const total = _d.total;
     const ajustes = await window.api.obtenerAjustes();
-    const negocio = ajustes.nombre_negocio || 'Negocio';
+    // La clave es `business_name`, la que guarda Ajustes (§68.3); `nombre_negocio` no lo escribe nadie.
+    const negocio = ajustes.business_name || 'Mi Negocio';
     const impresora = ajustes.impresora || '';
     const ahora = new Date().toLocaleString('es-MX');
     const itemsHtml = _filasTicketMesa(items);
@@ -1598,7 +1599,8 @@ async function imprimirCuentaMesaFinal() {
     if (!_cobroMesaSnap) return;
     const { pedido, items, total, metodo, propina } = _cobroMesaSnap;
     const ajustes = await window.api.obtenerAjustes();
-    const negocio = ajustes.nombre_negocio || 'Negocio';
+    // La clave es `business_name`, la que guarda Ajustes (§68.3); `nombre_negocio` no lo escribe nadie.
+    const negocio = ajustes.business_name || 'Mi Negocio';
     const impresora = ajustes.impresora || '';
     const ahora = new Date().toLocaleString('es-MX');
     const metodosLabel = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia' };
