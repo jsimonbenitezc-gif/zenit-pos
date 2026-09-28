@@ -232,8 +232,7 @@ const _LOCK_SVG_MD = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height=
 function _irAPlanes() {
     // La función se llama `cambiarVista` (render.js). `mostrarVista` no existe:
     // el enlace "ir a planes" desde el bloqueo premium reventaba con ReferenceError.
-    cambiarVista('ajustes');
-    setTimeout(() => document.getElementById('card-mi-plan')?.scrollIntoView({ behavior: 'smooth' }), 300);
+    abrirTemaAjustes('plan');
 }
 
 // Overlay de bloqueo sobre una vista completa

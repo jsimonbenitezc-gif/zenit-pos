@@ -1126,8 +1126,8 @@
 
             <section id="view-ajustes" class="view">
     <div class="view-header">
-        <h2>Configuración del Sistema</h2>
-        <button class="btn-primary" onclick="guardarTodosLosAjustes()">
+        <div style="display:flex;align-items:center;gap:12px;"><button type="button" class="btn-secondary" id="ajustes-atras" onclick="volverPortadaAjustes()" style="display:none;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:2px;"><path d="m15 18-6-6 6-6"/></svg>Ajustes</button><h2 id="ajustes-titulo">Ajustes</h2></div>
+        <button class="btn-primary" id="ajustes-guardar" onclick="guardarTodosLosAjustes()" style="display:none;">
             Guardar Cambios
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check" style="display: inline-block; vertical-align: middle; margin-left: 5px;">
                 <path d="M20 6 9 17l-5-5"/>
@@ -1135,7 +1135,13 @@
         </button>
     </div>
 
-<div class="ajustes-grid">
+    <!-- Ajustes por temas (PLAN_PULIDO_V1 B.2): la portada la dibuja modulo-ajustes-temas.js;
+         cada página es un contenedor de las MISMAS tarjetas de siempre (ids y onclick intactos). -->
+    <div id="ajustes-portada"></div>
+
+    <div class="ajustes-pagina" data-tema="negocio" style="display:none;">
+    <div class="ajustes-grid">
+
         <div class="ajustes-card">
             <h3>Información del Negocio</h3>
             <div class="input-group">
@@ -1193,131 +1199,8 @@
             </div>
         </div>
 
-<div class="ajustes-card">
-            <h3>Ajustes Generales</h3>
-            <div class="setting-item">
-                <div>
-                    <span>Mostrar Stock Disponible en Nueva Venta</span>
-                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Muestra cuántas unidades se pueden preparar según el inventario</p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="adj-mostrar-stock" onchange="guardarAjusteDirecto('mostrar_stock_venta', this.checked)">
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div class="setting-item">
-                <div>
-                    <span>Requerir PIN para aplicar descuentos</span>
-                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">El cajero debe ingresar un PIN antes de aplicar cualquier descuento</p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="aj-requiere-pin-descuento">
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div id="grupo-pin-descuento" class="input-group" style="display:none;margin-top:4px;">
-                <label>PIN de descuentos (4-6 dígitos)</label>
-                <input type="password" id="aj-pin-descuento" maxlength="6" placeholder="Ej: 1234">
-            </div>
-            <div class="setting-item">
-                <div>
-                    <span>Venta sin Turno</span>
-                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Permite registrar ventas sin necesidad de abrir un turno de caja. Útil para negocios pequeños.</p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="adj-venta-sin-turno" checked>
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div class="setting-item" id="setting-mov-caja-pin">
-                <div>
-                    <span>PIN en Movimientos de Caja</span>
-                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Pide el PIN del puesto para registrar retiros y gastos, y deja constancia de quién los hizo. Los depósitos nunca lo piden.</p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="adj-mov-caja-pin" checked>
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div class="setting-item">
-                <div>
-                    <span>Pedir Contraseña al Iniciar</span>
-                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Solicita tu contraseña de seguridad cada vez que abres la aplicación.</p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="adj-pedir-password" onchange="guardarAjusteDirecto('pedir_password_inicio', this.checked ? 'true' : 'false')">
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div style="padding: 4px 0 8px;">
-                <button class="btn-secondary small" onclick="mostrarCambiarPasswordApp()" style="font-size:0.85em;">Cambiar contraseña de inicio</button>
-                <div id="form-cambiar-password" style="display:none; margin-top:10px;">
-                    <input type="password" id="nueva-password-app" placeholder="Nueva contraseña (mín. 4 caracteres)" style="width:100%; margin-bottom:6px; padding:8px; border:1px solid #d1d5db; border-radius:6px;">
-                    <input type="password" id="confirm-password-app" placeholder="Confirmar contraseña" style="width:100%; margin-bottom:8px; padding:8px; border:1px solid #d1d5db; border-radius:6px;">
-                    <button class="btn-primary small" onclick="guardarNuevaPasswordApp()">Guardar contraseña</button>
-                </div>
-            </div>
-            <div class="input-group" style="margin-top:16px;">
-                <label>Impresora Predeterminada</label>
-                <select id="adj-impresora">
-                    <option value="default">Impresora del Sistema</option>
-                </select>
-            </div>
-            <div class="setting-item" style="margin-top:12px;">
-                <div>
-                    <span>Imprimir el ticket automáticamente</span>
-                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Al cobrar, el ticket sale solo sin preguntar. Actívalo si esta caja siempre imprime.</p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="adj-impresora-auto" onchange="guardarAjusteDirecto('impresora_auto', this.checked)">
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div class="backup-section">
-                <h3>Actualizaciones</h3>
-                <p>Versión actual: <span id="version-actual">Cargando...</span></p>
-                <p style="font-size:0.85em;color:#6b7280;">Iconos de color: Fluent Emoji de Microsoft (MIT). <a href="#" onclick="mostrarLicenciasIconos(); return false;">Ver licencia</a></p>
-                <button class="btn-primary" onclick="verificarActualizacionManual()" id="btn-verificar-update">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 5px;">
-                        <path d="M12 2a10 10 0 0 1 7.38 16.75"/>
-                        <path d="m16 12-4-4-4 4"/>
-                        <path d="M12 16V8"/>
-                        <path d="M2.5 8.875a10 10 0 0 0-.5 3"/>
-                        <path d="M2.83 16a10 10 0 0 0 2.43 3.4"/>
-                        <path d="M4.636 5.235a10 10 0 0 1 .891-.857"/>
-                        <path d="M8.644 21.42a10 10 0 0 0 7.631-.38"/>
-                    </svg>
-                    Verificar Actualizaciones
-                </button>
-            </div>
-            <div class="backup-section">
-                <h3>Seguridad</h3>
-                <p>Último respaldo: <span id="last-backup">Nunca</span></p>
-                <button class="btn-secondary" onclick="crearRespaldoAhora()">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:5px;"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>
-                    Crear Respaldo Ahora
-                </button>
-                <button class="btn-secondary" onclick="abrirCarpetaBackups()" style="margin-top:8px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:5px;"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
-                    Ver carpeta de respaldos
-                </button>
-                <button class="btn-secondary" onclick="mostrarRestaurarRespaldo()" style="margin-top:8px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:5px;"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
-                    Restaurar un respaldo
-                </button>
-                <div id="bloque-restaurar-backup" style="display:none; margin-top:10px;">
-                    <p style="font-size:12px; color:#6b7280; margin-bottom:6px; line-height:1.4;">
-                        Los datos actuales de este equipo se reemplazarán por los del respaldo.
-                        Antes se guarda una copia de lo que hay ahora y la aplicación se reiniciará.
-                    </p>
-                    <select id="select-backup" style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; margin-bottom:8px;"></select>
-                    <button class="btn-danger" onclick="restaurarRespaldoSeleccionado()" id="btn-restaurar-backup">Restaurar y reiniciar</button>
-                </div>
-            </div>
-        </div>
-
         <div class="ajustes-card">
-            <h3>Apariencia y Ticket</h3>
+            <h3>Apariencia</h3>
             <div class="setting-item">
                 <span>Modo Oscuro</span>
                 <label class="switch">
@@ -1341,38 +1224,6 @@
                 <input type="hidden" id="adj-logo-path" value="./assets/logo/montana.png">
             </div>
             
-            <div class="setting-item">
-                <span>Mostrar Logo en Ticket</span>
-                <input type="checkbox" id="adj-show-logo" checked>
-            </div>
-            <div class="setting-item">
-                <span>Mostrar Teléfono en Ticket</span>
-                <input type="checkbox" id="adj-show-phone" checked>
-            </div>
-            <div class="setting-item">
-                <span>Mostrar Dirección en Ticket</span>
-                <input type="checkbox" id="adj-show-direccion" checked>
-            </div>
-            <div class="setting-item">
-                <span>Mostrar Correo en Ticket</span>
-                <input type="checkbox" id="adj-show-email">
-            </div>
-            <div class="setting-item">
-                <span>Mostrar Sitio Web en Ticket</span>
-                <input type="checkbox" id="adj-show-website">
-            </div>
-            <div class="setting-item">
-                <span>Mostrar Instagram en Ticket</span>
-                <input type="checkbox" id="adj-show-instagram">
-            </div>
-            <div class="setting-item">
-                <span>Mostrar RFC en Ticket</span>
-                <input type="checkbox" id="adj-show-rfc">
-            </div>
-            <div class="input-group" style="margin-top:12px;">
-                <label>Mensaje de cierre del ticket</label>
-                <textarea id="adj-ticket-footer" rows="2" placeholder="Ej: ¡Gracias por su compra! Vuelva pronto."></textarea>
-            </div>
             <div class="input-group">
                 <label>Símbolo de Moneda</label>
                 <select id="adj-moneda">
@@ -1396,6 +1247,11 @@
                 </p>
             </div>
         </div>
+    </div>
+    </div>
+
+    <div class="ajustes-pagina" data-tema="menu" style="display:none;">
+    <div class="ajustes-grid">
 
         <!-- Tu menú (§57): la entrada FIJA al importador, para quien lo busca
              después de haber ocultado la invitación. Solo el dueño. -->
@@ -1411,6 +1267,20 @@
             </div>
             <button class="btn-primary btn-importar-menu" style="width:100%;" onclick="abrirImportarMenu()">Importar menú</button>
         </div>
+
+        <div class="ajustes-card">
+            <h3>Tus productos</h3>
+            <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">Los productos, sus categorías y sus extras (tamaños, ingredientes) se editan en Productos.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn-primary" onclick="cambiarVista('productos')">Ir a Productos</button>
+                <button class="btn-secondary" onclick="cambiarVista('productos'); abrirBibliotecaModificadores();">Modificadores</button>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <div class="ajustes-pagina" data-tema="cobros" style="display:none;">
+    <div class="ajustes-grid">
 
         <!-- Impuestos (BLOQUE 8) — configuración de la CUENTA, solo el dueño -->
         <div class="ajustes-card" id="card-impuestos" style="position:relative;">
@@ -1471,38 +1341,6 @@
             </div>
         </div>
 
-        <!-- Horario del negocio (BLOQUE 14) — SEÑAL de seguridad, NUNCA candado.
-             Configurarlo NO impide vender, cobrar ni abrir turno a ninguna hora:
-             solo hace que las acciones sensibles de fuera de horario queden
-             marcadas y avisen al dueño. Configuración de la CUENTA: solo el dueño. -->
-        <div class="ajustes-card" id="card-horario" style="position:relative;">
-            <h3>Horario del negocio</h3>
-            <div class="setting-item">
-                <div>
-                    <span>Definir horario de operación</span>
-                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">
-                        <strong>Nunca bloquea la caja:</strong> se puede vender, cobrar y abrir turno a cualquier hora.
-                        Sirve para detectar lo raro — una cancelación o un ajuste de inventario a las 3 a.m. queda
-                        marcado y te llega un aviso.
-                    </p>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" id="adj-horario-activo">
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div id="grupo-horario" style="display:none;">
-                <div id="adj-horario-dias" style="margin-top:10px;"></div>
-                <p style="margin:8px 0 0; font-size:0.8em; color:#9ca3af;">
-                    Si cierras después de medianoche, pon la hora de cierre igual (ej. 18:00 → 02:00):
-                    el sistema entiende que la noche sigue siendo del día anterior.
-                    Para 24 horas, pon la misma hora en apertura y cierre.
-                </p>
-                <p style="margin:6px 0 0; font-size:0.8em; color:#9ca3af;" id="adj-horario-resumen"></p>
-                <button class="btn-primary" style="margin-top:10px;" onclick="guardarConfigHorario()">Guardar horario</button>
-            </div>
-        </div>
-
         <!-- Sistema de Puntos -->
         <div class="ajustes-card" id="card-puntos" style="position:relative;">
             <h3>Sistema de Puntos <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></h3>
@@ -1537,6 +1375,84 @@
             </div>
         </div>
 
+        <div class="ajustes-card">
+            <h3>Programa de Fidelidad</h3>
+            <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">Quién está inscrito y cuántos puntos lleva cada cliente se ve en Clientes.</p>
+            <button class="btn-secondary" onclick="cambiarVista('clientes')">Ir a Clientes</button>
+        </div>
+    </div>
+    </div>
+
+    <div class="ajustes-pagina" data-tema="ticket" style="display:none;">
+    <div class="ajustes-grid">
+
+        <div class="ajustes-card">
+            <h3>Ticket e impresora</h3>
+            <div class="input-group" style="margin-top:16px;">
+                <label>Impresora Predeterminada</label>
+                <select id="adj-impresora">
+                    <option value="default">Impresora del Sistema</option>
+                </select>
+            </div>
+            <div class="setting-item" style="margin-top:12px;">
+                <div>
+                    <span>Imprimir el ticket automáticamente</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Al cobrar, el ticket sale solo sin preguntar. Actívalo si esta caja siempre imprime.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-impresora-auto" onchange="guardarAjusteDirecto('impresora_auto', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Logo en Ticket</span>
+                <input type="checkbox" id="adj-show-logo" checked>
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Teléfono en Ticket</span>
+                <input type="checkbox" id="adj-show-phone" checked>
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Dirección en Ticket</span>
+                <input type="checkbox" id="adj-show-direccion" checked>
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Correo en Ticket</span>
+                <input type="checkbox" id="adj-show-email">
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Sitio Web en Ticket</span>
+                <input type="checkbox" id="adj-show-website">
+            </div>
+            <div class="setting-item">
+                <span>Mostrar Instagram en Ticket</span>
+                <input type="checkbox" id="adj-show-instagram">
+            </div>
+            <div class="setting-item">
+                <span>Mostrar RFC en Ticket</span>
+                <input type="checkbox" id="adj-show-rfc">
+            </div>
+            <div class="input-group" style="margin-top:12px;">
+                <label>Mensaje de cierre del ticket</label>
+                <textarea id="adj-ticket-footer" rows="2" placeholder="Ej: ¡Gracias por su compra! Vuelva pronto."></textarea>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <div class="ajustes-pagina" data-tema="equipo" style="display:none;">
+    <div class="ajustes-grid">
+
+        <div class="ajustes-card" id="card-permisos-rol">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <h3 style="margin:0;">Administrar Puestos</h3>
+            </div>
+            <p style="color:var(--text-muted);font-size:13px;margin-bottom:20px;">Activa los puestos que usarán el sistema. El Administrador siempre tiene acceso completo.</p>
+            <div id="puestos-container">
+                <!-- Generado por JS -->
+            </div>
+        </div>
+
         <!-- CARD: Sucursal -->
         <div class="ajustes-card" id="card-sucursal">
             <h3>📍 Sucursal</h3>
@@ -1555,6 +1471,48 @@
                 <button class="btn-secondary small" onclick="abrirGestorSucursales()">Administrar</button>
             </div>
         </div>
+    </div>
+    </div>
+
+    <div class="ajustes-pagina" data-tema="horario" style="display:none;">
+    <div class="ajustes-grid">
+
+        <!-- Horario del negocio (BLOQUE 14) — SEÑAL de seguridad, NUNCA candado.
+             Configurarlo NO impide vender, cobrar ni abrir turno a ninguna hora:
+             solo hace que las acciones sensibles de fuera de horario queden
+             marcadas y avisen al dueño. Configuración de la CUENTA: solo el dueño. -->
+        <div class="ajustes-card" id="card-horario" style="position:relative;">
+            <h3>Horario del negocio</h3>
+            <div class="setting-item">
+                <div>
+                    <span>Definir horario de operación</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">
+                        <strong>Nunca bloquea la caja:</strong> se puede vender, cobrar y abrir turno a cualquier hora.
+                        Sirve para detectar lo raro — una cancelación o un ajuste de inventario a las 3 a.m. queda
+                        marcado y te llega un aviso.
+                    </p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-horario-activo">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div id="grupo-horario" style="display:none;">
+                <div id="adj-horario-dias" style="margin-top:10px;"></div>
+                <p style="margin:8px 0 0; font-size:0.8em; color:#9ca3af;">
+                    Si cierras después de medianoche, pon la hora de cierre igual (ej. 18:00 → 02:00):
+                    el sistema entiende que la noche sigue siendo del día anterior.
+                    Para 24 horas, pon la misma hora en apertura y cierre.
+                </p>
+                <p style="margin:6px 0 0; font-size:0.8em; color:#9ca3af;" id="adj-horario-resumen"></p>
+                <button class="btn-primary" style="margin-top:10px;" onclick="guardarConfigHorario()">Guardar horario</button>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <div class="ajustes-pagina" data-tema="kds" style="display:none;">
+    <div class="ajustes-grid">
 
         <!-- CARD: KDS Cocina -->
         <div class="ajustes-card" id="card-kds">
@@ -1639,33 +1597,11 @@
                 <div id="kds-nube-lista" style="font-size:0.85em;color:#6b7280;">Cargando pantallas...</div>
             </div>
         </div>
+    </div>
+    </div>
 
-        <!-- Modal: Aprobar / revocar una pantalla de cocina (BLOQUE 13) -->
-        <div id="modal-kds-dispositivo" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
-            <div style="background:#fff;border-radius:14px;padding:24px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
-                <h3 id="kds-modal-titulo" style="margin:0 0 8px;font-size:1em;">Nueva pantalla de cocina</h3>
-                <p id="kds-modal-sub" style="margin:0 0 14px;font-size:0.85em;color:#6b7280;">Un dispositivo quiere ver la cola de cocina.</p>
-                <div id="kds-modal-info" style="background:#f3f4f6;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:0.82em;">
-                    <div><strong>Equipo:</strong> <span id="kds-nuevo-ua" style="word-break:break-all;"></span></div>
-                    <!-- La dirección de red es solo para reconocer el equipo: ya
-                         NO autoriza nada (antes ella sola daba el permiso). -->
-                    <div style="color:#9ca3af;margin-top:2px;">Desde <span id="kds-nuevo-ip"></span></div>
-                </div>
-                <div id="kds-modal-campo-nombre" style="margin-bottom:12px;">
-                    <label style="font-size:0.82em;color:#374151;display:block;margin-bottom:4px;">Nombre</label>
-                    <input type="text" id="kds-nuevo-nombre" placeholder="Ej: Tablet Cocina" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;box-sizing:border-box;">
-                </div>
-                <div style="margin-bottom:8px;">
-                    <label style="font-size:0.82em;color:#374151;display:block;margin-bottom:4px;">PIN de tu puesto</label>
-                    <input type="password" id="kds-modal-pin" inputmode="numeric" placeholder="&#8226;&#8226;&#8226;&#8226;" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;box-sizing:border-box;">
-                </div>
-                <div id="kds-modal-error" style="display:none;color:#dc2626;font-size:0.82em;margin-bottom:10px;"></div>
-                <div style="display:flex;gap:8px;">
-                    <button onclick="cerrarModalKDS()" style="flex:1;padding:10px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Cancelar</button>
-                    <button id="kds-modal-ok" onclick="confirmarModalKDS()" style="flex:1;padding:10px;border:none;background:#2563eb;color:#fff;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Aprobar</button>
-                </div>
-            </div>
-        </div>
+    <div class="ajustes-pagina" data-tema="plan" style="display:none;">
+    <div class="ajustes-grid">
 
         <!-- Administrar Puestos/Roles (solo visible para Administrador) -->
         <!-- CARD: Mi Plan -->
@@ -1701,6 +1637,11 @@
                 </p>
             </div>
         </div>
+    </div>
+    </div>
+
+    <div class="ajustes-pagina" data-tema="cuenta" style="display:none;">
+    <div class="ajustes-grid">
 
         <!-- CARD: Tu Cuenta Zenit -->
         <div class="ajustes-card" id="card-cuenta-zenit">
@@ -1780,18 +1721,156 @@
             </div>
 
         </div>
+    </div>
+    </div>
 
-        <div class="ajustes-card" id="card-permisos-rol">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <h3 style="margin:0;">Administrar Puestos</h3>
+    <div class="ajustes-pagina" data-tema="seguridad" style="display:none;">
+    <div class="ajustes-grid">
+
+        <div class="ajustes-card">
+            <h3>Contraseña y respaldos</h3>
+            <div class="setting-item">
+                <div>
+                    <span>Pedir Contraseña al Iniciar</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Solicita tu contraseña de seguridad cada vez que abres la aplicación.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-pedir-password" onchange="guardarAjusteDirecto('pedir_password_inicio', this.checked ? 'true' : 'false')">
+                    <span class="slider"></span>
+                </label>
             </div>
-            <p style="color:var(--text-muted);font-size:13px;margin-bottom:20px;">Activa los puestos que usarán el sistema. El Administrador siempre tiene acceso completo.</p>
-            <div id="puestos-container">
-                <!-- Generado por JS -->
+            <div style="padding: 4px 0 8px;">
+                <button class="btn-secondary small" onclick="mostrarCambiarPasswordApp()" style="font-size:0.85em;">Cambiar contraseña de inicio</button>
+                <div id="form-cambiar-password" style="display:none; margin-top:10px;">
+                    <input type="password" id="nueva-password-app" placeholder="Nueva contraseña (mín. 4 caracteres)" style="width:100%; margin-bottom:6px; padding:8px; border:1px solid #d1d5db; border-radius:6px;">
+                    <input type="password" id="confirm-password-app" placeholder="Confirmar contraseña" style="width:100%; margin-bottom:8px; padding:8px; border:1px solid #d1d5db; border-radius:6px;">
+                    <button class="btn-primary small" onclick="guardarNuevaPasswordApp()">Guardar contraseña</button>
+                </div>
+            </div>
+            <div class="backup-section">
+                <h3>Actualizaciones</h3>
+                <p>Versión actual: <span id="version-actual">Cargando...</span></p>
+                <p style="font-size:0.85em;color:#6b7280;">Iconos de color: Fluent Emoji de Microsoft (MIT). <a href="#" onclick="mostrarLicenciasIconos(); return false;">Ver licencia</a></p>
+                <button class="btn-primary" onclick="verificarActualizacionManual()" id="btn-verificar-update">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; margin-right: 5px;">
+                        <path d="M12 2a10 10 0 0 1 7.38 16.75"/>
+                        <path d="m16 12-4-4-4 4"/>
+                        <path d="M12 16V8"/>
+                        <path d="M2.5 8.875a10 10 0 0 0-.5 3"/>
+                        <path d="M2.83 16a10 10 0 0 0 2.43 3.4"/>
+                        <path d="M4.636 5.235a10 10 0 0 1 .891-.857"/>
+                        <path d="M8.644 21.42a10 10 0 0 0 7.631-.38"/>
+                    </svg>
+                    Verificar Actualizaciones
+                </button>
+            </div>
+            <div class="backup-section">
+                <h3>Seguridad</h3>
+                <p>Último respaldo: <span id="last-backup">Nunca</span></p>
+                <button class="btn-secondary" onclick="crearRespaldoAhora()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:5px;"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg>
+                    Crear Respaldo Ahora
+                </button>
+                <button class="btn-secondary" onclick="abrirCarpetaBackups()" style="margin-top:8px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:5px;"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+                    Ver carpeta de respaldos
+                </button>
+                <button class="btn-secondary" onclick="mostrarRestaurarRespaldo()" style="margin-top:8px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-right:5px;"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                    Restaurar un respaldo
+                </button>
+                <div id="bloque-restaurar-backup" style="display:none; margin-top:10px;">
+                    <p style="font-size:12px; color:#6b7280; margin-bottom:6px; line-height:1.4;">
+                        Los datos actuales de este equipo se reemplazarán por los del respaldo.
+                        Antes se guarda una copia de lo que hay ahora y la aplicación se reiniciará.
+                    </p>
+                    <select id="select-backup" style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; margin-bottom:8px;"></select>
+                    <button class="btn-danger" onclick="restaurarRespaldoSeleccionado()" id="btn-restaurar-backup">Restaurar y reiniciar</button>
+                </div>
             </div>
         </div>
-
     </div>
+    </div>
+
+    <div class="ajustes-pagina" data-tema="generales" style="display:none;">
+    <div class="ajustes-grid">
+
+        <div class="ajustes-card">
+            <h3>Ajustes Generales</h3>
+            <div class="setting-item">
+                <div>
+                    <span>Mostrar Stock Disponible en Nueva Venta</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Muestra cuántas unidades se pueden preparar según el inventario</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-mostrar-stock" onchange="guardarAjusteDirecto('mostrar_stock_venta', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="setting-item">
+                <div>
+                    <span>Requerir PIN para aplicar descuentos</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">El cajero debe ingresar un PIN antes de aplicar cualquier descuento</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="aj-requiere-pin-descuento">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div id="grupo-pin-descuento" class="input-group" style="display:none;margin-top:4px;">
+                <label>PIN de descuentos (4-6 dígitos)</label>
+                <input type="password" id="aj-pin-descuento" maxlength="6" placeholder="Ej: 1234">
+            </div>
+            <div class="setting-item">
+                <div>
+                    <span>Venta sin Turno</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Permite registrar ventas sin necesidad de abrir un turno de caja. Útil para negocios pequeños.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-venta-sin-turno" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="setting-item" id="setting-mov-caja-pin">
+                <div>
+                    <span>PIN en Movimientos de Caja</span>
+                    <p style="margin:2px 0 0; font-size:0.8em; color:#9ca3af;">Pide el PIN del puesto para registrar retiros y gastos, y deja constancia de quién los hizo. Los depósitos nunca lo piden.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="adj-mov-caja-pin" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+    </div>
+    </div>
+
+        <!-- Modal: Aprobar / revocar una pantalla de cocina (BLOQUE 13) -->
+        <div id="modal-kds-dispositivo" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#fff;border-radius:14px;padding:24px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                <h3 id="kds-modal-titulo" style="margin:0 0 8px;font-size:1em;">Nueva pantalla de cocina</h3>
+                <p id="kds-modal-sub" style="margin:0 0 14px;font-size:0.85em;color:#6b7280;">Un dispositivo quiere ver la cola de cocina.</p>
+                <div id="kds-modal-info" style="background:#f3f4f6;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:0.82em;">
+                    <div><strong>Equipo:</strong> <span id="kds-nuevo-ua" style="word-break:break-all;"></span></div>
+                    <!-- La dirección de red es solo para reconocer el equipo: ya
+                         NO autoriza nada (antes ella sola daba el permiso). -->
+                    <div style="color:#9ca3af;margin-top:2px;">Desde <span id="kds-nuevo-ip"></span></div>
+                </div>
+                <div id="kds-modal-campo-nombre" style="margin-bottom:12px;">
+                    <label style="font-size:0.82em;color:#374151;display:block;margin-bottom:4px;">Nombre</label>
+                    <input type="text" id="kds-nuevo-nombre" placeholder="Ej: Tablet Cocina" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;box-sizing:border-box;">
+                </div>
+                <div style="margin-bottom:8px;">
+                    <label style="font-size:0.82em;color:#374151;display:block;margin-bottom:4px;">PIN de tu puesto</label>
+                    <input type="password" id="kds-modal-pin" inputmode="numeric" placeholder="&#8226;&#8226;&#8226;&#8226;" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:0.88em;box-sizing:border-box;">
+                </div>
+                <div id="kds-modal-error" style="display:none;color:#dc2626;font-size:0.82em;margin-bottom:10px;"></div>
+                <div style="display:flex;gap:8px;">
+                    <button onclick="cerrarModalKDS()" style="flex:1;padding:10px;border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Cancelar</button>
+                    <button id="kds-modal-ok" onclick="confirmarModalKDS()" style="flex:1;padding:10px;border:none;background:#2563eb;color:#fff;border-radius:8px;font-weight:600;font-size:0.88em;cursor:pointer;">Aprobar</button>
+                </div>
+            </div>
+        </div>
 </section>
 
             <section id="view-clientes" class="view">
@@ -2836,6 +2915,7 @@
 <script src="modulo-mesas.js"></script>
 <script src="modulo-pin-audit.js"></script>
 <script src="modulo-ajustes.js"></script>
+<script src="modulo-ajustes-temas.js"></script>
 
 <!-- Núcleo: globals, init, SSE, navegación -->
 <script src="render.js"></script>

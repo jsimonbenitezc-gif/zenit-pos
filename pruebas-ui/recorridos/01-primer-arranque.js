@@ -22,7 +22,7 @@
 // `db.serialize` de `database/db.js`, este recorrido falla en la primera venta.
 // ============================================================================
 
-const { irA, venderEnMostrador, leerBase, activarPremiumDePrueba } = require('../lib/cajero');
+const { irA, abrirTema, venderEnMostrador, leerBase, activarPremiumDePrueba } = require('../lib/cajero');
 
 // Las 11 vistas del menú, con algo que solo existe si la vista se pintó de verdad.
 // `premium: true` = en modo local (sin cuenta) la vista sale con el candado, que
@@ -38,7 +38,7 @@ const VISTAS = [
     { vista: 'ofertas',      vital: '#tabla-descuentos' },
     { vista: 'inventario',   vital: '#tabla-insumos',  premium: true },
     { vista: 'rentabilidad', vital: '#rent-ingreso',   premium: true },
-    { vista: 'ajustes',      vital: '#adj-nombre-negocio' },
+    { vista: 'ajustes',      vital: '#ajustes-portada .ajustes-tema' },
 ];
 
 // Las columnas que los bloques 8, 9 y 10 le agregaron a `pedidos`. Si falta una
@@ -95,6 +95,36 @@ module.exports = {
                     'el elemento no existe: la vista quedó a medio construir');
             }
         }
+
+        // ── 3b. Ajustes por temas (PLAN_PULIDO_V1 B.2) ─────────────────────
+        // La vista abre en la PORTADA: los campos viven en páginas cerradas y se
+        // llega a ellos tocando su tema, como el usuario.
+        await irA(app, 'ajustes');
+        const temas = await w.locator('#ajustes-portada .ajustes-tema').count();
+        af.igual('la portada de Ajustes ofrece los 6 temas al dueño', temas, 6);
+        af.cierto('en la portada ningún campo está a la vista',
+            !(await w.locator('#adj-nombre-negocio').isVisible()),
+            'la portada enseña los campos: las páginas no se cerraron');
+        const estadoCobros = (await w.locator('#ajustes-portada [data-estado="cobros"]').innerText()).trim();
+        af.cierto('la tarjeta Cobros dice su estado de verdad (' + estadoCobros + ')',
+            /impuesto|IVA/i.test(estadoCobros), 'la tarjeta no dice cómo está el impuesto');
+        await abrirTema(app, 'negocio');
+        af.cierto('tocar Mi negocio abre su página con sus campos',
+            await w.locator('#adj-nombre-negocio').isVisible(), 'el campo del nombre no se ve');
+        await w.keyboard.press('Escape');
+        await w.waitForTimeout(300);
+        af.cierto('Esc vuelve a la portada', await w.locator('#ajustes-portada .ajustes-tema').first().isVisible(),
+            'Esc no cerró la página');
+        await abrirTema(app, 'ticket');
+        await w.click('#ajustes-atras');
+        await w.waitForTimeout(300);
+        af.cierto('el botón "‹ Ajustes" vuelve a la portada',
+            await w.locator('#ajustes-portada .ajustes-tema').first().isVisible(), 'el botón no volvió');
+        await abrirTema(app, 'cobros');
+        await irA(app, 'dashboard');
+        await irA(app, 'ajustes');
+        af.cierto('salir de la vista y volver abre otra vez en la portada',
+            !(await w.locator('#card-impuestos').isVisible()), 'se quedó abierta la página de antes');
 
         // ── 4. La secuencia que rompía Ofertas (§44.3) ──────────────────────
         // `cambiarTabInventario()` usaba un querySelectorAll GLOBAL, así que tocar

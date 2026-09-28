@@ -18,7 +18,7 @@
 // ============================================================================
 
 const zlib = require('zlib');
-const { irA, crearCuenta, leerBase } = require('../lib/cajero');
+const { irA, abrirTema, crearCuenta, leerBase } = require('../lib/cajero');
 const { MENU_DE_PRUEBA } = require('../lib/menu-de-prueba');
 
 // ── Una foto "de celular" de verdad ─────────────────────────────────────────
@@ -148,7 +148,7 @@ module.exports = {
             'el dueño dijo que no y el tablero se lo vuelve a ofrecer');
 
         // Ajustes: la entrada FIJA, para quien lo busca después de haberlo ocultado.
-        await irA(app, 'ajustes');
+        await abrirTema(app, 'menu');
         af.cierto('AJUSTES tiene su tarjeta, aunque el aviso esté oculto',
             await w.locator('#card-menu-foto').isVisible(),
             'con el aviso oculto ya no habría forma de encontrarlo fuera de Productos');

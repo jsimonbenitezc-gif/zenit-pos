@@ -28,6 +28,21 @@ async function irA(app, vista) {
     await app.ventana.waitForTimeout(700);
 }
 
+/**
+ * Abre un tema de Ajustes (PLAN_PULIDO_V1 B.2) como el usuario: entra a la vista,
+ * que siempre abre en la portada, y toca la tarjeta o la fila del tema. Los campos
+ * viven dentro de páginas cerradas, así que esto va ANTES de tocar cualquiera.
+ * Nunca se muestra la página por dentro (§19.37).
+ */
+async function abrirTema(app, tema) {
+    const w = app.ventana;
+    await irA(app, 'ajustes');
+    app.consola.enPaso('ajustes: tema ' + tema);
+    await w.click('#ajustes-portada [data-tema="' + tema + '"]');
+    await w.waitForSelector('#view-ajustes .ajustes-pagina[data-tema="' + tema + '"]', { state: 'visible', timeout: 5000 });
+    await w.waitForTimeout(300);
+}
+
 /** Cierra el diálogo de Zenit que esté abierto (confirmarZenit / alertaZenit). */
 async function aceptarDialogo(app) {
     const ok = app.ventana.locator('#dialogo-zenit-ok');
@@ -249,7 +264,7 @@ async function moverInterruptor(app, idInput, encendido) {
 async function configurarImpuesto(app, { activo, tasa = 16, incluido = true, nombre = 'IVA' }) {
     const w = app.ventana;
     app.consola.enPaso('ajustes: impuesto');
-    await irA(app, 'ajustes');
+    await abrirTema(app, 'cobros');
     await moverInterruptor(app, 'adj-impuesto-activo', activo);
     await w.waitForTimeout(300);
     if (activo) {
@@ -265,7 +280,7 @@ async function configurarImpuesto(app, { activo, tasa = 16, incluido = true, nom
 async function configurarPropinas(app, { activo, sugerencias = '10, 15, 20' }) {
     const w = app.ventana;
     app.consola.enPaso('ajustes: propinas');
-    await irA(app, 'ajustes');
+    await abrirTema(app, 'cobros');
     await moverInterruptor(app, 'adj-propina-activa', activo);
     await w.waitForTimeout(300);
     if (activo) await w.fill('#adj-propina-sugerencias', sugerencias);
@@ -434,7 +449,7 @@ function leerBase(perfil) {
 }
 
 module.exports = {
-    irA, aceptarDialogo, moverInterruptor,
+    irA, abrirTema, aceptarDialogo, moverInterruptor,
     venderEnMostrador,
     abrirTurno, leerTotalesTurno, registrarMovimiento, cerrarTurno,
     configurarImpuesto, configurarPropinas,
@@ -464,7 +479,7 @@ async function crearCuenta(app, { url, nombre, correo, contrasena }) {
     await w.reload();
     await require('./app').esperarArranque(w);
 
-    await irA(app, 'ajustes');
+    await abrirTema(app, 'cuenta');
     await w.fill('#zenit-nombre', nombre);
     await w.fill('#zenit-email', correo);
     await w.fill('#zenit-password', contrasena);

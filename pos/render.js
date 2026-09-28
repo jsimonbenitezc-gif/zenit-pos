@@ -1255,7 +1255,8 @@ setTimeout(() => {
             cargarRentabilidad();
         }
     } else if (vista === 'ajustes') {
-        cargarAjustesInstalados();
+        // Siempre entra por la portada de temas (modulo-ajustes-temas.js).
+        entrarVistaAjustes(cargarAjustesInstalados());
     } else if (vista === 'turno') {
         cargarVistaTurno();
     } else if (vista === 'mesas') {
