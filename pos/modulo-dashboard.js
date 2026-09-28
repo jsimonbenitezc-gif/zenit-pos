@@ -98,7 +98,7 @@ async function cargarDashboard() {
 
         // ============ GRÁFICA VENTAS 7 DÍAS ============
 
-        renderizarGraficaVentas(stats.ultimos7Dias || []);
+        renderizarGraficaVentas(stats.ultimos7Dias || [], stats.hoyLocal);
         // Gráfica de 24 horas
         renderizarGrafica24Horas(stats.ventasPorHora || []);
 
@@ -174,7 +174,18 @@ async function cargarDashboard() {
 // Función auxiliar para la gráfica
 let chartVentas = null; // Variable global para almacenar la instancia del chart
 
-function renderizarGraficaVentas(datos) {
+// Medianoche UTC del día 'YYYY-MM-DD' (o de hoy en esta compu): contar días sobre
+// ella no depende del horario de verano ni de la zona de la compu.
+function diaBaseUTC(hoyLocal) {
+    if (typeof hoyLocal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(hoyLocal)) {
+        const [y, m, d] = hoyLocal.split('-').map(Number);
+        return Date.UTC(y, m - 1, d);
+    }
+    const h = new Date();
+    return Date.UTC(h.getFullYear(), h.getMonth(), h.getDate());
+}
+
+function renderizarGraficaVentas(datos, hoyLocal) {
     const canvas = document.getElementById('chart-ventas-7dias');
     if (!canvas) {
         console.error('Canvas no encontrado');
@@ -189,14 +200,17 @@ function renderizarGraficaVentas(datos) {
     // Generar últimos 7 días SIEMPRE (aunque no haya datos)
     const labels = [];
     const valores = [];
-    const hoy = new Date();
+    // Los días salen del "hoy" del NEGOCIO que manda el servidor (`hoyLocal`); sin él
+    // (datos locales sin internet, o servidor viejo) de la fecha de esta compu, que es
+    // la misma que usa SQLite con 'localtime'. Antes era toISOString() = UTC, y una
+    // venta de las 7 p.m. en México caía en el día siguiente.
+    const base = diaBaseUTC(hoyLocal);
 
     for (let i = 6; i >= 0; i--) {
-        const fecha = new Date(hoy);
-        fecha.setDate(fecha.getDate() - i);
+        const fecha = new Date(base - i * 86400000);
         const fechaStr = fecha.toISOString().split('T')[0];
 
-        const dia = fecha.toLocaleDateString('es-MX', { weekday: 'short' });
+        const dia = fecha.toLocaleDateString('es-MX', { weekday: 'short', timeZone: 'UTC' });
         labels.push(dia.charAt(0).toUpperCase() + dia.slice(1));
 
         const dato = datos.find(d => d.fecha === fechaStr);
