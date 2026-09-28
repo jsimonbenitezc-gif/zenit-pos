@@ -70,6 +70,7 @@ module.exports = {
         });
         af.dinero('la parte 2 cobra la hamburguesa', p2.total, HAMBURGUESA);
         af.igual('con internet la división ya no ofrece "Por items"', p2.porItemsVisible, false);
+        af.igual('dentro de una parte no sale el aviso de "Cobrar una parte"', p2.avisoPartesVisible, false);
         af.cierto('la parte 2 llegó al "¡Cobrado!"', p2.cobrado, 'no apareció el ¡Cobrado!');
         const panel2 = await w.locator('#mesa-panel').innerText();
         af.cierto('"Ya pagaron: 2 partes · $110.00"', panel2.includes('Ya pagaron: 2 partes · $110.00'),
@@ -86,6 +87,17 @@ module.exports = {
             (await w.locator('#btn-cobrar-esta-parte').innerText()).trim(), 'Es toda la cuenta: cobrar');
         await w.click('#modal-parte-mesa button:has-text("Cancelar")');
         await w.waitForTimeout(300);
+
+        // En "Cobrar y cerrar" → "Dividir la cuenta", el aviso manda a "Cobrar una
+        // parte": ahí es donde el mesero buscaba "cada quien lo suyo".
+        await w.click('#mesa-panel button:has-text("Cobrar y cerrar")');
+        await w.waitForSelector('#modal-cobrar-mesa:not(.hidden)', { timeout: 10000 });
+        await w.click('#btn-dividir-mesa');
+        await w.waitForSelector('#seccion-division-mesa:not(.hidden)', { timeout: 5000 });
+        af.cierto('"Dividir la cuenta" avisa que cada quien lo suyo es "Cobrar una parte"',
+            await w.locator('#division-mesa-aviso-partes').isVisible(), 'el aviso no apareció');
+        await w.click('#modal-cobrar-mesa .modal-footer button:has-text("Cancelar")');
+        await w.waitForSelector('#modal-cobrar-mesa', { state: 'hidden', timeout: 10000 });
 
         // ── El resto, con el cobro de siempre ───────────────────────────────
         const resto = await cobrarMesa(app, { metodo: 'efectivo' });

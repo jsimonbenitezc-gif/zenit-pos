@@ -1127,6 +1127,9 @@ function _resetearDivisionMesa() {
     modoDivisionMesa = conPartes ? 'partes' : 'items';
     const tabItems = document.getElementById('tab-division-items');
     if (tabItems) tabItems.classList.toggle('hidden', conPartes);
+    // El aviso manda a "Cobrar una parte"; no aplica si YA se está cobrando una.
+    const aviso = document.getElementById('division-mesa-aviso-partes');
+    if (aviso) aviso.classList.toggle('hidden', !conPartes || !!_parteEnCobro);
     pagosMesa = [];
     asignacionItems = {};
     const seccion = document.getElementById('seccion-division-mesa');

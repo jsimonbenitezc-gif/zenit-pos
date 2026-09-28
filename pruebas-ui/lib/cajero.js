@@ -419,6 +419,7 @@ async function cobrarParteDeMesa(app, { productos, metodo = 'efectivo', division
         await w.click('#btn-dividir-mesa');
         await w.waitForSelector('#seccion-division-mesa:not(.hidden)', { timeout: 5000 });
         enPantalla.porItemsVisible = await w.locator('#tab-division-items').isVisible();
+        enPantalla.avisoPartesVisible = await w.locator('#division-mesa-aviso-partes').isVisible();
         await w.click('#division-mesa-partes button:text-is("' + division.partes + '")');
         await w.waitForTimeout(600);
         for (let i = 0; i < (division.metodos || []).length; i++) {
