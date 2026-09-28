@@ -157,15 +157,22 @@ function svgIconHTML(name, size = 24, color = 'currentColor') {
 
 /**
  * Renderiza un valor de icono (campo emoji de producto/categoria).
- * Detecta automaticamente si es SVG (prefijo svg:) o emoji unicode.
- * @param {string} valor — 'svg:burger' o '🍔' o null
- * @param {number} size — px para SVG, em se calcula para emoji
- * @param {string} color — solo aplica a SVG
+ * Prioridad, igual que el celular (IconoProducto): [foto, la pone quien llama] >
+ * icono de color (el emoji de la lista, o un propio `svg:z-`) > icono de línea
+ * (`svg:`) > emoji del sistema (el que no está en la lista) > caja.
+ * @param {string} valor — 'svg:burger', 'svg:z-torta', '🍔' o null
+ * @param {number} size — px
+ * @param {string} color — solo aplica a los de línea
  * @returns {string} HTML listo para insertar
  */
 function renderIcono(valor, size = 24, color = 'currentColor') {
   if (!valor) return svgIconHTML('package', size, color);
+  const archivo = typeof archivoDeValor === 'function' ? archivoDeValor(valor) : null;
+  if (archivo) {
+    return `<img src="${archivo}" class="icono-color" width="${size}" height="${size}" alt="" draggable="false">`;
+  }
   if (valor.startsWith('svg:')) {
+    // Un propio (`svg:z-`) que este equipo no conoce cae aquí y sale caja, nunca un hueco.
     const name = valor.slice(4);
     return svgIconHTML(name, size, color) || svgIconHTML('package', size, color);
   }

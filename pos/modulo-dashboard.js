@@ -354,70 +354,103 @@ function renderizarGrafica24Horas(datos) {
 }
 
 // --- MODALES ADMIN ---
-function cargarSelectorIconos(tipo) {
+// El selector de iconos de producto y categoría (PLAN_REDISENO_V1, Bloque 4), igual
+// que el del celular (IconPicker): pestaña "De color" con los iconos de Fluent por
+// tipo de negocio (los del negocio PRIMERO) y buscador en español; pestaña "De línea"
+// con los `svg:` de siempre, que hay negocios usando. Elegir un icono de color guarda
+// su EMOJI (o `svg:z-<id>` si es propio): nada se migra y las apps viejas lo ven.
+// Se vuelve a armar cada vez que se abre: así nace con el buscador vacío, marca el
+// icono actual y toma el tipo de negocio vigente.
+async function cargarSelectorIconos(tipo) {
     const cont = document.getElementById(`${tipo}EmojiPicker`);
     if (!cont) return;
 
-    // Tabs: Iconos (default) | Emojis
-    const tabsHTML = `
-        <div class="icon-picker-tabs">
-            <button class="icon-picker-tab active" onclick="cambiarTabPicker('${tipo}','svg',this)">Iconos</button>
-            <button class="icon-picker-tab" onclick="cambiarTabPicker('${tipo}','emoji',this)">Emojis</button>
-        </div>
-    `;
+    let tipoNegocio = '';
+    try {
+        const ajustes = await window.api.obtenerAjustes();
+        tipoNegocio = (ajustes && ajustes.business_tipo) || '';
+    } catch (e) {
+        // Sin el tipo, los grupos salen en su orden de siempre: no impide elegir.
+        console.warn('Selector de iconos: no pude leer el tipo de negocio', e);
+    }
 
-    // SVG icons grid
-    const svgGrid = Object.entries(SVG_ICON_CATEGORIES).map(([catName, icons]) =>
+    const actual = emojiSeleccionado || '';
+    const idActual = (iconoDeValor(actual) || {}).id;
+    // La caja (`svg:package`) es el valor de fábrica, no una elección: abre en "De color".
+    const enLinea = actual.startsWith('svg:') && !actual.startsWith('svg:z-') && actual !== 'svg:package';
+
+    const celdaColor = (icono) =>
+        `<button type="button" class="emoji-btn icono-color-btn${icono.id === idActual ? ' seleccionado' : ''}"` +
+        ` data-valor="${esc(valorDeIcono(icono))}" title="${esc(icono.nombre)}">` +
+        `<img src="iconos/png/${icono.id}.png" width="30" height="30" alt="" loading="lazy" draggable="false"></button>`;
+
+    const gruposHTML = gruposParaTipo(tipoNegocio).map(g =>
+        `<div class="icon-picker-category">${esc(g.nombre)}</div>` +
+        g.iconos.map(id => celdaColor(iconoPorId(id))).join('')
+    ).join('');
+
+    const lineaHTML = Object.entries(SVG_ICON_CATEGORIES).map(([catName, icons]) =>
         `<div class="icon-picker-category">${catName}</div>` +
         icons.map(name =>
-            `<div class="emoji-btn icon-svg-btn" onclick="seleccionarIcono('${tipo}','svg:${name}')" title="${SVG_ICON_LABELS[name] || name}">
-                ${svgIconHTML(name, 22)}
-            </div>`
+            `<button type="button" class="emoji-btn icon-svg-btn${actual === 'svg:' + name ? ' seleccionado' : ''}"` +
+            ` data-valor="svg:${name}" title="${SVG_ICON_LABELS[name] || name}">${svgIconHTML(name, 22)}</button>`
         ).join('')
     ).join('');
 
-    // Emoji grid (organized by category like SVG)
-    const emojiCats = {
-        'Comida': ['🍔','🍕','🍟','🌭','🌮','🌯','🫔','🥙','🥪','🥗','🥩','🍖','🍗','🥓','🍳','🥚','🧆','🥘','🍲','🫕','🥣','🍿','🧈','🧂','🥫','🍱','🍘','🍙','🍚','🍛','🍜','🍝','🍠','🍢','🍣','🍤','🍥','🥮','🍡','🥟','🥠','🥡'],
-        'Pan & Cereales': ['🍞','🥐','🥖','🫓','🥨','🥯','🥞','🧇','🧀'],
-        'Frutas': ['🍇','🍈','🍉','🍊','🍋','🍌','🍍','🥭','🍎','🍏','🍐','🍑','🍒','🍓','🫐','🥝','🥥'],
-        'Verduras': ['🍅','🥑','🍆','🥔','🥕','🌽','🌶️','🫑','🥒','🥬','🥦','🧄','🧅','🥜','🫘','🌰','🫒'],
-        'Postres & Dulces': ['🍦','🍧','🍨','🍩','🍪','🎂','🍰','🧁','🥧','🍫','🍬','🍭','🍮','🍯'],
-        'Bebidas': ['🥤','☕','🫖','🍵','🥛','🍼','🍺','🍻','🍷','🍸','🍹','🍾','🥂','🥃','🧋','🧃','🧉','🧊','🫗','🍶'],
-        'Restaurante': ['🍽️','🍴','🥄','🔪','🫙','🧑‍🍳','🧾','💳'],
-        'General': ['📦','🛒','🛍️','🏷️','🔥','⭐','✨','💡','✂️','📌','💰','🎉','❤️','👍','🏠','🚗','🛵','📱','📋','✅','⏰','🔔']
-    };
-    const emojiGrid = Object.entries(emojiCats).map(([catName, emojis]) =>
-        `<div class="icon-picker-category">${catName}</div>` +
-        emojis.map(e =>
-            `<div class="emoji-btn" onclick="seleccionarIcono('${tipo}','${e}')">${e}</div>`
-        ).join('')
-    ).join('');
+    cont.classList.add('icon-picker-v2');
+    cont.innerHTML = `
+        <div class="icon-picker-tabs">
+            <button type="button" class="icon-picker-tab${enLinea ? '' : ' active'}" data-tab="color">De color</button>
+            <button type="button" class="icon-picker-tab${enLinea ? ' active' : ''}" data-tab="linea">De línea</button>
+        </div>
+        <div data-panel="color"${enLinea ? ' style="display:none;"' : ''}>
+            <div class="icon-picker-buscar">
+                ${svgIconHTML('search', 16)}
+                <input type="text" placeholder="Busca: taco, cerveza, pastel..." autocomplete="off" spellcheck="false">
+            </div>
+            <div class="icon-picker-grid" data-lista="grupos">${gruposHTML}</div>
+            <div class="icon-picker-grid" data-lista="hallados" style="display:none;"></div>
+        </div>
+        <div data-panel="linea"${enLinea ? '' : ' style="display:none;"'}>
+            <div class="icon-picker-grid">${lineaHTML}</div>
+        </div>`;
 
-    cont.innerHTML = tabsHTML +
-        `<div class="icon-picker-grid" id="${tipo}SvgGrid">${svgGrid}</div>` +
-        `<div class="icon-picker-grid" id="${tipo}EmojiGrid" style="display:none;">${emojiGrid}</div>`;
+    const listaGrupos = cont.querySelector('[data-lista="grupos"]');
+    const listaHallados = cont.querySelector('[data-lista="hallados"]');
+    const buscador = cont.querySelector('.icon-picker-buscar input');
+
+    buscador.addEventListener('input', () => {
+        const q = buscador.value.trim();
+        if (!q) {
+            listaHallados.style.display = 'none';
+            listaGrupos.style.display = '';
+            return;
+        }
+        const hallados = buscarIconos(q);
+        listaHallados.innerHTML =
+            `<div class="icon-picker-category">${hallados.length
+                ? `${hallados.length} encontrado${hallados.length === 1 ? '' : 's'}`
+                : 'No hay ningún icono con ese nombre'}</div>` +
+            hallados.map(celdaColor).join('');
+        listaGrupos.style.display = 'none';
+        listaHallados.style.display = '';
+    });
+
+    cont.querySelectorAll('.icon-picker-tab').forEach(btn => btn.addEventListener('click', () => {
+        cont.querySelectorAll('.icon-picker-tab').forEach(t => t.classList.toggle('active', t === btn));
+        cont.querySelectorAll('[data-panel]').forEach(p => {
+            p.style.display = p.dataset.panel === btn.dataset.tab ? '' : 'none';
+        });
+    }));
+
+    cont.addEventListener('click', (ev) => {
+        const celda = ev.target.closest('[data-valor]');
+        if (celda && cont.contains(celda)) seleccionarIcono(tipo, celda.dataset.valor);
+    });
 }
 
 // Alias de compatibilidad
 function cargarSelectorEmojis(tipo) { cargarSelectorIconos(tipo); }
-
-function cambiarTabPicker(tipo, tab, btn) {
-    const cont = document.getElementById(`${tipo}EmojiPicker`);
-    if (!cont) return;
-    cont.querySelectorAll('.icon-picker-tab').forEach(t => t.classList.remove('active'));
-    btn.classList.add('active');
-
-    const svgGrid = document.getElementById(`${tipo}SvgGrid`);
-    const emojiGrid = document.getElementById(`${tipo}EmojiGrid`);
-    if (tab === 'svg') {
-        if (svgGrid) svgGrid.style.display = '';
-        if (emojiGrid) emojiGrid.style.display = 'none';
-    } else {
-        if (svgGrid) svgGrid.style.display = 'none';
-        if (emojiGrid) emojiGrid.style.display = '';
-    }
-}
 
 function seleccionarIcono(tipo, valor) {
     emojiSeleccionado = valor;
@@ -434,15 +467,23 @@ function seleccionarIcono(tipo, valor) {
 // Alias de compatibilidad
 function seleccionarEmoji(tipo, e) { seleccionarIcono(tipo, e); }
 
-function toggleEmojiPicker(tipo) {
+// La licencia MIT de Fluent Emoji tiene que viajar con los dibujos (Ajustes → Actualizaciones).
+function mostrarLicenciasIconos() {
+    alertaZenit('Los iconos de color son Fluent Emoji de Microsoft.\n\n' + LICENCIA_FLUENT, 'Licencias');
+}
+
+async function toggleEmojiPicker(tipo) {
     const el = document.getElementById(`${tipo}EmojiPicker`);
-    if (el) {
-        const isHidden = el.style.display === 'none' || !el.style.display;
-        el.style.display = isHidden ? 'block' : 'none';
-        if (isHidden && !el.querySelector('.icon-picker-tabs')) {
-            cargarSelectorIconos(tipo);
-        }
+    if (!el) return;
+    const isHidden = el.style.display === 'none' || !el.style.display;
+    if (!isHidden) {
+        el.style.display = 'none';
+        return;
     }
+    await cargarSelectorIconos(tipo);
+    el.style.display = 'block';
+    const buscador = el.querySelector('.icon-picker-buscar input');
+    if (buscador && buscador.offsetParent) buscador.focus();
 }
 
 async function seleccionarImagenProducto() {

@@ -2744,3 +2744,13 @@ body.dark .cart-item.cart-promo { background: #2a2111; }
 body.dark .promo-eleccion-prod { background: #1f2937; border-color: #374151; color: #e5e7eb; }
 body.dark .promo-vista { background: #111827; border-color: #374151; }
 body.dark .cal-dia span { background: #1f2937; border-color: #4b5563; }
+
+/* Selector de iconos (PLAN_REDISENO_V1, Bloque 4): De color / De línea */
+.emoji-picker-container.icon-picker-v2 { max-height: none; overflow: visible; }
+.icon-picker-v2 .icon-picker-grid { max-height: 300px; overflow-x: hidden; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); }
+.icon-picker-v2 .emoji-btn { min-width: 0; padding: 4px; border: 1.5px solid transparent; background: transparent; display: flex; align-items: center; justify-content: center; }
+.icon-picker-v2 .emoji-btn:hover { transform: none; background: #e5e7eb; }
+.icon-picker-v2 .emoji-btn.seleccionado { border-color: #2563eb; background: #e8f0ff; }
+.icon-picker-buscar { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 0 10px; margin-bottom: 8px; color: #9aa3b2; }
+.icon-picker-buscar input { flex: 1; border: none; outline: none; padding: 8px 0; font-size: 0.9em; background: transparent; margin: 0; }
+img.icono-color { display: inline-block; vertical-align: middle; object-fit: contain; }

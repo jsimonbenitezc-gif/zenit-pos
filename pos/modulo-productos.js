@@ -90,6 +90,9 @@ async function cargarProductosAdmin() {
 async function abrirModalProducto(p = null) {
     productoEditandoId = p ? p.id : null;
     emojiSeleccionado = p ? p.emoji : 'svg:package';
+    // El selector de iconos se arma al abrirlo: al abrir el modal empieza cerrado.
+    const selectorIconos = document.getElementById('prodEmojiPicker');
+    if (selectorIconos) selectorIconos.style.display = 'none';
 
     document.getElementById('prodNombre').value = p ? p.nombre : '';
     document.getElementById('prodDescripcion').value = p ? p.descripcion : '';
@@ -181,6 +184,9 @@ async function editarProducto(id) {
 function abrirModalCategoria(cat = null) {
     categoriaEditandoId = cat ? cat.id : null;
     emojiSeleccionado = (cat && cat.emoji) ? cat.emoji : 'svg:package';
+    // El selector de iconos se arma al abrirlo: al abrir el modal empieza cerrado.
+    const selectorIconos = document.getElementById('catEmojiPicker');
+    if (selectorIconos) selectorIconos.style.display = 'none';
 
     document.getElementById('catNombre').value = cat ? cat.nombre : '';
     document.getElementById('modalCatTitulo').innerText = cat ? 'Editar Categoría' : 'Nueva Categoría';
