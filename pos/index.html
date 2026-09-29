@@ -551,7 +551,7 @@
                         <div class="turno-form-icon">
                             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                         </div>
-                        <h2>Abrir Turno</h2>
+                        <h2>Abrir Turno <button type="button" class="ayuda" data-ayuda="turno"></button></h2>
                         <p class="turno-form-sub">Registra quién está atendiendo la caja y el fondo inicial de efectivo.</p>
                         <div class="turno-form-fields">
                             <div class="input-group">
@@ -581,7 +581,7 @@
                 <div id="turno-activo" class="hidden">
                     <div class="turno-info-grid">
                         <div class="turno-info-card">
-                            <h3>Turno Activo</h3>
+                            <h3>Turno Activo <button type="button" class="ayuda" data-ayuda="turno"></button></h3>
                             <div class="turno-dato-row"><span>Cajero</span><strong id="turno-act-nombre">—</strong></div>
                             <div class="turno-dato-row"><span>Rol</span><strong id="turno-act-rol">—</strong></div>
                             <div class="turno-dato-row"><span>Apertura</span><strong id="turno-act-apertura">—</strong></div>
@@ -800,7 +800,7 @@
         <div class="table-card">
             <div class="table-header">
                 <div>
-                    <h3 style="margin:0; font-size:1.1em;">Descuentos Predefinidos</h3>
+                    <h3 style="margin:0; font-size:1.1em;">Descuentos Predefinidos <button type="button" class="ayuda" data-ayuda="descuentos"></button></h3>
                     <p style="margin:4px 0 0; color:#6b7280; font-size:0.85em;">Aparecen como opciones rápidas al cobrar en Nueva Venta</p>
                 </div>
                 <button class="btn-primary" onclick="abrirModalNuevoDescuento()">+ Nuevo Descuento</button>
@@ -825,7 +825,7 @@
         <div class="table-card">
             <div class="table-header">
                 <div>
-                    <h3 style="margin:0; font-size:1.1em;">Promos</h3>
+                    <h3 style="margin:0; font-size:1.1em;">Promos <button type="button" class="ayuda" data-ayuda="promos"></button></h3>
                     <p style="margin:4px 0 0; color:#6b7280; font-size:0.85em;">"Martes 2x1 en tacos": aparecen en Nueva Venta como un botón, solo en su día y su hora</p>
                 </div>
                 <button class="btn-primary" id="btn-nueva-promo" onclick="abrirModalPromo()">+ Nueva promo</button>
@@ -922,7 +922,7 @@
         <div class="table-card">
             <div class="table-header">
                 <div>
-                    <h3 style="margin:0; font-size:1.1em;">Preparaciones</h3>
+                    <h3 style="margin:0; font-size:1.1em;">Preparaciones <button type="button" class="ayuda" data-ayuda="preparaciones"></button></h3>
                     <p style="margin:4px 0 0; color:#6b7280; font-size:0.85em;">Mezclas o concentrados que preparas en cocina</p>
                 </div>
                 <button class="btn-primary" onclick="abrirModalPreparacion()">+ Agregar Preparación</button>
@@ -946,7 +946,7 @@
         <div class="table-card">
             <div class="table-header">
                 <div>
-                    <h3 style="margin:0; font-size:1.1em;">Recetas de Productos</h3>
+                    <h3 style="margin:0; font-size:1.1em;">Recetas de Productos <button type="button" class="ayuda" data-ayuda="recetas"></button></h3>
                     <p style="margin:4px 0 0; color:#6b7280; font-size:0.85em;">Vincula cada producto del menú con sus insumos</p>
                 </div>
             </div>
@@ -1296,7 +1296,7 @@
 
         <!-- Impuestos (BLOQUE 8) — configuración de la CUENTA, solo el dueño -->
         <div class="ajustes-card" id="card-impuestos" style="position:relative;">
-            <h3>Impuestos</h3>
+            <h3>Impuestos <button type="button" class="ayuda" data-ayuda="impuesto"></button></h3>
             <div class="setting-item">
                 <div>
                     <span>Cobrar impuesto en las ventas</span>
@@ -1330,7 +1330,7 @@
 
         <!-- Propinas (BLOQUE 9) — configuración de la CUENTA, solo el dueño -->
         <div class="ajustes-card" id="card-propinas" style="position:relative;">
-            <h3>Propinas</h3>
+            <h3>Propinas <button type="button" class="ayuda" data-ayuda="propinas"></button></h3>
             <div class="setting-item">
                 <div>
                     <span>Aceptar propinas en el cobro</span>
@@ -1457,7 +1457,7 @@
 
         <div class="ajustes-card" id="card-permisos-rol">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <h3 style="margin:0;">Administrar Puestos</h3>
+                <h3 style="margin:0;">Administrar Puestos <button type="button" class="ayuda" data-ayuda="puestos"></button></h3>
             </div>
             <p style="color:var(--text-muted);font-size:13px;margin-bottom:20px;">Activa los puestos que usarán el sistema. El Administrador siempre tiene acceso completo.</p>
             <div id="puestos-container">
@@ -1470,7 +1470,7 @@
             <h3>📍 Sucursal</h3>
             <p style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">Todo lo que registra este equipo (ventas, turnos, mesas, inventario) se guarda en esta sucursal. Cambiarla requiere la contraseña de administrador. Requiere conexión activa.</p>
             <div class="input-group">
-                <label>Sucursal de este dispositivo</label>
+                <label>Sucursal de este dispositivo <button type="button" class="ayuda" data-ayuda="sucursal"></button></label>
                 <!-- La opción vacía es solo un marcador para el equipo que aún no eligió:
                      una vez que el negocio tiene sucursales, registrar "sin sucursal" no
                      tiene sentido, así que no es elegible (ver CLAUDE.md §24). -->
@@ -1494,7 +1494,7 @@
              solo hace que las acciones sensibles de fuera de horario queden
              marcadas y avisen al dueño. Configuración de la CUENTA: solo el dueño. -->
         <div class="ajustes-card" id="card-horario" style="position:relative;">
-            <h3>Horario del negocio</h3>
+            <h3>Horario del negocio <button type="button" class="ayuda" data-ayuda="horario"></button></h3>
             <div class="setting-item">
                 <div>
                     <span>Definir horario de operación</span>
@@ -2290,7 +2290,7 @@
 <div class="modal hidden" id="modalBibliotecaMods">
     <div class="modal-content" style="max-width:640px;">
         <div class="modal-header">
-            <h3>Modificadores</h3>
+            <h3>Modificadores <button type="button" class="ayuda" data-ayuda="modificadores"></button></h3>
             <button class="close-btn" onclick="cerrarBibliotecaModificadores()">×</button>
         </div>
         <p style="color:#6b7280;font-size:0.88em;margin-bottom:12px;">
@@ -2901,6 +2901,8 @@
 <script src="iconos/iconos.js"></script>
 <script src="iconos/licencia.js"></script>
 <script src="svg-icons.js"></script>
+<script src="ayuda-textos.js"></script>
+<script src="modulo-ayuda.js"></script>
 
 <!-- Módulos (se cargan antes de render.js) -->
 <script src="modulo-plan.js"></script>

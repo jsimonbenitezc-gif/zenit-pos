@@ -2883,3 +2883,30 @@ body.dark .parte-fila-cuenta { color: #93c5fd; }
 body.dark .parte-quitar { background: #1e3a8a; color: #bfdbfe; }
 body.dark .parte-resumen { background: #111a2e; }
 body.dark .parte-resumen div:first-child strong { color: #93c5fd; }
+
+/* ─── AYUDA (?) (PLAN_AYUDA_V1, modulo-ayuda.js) ─────────────────────────────
+   Chico y gris a propósito: está para el que lo busca, no estorba al que ya sabe.
+   La burbuja va pegada al <body> (ningún overflow la recorta) y por encima de
+   todo, incluidos los modales y el PIN. */
+button.ayuda {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; min-width: 18px; padding: 0; margin: 0 0 0 6px;
+    border: 1.5px solid #9aa3b2; border-radius: 50%; background: transparent;
+    color: #9aa3b2; font-size: 11px; font-weight: 700; line-height: 1;
+    cursor: help; vertical-align: middle; flex: 0 0 auto;
+}
+button.ayuda:hover, button.ayuda[aria-expanded="true"] { border-color: #2563eb; color: #2563eb; background: #eff6ff; }
+button.ayuda:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.ayuda-burbuja {
+    position: fixed; z-index: 20000; max-width: 300px; padding: 12px 14px;
+    background: #fff; color: #111827; border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(17, 24, 39, 0.18), 0 1px 3px rgba(17, 24, 39, 0.08);
+    font-size: 13.5px; line-height: 1.45; text-align: left; font-weight: 400;
+}
+.ayuda-burbuja[hidden] { display: none; }
+.ayuda-burbuja-titulo { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.ayuda-burbuja-ejemplo { color: #6b7280; margin-top: 6px; }
+body.dark button.ayuda { border-color: #6b7280; color: #9ca3af; }
+body.dark button.ayuda:hover, body.dark button.ayuda[aria-expanded="true"] { border-color: #60a5fa; color: #93c5fd; background: #172554; }
+body.dark .ayuda-burbuja { background: #1f2937; color: #f3f4f6; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+body.dark .ayuda-burbuja-ejemplo { color: #9ca3af; }
