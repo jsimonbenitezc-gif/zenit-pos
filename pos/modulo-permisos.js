@@ -322,12 +322,28 @@ async function guardarPermisosRol() {
         await window.api.guardarAjuste('permisos_roles', JSON.stringify(toSave));
         _permisosRolCache     = JSON.parse(JSON.stringify(permisos));
         _permisosRolFullCache = JSON.parse(JSON.stringify(toSave));
-        if (modoConectado && apiClient && tokenActual) {
-            apiClient.saveSettings({ permisos_roles: toSave }).catch(() => {});
-        }
+        await _subirPermisosNube(toSave);
         if (turnoActivo) aplicarPermisos();
     } catch(e) {
         mostrarNotificacionExito('Error guardando configuración', 'Error');
+    }
+}
+
+// Sube los puestos a la cuenta y AVISA si no se pudo (PLAN_SEGURIDAD_V1, E).
+// Antes era `.catch(() => {})`: decía "¡Listo!" y la siguiente lectura de la
+// nube —que manda (§40)— borraba el cambio sin que nadie se enterara.
+async function _subirPermisosNube(toSave) {
+    if (!(modoConectado && apiClient && tokenActual)) return true;
+    try {
+        await apiClient.saveSettings({ permisos_roles: toSave });
+        return true;
+    } catch (e) {
+        await alertaZenit(
+            `Se guardó en este equipo, pero no se pudo subir a tu cuenta (${e?.message || "sin conexión"}). ` +
+            "Revisa tu internet y vuelve a intentarlo.",
+            "No se guardó en la nube"
+        );
+        return false;
     }
 }
 
@@ -373,9 +389,13 @@ async function guardarPinPerfil(rol) {
         } catch (e) {
             // Sin conexión: fallback a SHA-256 local
             permisos[rol].pin = await hashPin(pin);
+            delete permisos[rol].pin_bcrypt;
         }
     } else {
         permisos[rol].pin = await hashPin(pin);
+        // ⚠️ El bcrypt del PIN ANTERIOR manda en el servidor sobre el SHA-256
+        // (utils/verifyPin.js): si se queda, el PIN viejo sigue entrando y el nuevo no.
+        delete permisos[rol].pin_bcrypt;
     }
     permisos[rol].pin_set = true;
 
@@ -384,10 +404,8 @@ async function guardarPinPerfil(rol) {
         await window.api.guardarAjuste('permisos_roles', JSON.stringify(toSave));
         _permisosRolCache     = JSON.parse(JSON.stringify(permisos));
         _permisosRolFullCache = JSON.parse(JSON.stringify(toSave));
-        if (modoConectado && apiClient && tokenActual) {
-            apiClient.saveSettings({ permisos_roles: toSave }).catch(() => {});
-        }
-        mostrarNotificacionExito(`PIN de ${rol} configurado`, '¡Listo!');
+        const enNube = await _subirPermisosNube(toSave);
+        if (enNube) mostrarNotificacionExito(`PIN de ${rol} configurado`, '¡Listo!');
         cargarPermisosAjustes();
     } catch(e) {
         mostrarNotificacionExito('Error guardando PIN', 'Error');
@@ -413,17 +431,15 @@ async function quitarPinPerfil(rol) {
         } catch(e) {}
     }
 
-    if (permisos[rol]) { delete permisos[rol].pin; permisos[rol].pin_set = false; }
+    if (permisos[rol]) { delete permisos[rol].pin; delete permisos[rol].pin_bcrypt; permisos[rol].pin_set = false; }
 
     const toSave = _buildFullPermisosDesktop(permisos);
     try {
         await window.api.guardarAjuste('permisos_roles', JSON.stringify(toSave));
         _permisosRolCache     = JSON.parse(JSON.stringify(permisos));
         _permisosRolFullCache = JSON.parse(JSON.stringify(toSave));
-        if (modoConectado && apiClient && tokenActual) {
-            apiClient.saveSettings({ permisos_roles: toSave }).catch(() => {});
-        }
-        mostrarNotificacionExito(`PIN de ${rol} eliminado`, '¡Listo!');
+        const enNube = await _subirPermisosNube(toSave);
+        if (enNube) mostrarNotificacionExito(`PIN de ${rol} eliminado`, '¡Listo!');
         cargarPermisosAjustes();
     } catch(e) {
         mostrarNotificacionExito('Error guardando cambios', 'Error');
@@ -456,9 +472,7 @@ async function guardarNombrePuesto(rol, nombre) {
         await window.api.guardarAjuste('permisos_roles', JSON.stringify(toSave));
         _permisosRolCache     = JSON.parse(JSON.stringify(permisos));
         _permisosRolFullCache = JSON.parse(JSON.stringify(toSave));
-        if (modoConectado && apiClient && tokenActual) {
-            apiClient.saveSettings({ permisos_roles: toSave }).catch(() => {});
-        }
+        await _subirPermisosNube(toSave);
     } catch(e) {
         mostrarNotificacionExito('Error guardando nombre', 'Error');
     }
@@ -542,10 +556,8 @@ async function crearNuevoPuesto() {
 
     try {
         await window.api.guardarAjuste('permisos_roles', JSON.stringify(permisos));
-        if (modoConectado && apiClient && tokenActual) {
-            apiClient.saveSettings({ permisos_roles: permisos }).catch(() => {});
-        }
-        mostrarNotificacionExito(`Puesto "${nombre}" creado`, '¡Listo!');
+        const enNube = await _subirPermisosNube(permisos);
+        if (enNube) mostrarNotificacionExito(`Puesto "${nombre}" creado`, '¡Listo!');
         cargarPermisosAjustes();
     } catch(e) {
         mostrarNotificacionExito('Error al crear el puesto', 'Error');
@@ -565,10 +577,8 @@ async function eliminarPuestoCustom(key, label) {
 
     try {
         await window.api.guardarAjuste('permisos_roles', JSON.stringify(permisos));
-        if (modoConectado && apiClient && tokenActual) {
-            apiClient.saveSettings({ permisos_roles: permisos }).catch(() => {});
-        }
-        mostrarNotificacionExito(`Puesto "${label}" eliminado`, '');
+        const enNube = await _subirPermisosNube(permisos);
+        if (enNube) mostrarNotificacionExito(`Puesto "${label}" eliminado`, '');
         cargarPermisosAjustes();
     } catch(e) {
         mostrarNotificacionExito('Error al eliminar el puesto', 'Error');

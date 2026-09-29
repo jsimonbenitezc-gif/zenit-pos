@@ -305,6 +305,8 @@ async function iniciarSesionZenitAjustes() {
 }
 
 async function cerrarSesionZenit() {
+    // Cerrar sesión borra los datos del equipo: solo el administrador (PLAN_SEGURIDAD_V1).
+    if (!(await pedirAdminReciente('Ingresa la contraseña de administrador para cerrar la sesión.'))) return;
     const okCerrar = await confirmarZenit(
         'Tus datos se sincronizarán con tu cuenta antes de salir.\n\nDespués, los datos locales de este equipo se borrarán por seguridad. Podrás recuperarlos iniciando sesión de nuevo.',
         '¿Cerrar sesión?',
@@ -351,11 +353,27 @@ function mostrarCambiarPasswordApp() {
     if (!visible) document.getElementById('nueva-password-app')?.focus();
 }
 
+/**
+ * "Pedir contraseña al iniciar": encenderlo no pide nada; APAGARLO pide la del
+ * administrador (PLAN_SEGURIDAD_V1, B). Antes bastaba un clic de quien tuviera
+ * Ajustes abierto para dejar el equipo sin cerrojo.
+ */
+async function cambiarPedirPasswordInicio(el) {
+    if (!el.checked) {
+        const ok = await pedirAdminReciente('Ingresa la contraseña de administrador para dejar de pedirla al iniciar.');
+        if (!ok) { el.checked = true; return; }
+    }
+    await window.api.guardarAjuste('pedir_password_inicio', el.checked ? 'true' : 'false');
+}
+
 async function guardarNuevaPasswordApp() {
     const nueva = document.getElementById('nueva-password-app').value;
     const confirmar = document.getElementById('confirm-password-app').value;
     if (nueva.length < 4) { alertaZenit('La contraseña debe tener al menos 4 caracteres'); return; }
     if (nueva !== confirmar) { alertaZenit('Las contraseñas no coinciden'); return; }
+    // La ACTUAL, siempre (no valen los 5 minutos): cambiarla es quedarse con el equipo (C).
+    const ok = await pedirAdminReciente('Para cambiarla, escribe primero tu contraseña actual de administrador.', { siempre: true });
+    if (!ok) return;
     await window.api.establecerPasswordApp(nueva);
     document.getElementById('form-cambiar-password').style.display = 'none';
     document.getElementById('nueva-password-app').value = '';

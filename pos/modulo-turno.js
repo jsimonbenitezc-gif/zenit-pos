@@ -865,7 +865,8 @@ async function solicitarAuthTurno(rol) {
  * lo único disponible offline.
  *
  * @param {string} mensaje texto que explica para qué se pide
- * @returns {Promise<void>} resuelve si la contraseña es correcta, rechaza si cancela
+ * @returns {Promise<void|'sin-cerrojo'>} resuelve si la contraseña es correcta (o con
+ *   'sin-cerrojo' si no había nada que pedir), rechaza si cancela
  */
 async function solicitarPasswordAdmin(mensaje) {
     const usarCuenta = !!(modoConectado && apiClient && tokenActual);
@@ -873,7 +874,7 @@ async function solicitarPasswordAdmin(mensaje) {
     return new Promise(async (resolve, reject) => {
         if (!usarCuenta) {
             const tienePass = await window.api.tienePasswordApp();
-            if (!tienePass) { resolve(); return; } // equipo sin cerrojo local: nada que pedir
+            if (!tienePass) { resolve('sin-cerrojo'); return; } // equipo sin cerrojo local: nada que pedir
         }
 
         _turnoAuthResolve = resolve;
@@ -887,6 +888,33 @@ async function solicitarPasswordAdmin(mensaje) {
         document.getElementById('modal-auth-turno').classList.remove('hidden');
         setTimeout(() => document.getElementById('auth-turno-input').focus(), 50);
     });
+}
+
+/**
+ * Candado del administrador para lo delicado de Ajustes (PLAN_SEGURIDAD_V1,
+ * sesión 1): Puestos y PINs, apagar "pedir contraseña", cambiarla, cerrar sesión.
+ * Una contraseña bien tecleada vale 5 minutos PARA ESTE PERFIL, para no pedirla
+ * en cada clic; cambiar de perfil la anula.
+ *
+ * @param {string} mensaje para qué se pide
+ * @param {{siempre?: boolean}} [opc] `siempre`: ignora los 5 minutos
+ * @returns {Promise<boolean>} true si se puede seguir
+ */
+const ADMIN_VALIDO_MS = 5 * 60 * 1000;
+let _adminConfirmado = { hasta: 0, rol: null };
+
+async function pedirAdminReciente(mensaje, opc = {}) {
+    if (!opc.siempre && _adminConfirmado.rol === rolActivo && Date.now() < _adminConfirmado.hasta) return true;
+    let r;
+    try {
+        r = await solicitarPasswordAdmin(mensaje);
+    } catch {
+        return false; // canceló
+    }
+    // Sin cerrojo no se tecleó nada: no cuenta como contraseña reciente (si en
+    // esos 5 minutos se estrena una, la siguiente acción ya debe pedirla).
+    if (r !== 'sin-cerrojo') _adminConfirmado = { hasta: Date.now() + ADMIN_VALIDO_MS, rol: rolActivo };
+    return true;
 }
 
 async function confirmarAuthTurno() {

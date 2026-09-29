@@ -162,8 +162,11 @@ function _mostrarPaginaAjustes(id) {
     if (principal) principal.scrollTop = 0;
 }
 
-function abrirTemaAjustes(id) {
+async function abrirTemaAjustes(id) {
     if (!TEMAS_AJUSTES.some(t => t.id === id)) return;
+    // "Mi equipo" guarda los PINs de todos: pide la contraseña del administrador
+    // aunque el perfil activo sea el suyo (PLAN_SEGURIDAD_V1, sesión 1).
+    if (id === 'equipo' && !(await pedirAdminReciente('Ingresa la contraseña de administrador para ver los puestos y sus PINs.'))) return;
     // Si la vista no está al frente, se entra por la puerta normal (carga los ajustes).
     if (!document.getElementById('view-ajustes')?.classList.contains('active')) cambiarVista('ajustes');
     _mostrarPaginaAjustes(id);
