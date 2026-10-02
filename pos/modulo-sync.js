@@ -556,7 +556,7 @@ async function subirInventarioLocalAlBackend() {
         for (const prep of (prepsLocales || [])) {
             try {
                 const creado = await apiClient.request('/inventory/preparations', { method: 'POST', body: {
-                    name: prep.nombre, unit: 'unidad', yield_quantity: 1, notes: prep.descripcion || ''
+                    name: prep.nombre, unit: 'unidad', yield_quantity: parseFloat(prep.rinde) > 0 ? parseFloat(prep.rinde) : 1, notes: prep.descripcion || ''
                 } });
                 mapaPreps[prep.id] = creado.id;
                 // Subir items de esta preparación

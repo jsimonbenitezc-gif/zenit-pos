@@ -1575,13 +1575,23 @@ function eliminarInsumo(id, cb) {
 function obtenerPreparaciones(callback) {
     db.all("SELECT * FROM preparaciones WHERE activo = 1 ORDER BY nombre ASC", [], callback);
 }
+// Un rinde ausente o inválido se guarda como 1 (mismo criterio que _fraccionDeTanda).
+function _rindeValido(rinde) {
+    const r = parseFloat(rinde);
+    return isFinite(r) && r > 0 ? r : 1;
+}
 function agregarPreparacion(d, cb) {
-    db.run("INSERT INTO preparaciones (nombre, descripcion) VALUES (?, ?)",
-        [d.nombre, d.descripcion || ''], cb);
+    db.run("INSERT INTO preparaciones (nombre, descripcion, rinde) VALUES (?, ?, ?)",
+        [d.nombre, d.descripcion || '', _rindeValido(d.rinde)], cb);
 }
 function actualizarPreparacion(id, d, cb) {
-    db.run("UPDATE preparaciones SET nombre=?, descripcion=? WHERE id=?",
-        [d.nombre, d.descripcion || '', id], cb);
+    // Sin `rinde` en los datos se conserva el guardado: nunca se pisa con 1 por omisión.
+    if (d.rinde === undefined) {
+        return db.run("UPDATE preparaciones SET nombre=?, descripcion=? WHERE id=?",
+            [d.nombre, d.descripcion || '', id], cb);
+    }
+    db.run("UPDATE preparaciones SET nombre=?, descripcion=?, rinde=? WHERE id=?",
+        [d.nombre, d.descripcion || '', _rindeValido(d.rinde), id], cb);
 }
 function eliminarPreparacion(id, cb) {
     db.run("UPDATE preparaciones SET activo = 0 WHERE id = ?", [id], (err) => {
@@ -2632,8 +2642,8 @@ function agregarInsumoConId(id, datos, cb) {
 
 function agregarPreparacionConId(id, datos, cb) {
     db.run(
-        `INSERT OR REPLACE INTO preparaciones (id, nombre, descripcion, activo) VALUES (?, ?, ?, 1)`,
-        [id, datos.nombre, datos.descripcion || null],
+        `INSERT OR REPLACE INTO preparaciones (id, nombre, descripcion, activo, rinde) VALUES (?, ?, ?, 1, ?)`,
+        [id, datos.nombre, datos.descripcion || null, _rindeValido(datos.rinde)],
         cb
     );
 }

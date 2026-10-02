@@ -11,7 +11,6 @@
 //
 // La pantalla solo dice la llave: <button class="ayuda" data-ayuda="turno"></button>
 // en el HTML, o botonAyuda('turno') en lo que se arma desde JS (modulo-ayuda.js).
-// `rinde` todavía no se usa aquí: el desktop no tiene el campo Rinde (IDEAS.md).
 
 const TEXTOS_AYUDA = {
   // §34

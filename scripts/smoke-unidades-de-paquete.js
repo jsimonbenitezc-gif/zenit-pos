@@ -223,6 +223,14 @@ async function principal() {
     await conCallback((cb) => db.agregarPreparacion({ nombre: 'Salsa verde', unidad: 'l', rinde: 4 }, cb));
     const preps = await conCallback((cb) => db.obtenerPreparaciones(cb));
     const salsa = preps.find(p => p.nombre === 'Salsa verde');
+    // El rinde capturado en la caja SE GUARDA (antes se ignoraba y quedaba en 1).
+    comprobar('la preparación guarda su rinde', salsa.rinde, 4);
+    await conCallback((cb) => db.actualizarPreparacion(salsa.id, { nombre: 'Salsa verde', rinde: 20 }, cb));
+    comprobar('…y editarlo lo cambia',
+        (await conCallback((cb) => db.obtenerPreparaciones(cb))).find(p => p.id === salsa.id).rinde, 20);
+    await conCallback((cb) => db.actualizarPreparacion(salsa.id, { nombre: 'Salsa verde' }, cb));
+    comprobar('…y editar sin rinde no lo pisa con 1',
+        (await conCallback((cb) => db.obtenerPreparaciones(cb))).find(p => p.id === salsa.id).rinde, 20);
     await conCallback((cb) => db.guardarItemsPreparacion(salsa.id,
         [{ insumo_id: oregano.id, cantidad: 5, unidad_receta: 'g' }], cb));
 

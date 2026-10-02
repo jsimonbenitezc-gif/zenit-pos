@@ -346,7 +346,7 @@ function renderizarTablaPreparaciones() {
     preparacionesCache.forEach(prep => {
         window.api.obtenerItemsPreparacion(prep.id).then(items => {
             const el = document.getElementById(`prep-count-${prep.id}`);
-            if (el) el.innerText = `${items.length} insumo${items.length !== 1 ? 's' : ''}`;
+            if (el) el.innerText = `${items.length} insumo${items.length !== 1 ? 's' : ''}` + (parseFloat(prep.rinde) > 0 && parseFloat(prep.rinde) !== 1 ? ` · rinde ${parseFloat(prep.rinde)}` : '');
         });
         window.api.calcularStockPreparacion(prep.id).then(stock => {
             const el = document.getElementById(`prep-stock-${prep.id}`);
@@ -366,6 +366,7 @@ function abrirModalPreparacion(prep = null) {
     document.getElementById('modal-prep-titulo').innerText = prep ? 'Editar Preparación' : 'Nueva Preparación';
     document.getElementById('prep-nombre').value = prep ? prep.nombre : '';
     document.getElementById('prep-descripcion').value = prep ? prep.descripcion || '' : '';
+    document.getElementById('prep-rinde').value = prep && parseFloat(prep.rinde) > 0 ? prep.rinde : 1;
     document.getElementById('prep-items-lista').innerHTML = '';
 
     if (prep) {
@@ -407,6 +408,10 @@ function agregarLineaPrep(itemExistente = null) {
 async function guardarPreparacion() {
     const nombre = document.getElementById('prep-nombre').value.trim();
     if (!nombre) { alertaZenit('El nombre es obligatorio'); return; }
+    // Rinde: cuántas porciones salen de UNA tanda (§34). Vacío = 1, como en el celular.
+    const rindeTexto = document.getElementById('prep-rinde').value.trim();
+    const rinde = rindeTexto === '' ? 1 : parseFloat(rindeTexto);
+    if (!isFinite(rinde) || rinde <= 0) { alertaZenit('El rinde debe ser mayor que cero'); return; }
     const items = [];
     document.querySelectorAll('#prep-items-lista .receta-linea').forEach(linea => {
         const sel = linea.querySelector('.sel-ingrediente');
@@ -419,16 +424,16 @@ async function guardarPreparacion() {
         }
     });
     try {
-        const datos = { nombre, descripcion: document.getElementById('prep-descripcion').value.trim() };
+        const datos = { nombre, descripcion: document.getElementById('prep-descripcion').value.trim(), rinde };
         if (modoConectado && apiClient && tokenActual) {
             const itemsAPI = items.map(i => ({ ingredient_id: i.insumo_id, quantity: i.cantidad, unit_recipe: i.unidad_receta || null }));
             if (preparacionEditandoId) {
-                await apiClient.request(`/inventory/preparations/${preparacionEditandoId}`, { method: 'PUT', body: { name: nombre } });
+                await apiClient.request(`/inventory/preparations/${preparacionEditandoId}`, { method: 'PUT', body: { name: nombre, yield_quantity: rinde } });
                 if (itemsAPI.length > 0) await apiClient.request(`/inventory/preparations/${preparacionEditandoId}/recipe`, { method: 'POST', body: { items: itemsAPI } });
                 await window.api.actualizarPreparacion(preparacionEditandoId, datos);
                 await window.api.guardarItemsPreparacion(preparacionEditandoId, items);
             } else {
-                const nueva = await apiClient.request('/inventory/preparations', { method: 'POST', body: { name: nombre, unit: 'porcion', yield_quantity: 1 } });
+                const nueva = await apiClient.request('/inventory/preparations', { method: 'POST', body: { name: nombre, unit: 'porcion', yield_quantity: rinde } });
                 if (itemsAPI.length > 0) await apiClient.request(`/inventory/preparations/${nueva.id}/recipe`, { method: 'POST', body: { items: itemsAPI } });
                 await window.api.agregarPreparacionConId(nueva.id, datos);
                 await window.api.guardarItemsPreparacion(nueva.id, items);

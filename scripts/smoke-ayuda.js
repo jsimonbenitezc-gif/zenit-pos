@@ -26,9 +26,7 @@ const M_TEXTOS = path.join(MOBILE, 'src', 'ayuda', 'textos.js');
 
 // Llaves que el desktop todavía no usa, con el porqué. Si una se coloca, quítala
 // de aquí (el smoke avisa).
-const SIN_LUGAR = {
-    rinde: 'el desktop no tiene el campo Rinde en Preparaciones (IDEAS.md)',
-};
+const SIN_LUGAR = {};
 
 let ok = 0, mal = 0;
 const fallas = [];
